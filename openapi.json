@@ -1,0 +1,1823 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "version": "0.1.0",
+    "title": "job-service",
+    "description": "A job is a named script in a repo's `jobs.toml`; a run is one execution of it, to completion at one commit, by a runner that claims it. A run is submitted `pending`, claimed and `running`, and ends `succeeded`, `failed` or `canceled` with its exit code, and says what it was for when its submitter said. Its log can be read from any offset while it runs and after."
+  },
+  "tags": [
+    {
+      "name": "runs"
+    },
+    {
+      "name": "runners"
+    },
+    {
+      "name": "meta"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer"
+      },
+      "runnerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "A runner's own token, `<runner id>.<secret>`, as `registerRunner` answered it."
+      }
+    },
+    "schemas": {
+      "Skill": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "The skill's name, which its files are under."
+          },
+          "version": {
+            "type": "integer",
+            "description": "The deployed tree's commit count, 0 when deployed from outside git."
+          },
+          "commit": {
+            "type": "string",
+            "description": "The deployed commit, ending `-dirty` when deployed with uncommitted changes."
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "description": "Under the worker's Claude Code folder: `skills/jobs/bin/…` or `skills/jobs/reference/…`."
+                },
+                "content": {
+                  "type": "string"
+                },
+                "executable": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "path",
+                "content",
+                "executable"
+              ]
+            }
+          }
+        },
+        "required": [
+          "key",
+          "version",
+          "commit",
+          "files"
+        ]
+      },
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "error"
+        ]
+      },
+      "Run": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "repo": {
+            "type": "string",
+            "maxLength": 200,
+            "pattern": "^[A-Za-z0-9_.-]+\\/[A-Za-z0-9_.-]+$",
+            "description": "`owner/name` on GitHub: checked out at `/work`; with a routine, its target.",
+            "example": "dakotacolorado/python-template"
+          },
+          "commit": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{40}$",
+            "description": "The commit to run, as a full lowercase sha: the runner checks out exactly this.",
+            "example": "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+          },
+          "job": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9_-]{0,62}$",
+            "description": "A `[jobs.<name>]` in the repo's `jobs.toml` at that commit, or in the routine directory's when it has a routine.",
+            "example": "hello"
+          },
+          "routine": {
+            "$ref": "#/components/schemas/Routine"
+          },
+          "host": {
+            "type": "string",
+            "nullable": true,
+            "description": "The machine it must run on, on the host itself; null: any runner that fits."
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "limits": {
+            "$ref": "#/components/schemas/Limits"
+          },
+          "labels": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9]([A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?$"
+            },
+            "description": "Labels as Kubernetes writes them. On a run, what a runner must have, every key with that value; on a runner, what it has.",
+            "example": {
+              "arch": "x86_64"
+            }
+          },
+          "for": {
+            "$ref": "#/components/schemas/For"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "running",
+              "succeeded",
+              "failed",
+              "canceled"
+            ],
+            "description": "`pending` until a runner claims it, `running` on that runner, then `succeeded`, `failed` or `canceled`, which it never leaves.",
+            "example": "pending"
+          },
+          "reason": {
+            "type": "string",
+            "nullable": true,
+            "description": "Why it is in its state, when that is not plain: a cancel, a lapsed lease, a timeout."
+          },
+          "cancelRequested": {
+            "type": "boolean",
+            "description": "A cancel was asked for: the runner of a run in progress is told to stop it on its next log append."
+          },
+          "runner": {
+            "type": "string",
+            "nullable": true,
+            "format": "uuid",
+            "description": "The runner that claimed it; null while pending."
+          },
+          "runsWith": {
+            "$ref": "#/components/schemas/RunsWith"
+          },
+          "exit": {
+            "type": "integer",
+            "nullable": true,
+            "description": "The run's exit code, once its runner reports one."
+          },
+          "duration": {
+            "type": "number",
+            "nullable": true,
+            "description": "Seconds it ran, as its runner reported."
+          },
+          "logSize": {
+            "type": "integer",
+            "description": "Bytes of log stored so far."
+          },
+          "submittedBy": {
+            "type": "string",
+            "nullable": true,
+            "description": "The `claimed-by` it was submitted with."
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string"
+          },
+          "startedAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "endedAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "leaseExpiresAt": {
+            "type": "string",
+            "nullable": true,
+            "description": "While running: if no log append renews it by then, the run fails."
+          }
+        },
+        "required": [
+          "id",
+          "repo",
+          "commit",
+          "job",
+          "routine",
+          "host",
+          "args",
+          "limits",
+          "labels",
+          "for",
+          "state",
+          "reason",
+          "cancelRequested",
+          "runner",
+          "runsWith",
+          "exit",
+          "duration",
+          "logSize",
+          "submittedBy",
+          "createdAt",
+          "updatedAt",
+          "startedAt",
+          "endedAt",
+          "leaseExpiresAt"
+        ]
+      },
+      "Routine": {
+        "type": "object",
+        "nullable": true,
+        "properties": {
+          "repo": {
+            "type": "string",
+            "maxLength": 200,
+            "pattern": "^[A-Za-z0-9_.-]+\\/[A-Za-z0-9_.-]+$",
+            "description": "`owner/name` on GitHub: the repo the routine is in.",
+            "example": "dakotacolorado/release-routines"
+          },
+          "commit": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{40}$",
+            "description": "The routine repo's commit, as a full lowercase sha: the runner checks out exactly this.",
+            "example": "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+          },
+          "dir": {
+            "type": "string",
+            "maxLength": 200,
+            "pattern": "^(?!\\.{1,2}(\\/|$))[A-Za-z0-9_.-]+(\\/(?!\\.{1,2}(\\/|$))[A-Za-z0-9_.-]+)*$",
+            "description": "The routine's directory in that repo, holding the `jobs.toml` that names `job`: `/`-separated, no `.` or `..`.",
+            "example": "dakotacolorado/honed"
+          }
+        },
+        "required": [
+          "repo",
+          "commit",
+          "dir"
+        ],
+        "description": "Where its steps live, when not in `repo`'s own `jobs.toml`; null when they are."
+      },
+      "Limits": {
+        "type": "object",
+        "properties": {
+          "memory": {
+            "type": "integer",
+            "nullable": true,
+            "minimum": 16,
+            "maximum": 1048576,
+            "default": null,
+            "description": "MiB the container may use, and the runner reserves for it. Null: `jobs.toml`'s, within the 1024 MiB a run without one is admitted with."
+          },
+          "timeout": {
+            "type": "integer",
+            "nullable": true,
+            "minimum": 1,
+            "maximum": 86400,
+            "default": null,
+            "description": "Seconds before the runner stops it and it fails. Null: `jobs.toml`'s."
+          }
+        }
+      },
+      "For": {
+        "type": "object",
+        "nullable": true,
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "batch",
+              "change",
+              "item",
+              "worker"
+            ],
+            "description": "What asked for the run: an approval-service batch or change, a work-tracker item, or a worker."
+          },
+          "id": {
+            "type": "string",
+            "pattern": "^\\S{1,200}$",
+            "description": "Its id there, without spaces."
+          }
+        },
+        "required": [
+          "kind",
+          "id"
+        ],
+        "description": "What it was for; null when its submitter did not say.",
+        "example": {
+          "kind": "item",
+          "id": "28af81bc-6a9a-4189-ad1f-8fd9de51308a"
+        }
+      },
+      "RunsWith": {
+        "type": "object",
+        "nullable": true,
+        "properties": {
+          "memory": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1048576,
+            "description": "MiB the container may use."
+          },
+          "timeout": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 86400,
+            "description": "Seconds before the runner stops it and it fails."
+          },
+          "stall": {
+            "type": "integer",
+            "nullable": true,
+            "minimum": 1,
+            "maximum": 86400,
+            "description": "Seconds without progress (output, CPU or network) before the runner ends it, failed as stalled; null when it never does."
+          }
+        },
+        "required": [
+          "memory",
+          "timeout",
+          "stall"
+        ],
+        "description": "What its runner runs it with: `limits`, else `jobs.toml`'s for the job, else its `[defaults]`. Null until its runner has read `jobs.toml`, and on a runner that does not say."
+      },
+      "Submit": {
+        "type": "object",
+        "properties": {
+          "repo": {
+            "type": "string",
+            "maxLength": 200,
+            "pattern": "^[A-Za-z0-9_.-]+\\/[A-Za-z0-9_.-]+$",
+            "description": "`owner/name` on GitHub.",
+            "example": "dakotacolorado/python-template"
+          },
+          "commit": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{40}$",
+            "description": "The commit to run, as a full lowercase sha: the runner checks out exactly this.",
+            "example": "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+          },
+          "job": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9_-]{0,62}$",
+            "description": "A `[jobs.<name>]` in the repo's `jobs.toml` at that commit, or in the routine directory's when it has a routine.",
+            "example": "hello"
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 4000
+            },
+            "maxItems": 50,
+            "default": [],
+            "description": "Appended to the job's `run` command from `jobs.toml`."
+          },
+          "limits": {
+            "$ref": "#/components/schemas/Limits"
+          },
+          "labels": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9]([A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?$"
+            },
+            "default": {},
+            "description": "Labels as Kubernetes writes them. On a run, what a runner must have, every key with that value; on a runner, what it has.",
+            "example": {
+              "arch": "x86_64"
+            }
+          },
+          "for": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/For"
+              },
+              {
+                "description": "What the run was for, as `GET /runs?for=<kind>:<id>` lists it."
+              }
+            ]
+          },
+          "routine": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Routine"
+              },
+              {
+                "description": "Where the job's steps live, when not in its own repo: `job` is read from `<dir>/jobs.toml` in `repo` at `commit`, and the run's own `repo` and `commit` are its target, the package checked out at `/work` beside the routine. Only a runner that says it `can` run a `routine` claims it."
+              }
+            ]
+          },
+          "host": {
+            "type": "string",
+            "nullable": true,
+            "minLength": 1,
+            "maxLength": 200,
+            "default": null,
+            "description": "The machine it must run on, as a runner's `hostId`: claimed only by that machine's runner, and only one that says it `can` run `host` runs, which runs it on the host itself, with the host's user services, if that host's config lets it. Null: any runner that fits."
+          }
+        },
+        "required": [
+          "repo",
+          "commit",
+          "job"
+        ]
+      },
+      "Registered": {
+        "type": "object",
+        "properties": {
+          "runner": {
+            "$ref": "#/components/schemas/Runner"
+          },
+          "token": {
+            "type": "string",
+            "description": "Its own bearer token, `<runner id>.<secret>`, shown only here: keep it where only the runner's user can read it."
+          }
+        },
+        "required": [
+          "runner",
+          "token"
+        ]
+      },
+      "Runner": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string",
+            "description": "What it calls itself, e.g. its host's name: not unique."
+          },
+          "labels": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9]([A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?$"
+            },
+            "description": "Labels as Kubernetes writes them. On a run, what a runner must have, every key with that value; on a runner, what it has.",
+            "example": {
+              "arch": "x86_64"
+            }
+          },
+          "slots": {
+            "type": "integer",
+            "description": "Runs it runs at once."
+          },
+          "memory": {
+            "type": "integer",
+            "description": "MiB it has for runs and their image builds."
+          },
+          "version": {
+            "type": "string",
+            "nullable": true,
+            "description": "job-runner's version, as it said."
+          },
+          "hostId": {
+            "type": "string",
+            "nullable": true,
+            "description": "The machine it runs on, the same as that machine's worker-host's `host_id` (by default its hostname); null until it says."
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "lastSeenAt": {
+            "type": "string",
+            "description": "Its last claim."
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "labels",
+          "slots",
+          "memory",
+          "version",
+          "hostId",
+          "createdAt",
+          "lastSeenAt"
+        ]
+      },
+      "Register": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "labels": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9]([A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?$"
+            },
+            "default": {},
+            "description": "Labels as Kubernetes writes them. On a run, what a runner must have, every key with that value; on a runner, what it has.",
+            "example": {
+              "arch": "x86_64"
+            }
+          },
+          "slots": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 64
+          },
+          "memory": {
+            "type": "integer",
+            "minimum": 16,
+            "maximum": 1048576,
+            "description": "MiB."
+          },
+          "version": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 100,
+            "default": null
+          },
+          "hostId": {
+            "type": "string",
+            "nullable": true,
+            "minLength": 1,
+            "maxLength": 200,
+            "default": null,
+            "description": "The machine it runs on: its worker-host's `host_id`, by default the hostname."
+          }
+        },
+        "required": [
+          "name",
+          "slots",
+          "memory"
+        ]
+      },
+      "Claim": {
+        "type": "object",
+        "properties": {
+          "run": {
+            "$ref": "#/components/schemas/Run"
+          },
+          "memory": {
+            "type": "integer",
+            "description": "MiB the run was admitted with: reserve this, and run it with no more."
+          },
+          "lease": {
+            "type": "integer",
+            "description": "Seconds the run lives without a log append. Append, or renew with an empty one, well within it."
+          }
+        },
+        "required": [
+          "run",
+          "memory",
+          "lease"
+        ]
+      },
+      "ClaimRequest": {
+        "type": "object",
+        "properties": {
+          "labels": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9]([A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?$"
+            },
+            "description": "What it has now; its registered labels when absent.",
+            "example": {
+              "arch": "x86_64"
+            }
+          },
+          "can": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "routine",
+                "host"
+              ]
+            },
+            "maxItems": 10,
+            "default": [],
+            "description": "What it can run beyond a job in its repo's own `jobs.toml`: `routine`, a run with a routine; `host`, a run naming its host, run on the host itself. A run needing one it does not say is left for another."
+          },
+          "hostId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "The machine it runs on now, recorded on the runner, so one registered before it said keeps its id."
+          },
+          "free": {
+            "type": "object",
+            "properties": {
+              "slots": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Slots not taken by a run."
+              },
+              "memory": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "MiB not reserved by a run in progress or an image build."
+              }
+            },
+            "required": [
+              "slots",
+              "memory"
+            ],
+            "description": "What it can take on now."
+          }
+        },
+        "required": [
+          "free"
+        ]
+      },
+      "Appended": {
+        "type": "object",
+        "properties": {
+          "size": {
+            "type": "integer",
+            "description": "Bytes of log stored: the offset the next append starts at."
+          },
+          "canceled": {
+            "type": "boolean",
+            "description": "A cancel was asked for: stop the run and report it `canceled`."
+          },
+          "leaseExpiresAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "size",
+          "canceled",
+          "leaseExpiresAt"
+        ]
+      },
+      "Report": {
+        "type": "object",
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": [
+              "succeeded",
+              "failed",
+              "canceled"
+            ],
+            "description": "`canceled` when stopped for a cancel; `failed` for a non-zero exit, a timeout, or an image that would not build."
+          },
+          "exit": {
+            "type": "integer",
+            "nullable": true,
+            "description": "The run's exit code; null when it never ran or was killed."
+          },
+          "duration": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Seconds from claim to end."
+          },
+          "reason": {
+            "type": "string",
+            "nullable": true,
+            "minLength": 1,
+            "maxLength": 2000,
+            "default": null,
+            "description": "Why, when the state does not say: `timed out after 600s`, `image build failed`."
+          }
+        },
+        "required": [
+          "state",
+          "exit",
+          "duration"
+        ]
+      }
+    },
+    "parameters": {}
+  },
+  "paths": {
+    "/health": {
+      "get": {
+        "operationId": "healthCheck",
+        "tags": [
+          "meta"
+        ],
+        "summary": "Liveness check",
+        "responses": {
+          "200": {
+            "description": "Service is up.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean",
+                      "enum": [
+                        true
+                      ]
+                    },
+                    "version": {
+                      "type": "string",
+                      "description": "The package's version."
+                    },
+                    "commit": {
+                      "type": "string",
+                      "description": "The commit it was built from, ending `-dirty` when built with uncommitted changes."
+                    }
+                  },
+                  "required": [
+                    "ok",
+                    "version",
+                    "commit"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/skill": {
+      "get": {
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "meta"
+        ],
+        "operationId": "getSkill",
+        "summary": "Read the client workers call this deployment with",
+        "description": "The jobs skill's `bin/` and `reference/`, as this deployment was built with them, so a worker calls the API that is deployed.",
+        "responses": {
+          "200": {
+            "description": "The skill's files.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Skill"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or incorrect bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "No API token is configured.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/runs": {
+      "post": {
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "runs"
+        ],
+        "operationId": "submitRun",
+        "summary": "Submit a run of a job: a named script in a repo at a commit",
+        "description": "One run, stored `pending` until a runner whose labels and free memory fit claims it, with what it was for when `for` says. Nothing is checked against the repo here: a run of a job missing from `jobs.toml` at that commit fails on its runner, saying so in its log.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "description": "Who is submitting: recorded on the run as `submittedBy`."
+            },
+            "required": false,
+            "description": "Who is submitting: recorded on the run as `submittedBy`.",
+            "name": "claimed-by",
+            "in": "header"
+          }
+        ],
+        "requestBody": {
+          "description": "What to run, and where it may run.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Submit"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Stored, `pending`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Run"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request failed validation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or incorrect bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "No API token is configured.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "runs"
+        ],
+        "operationId": "listRuns",
+        "summary": "List runs, newest first",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "pending",
+                "running",
+                "succeeded",
+                "failed",
+                "canceled"
+              ],
+              "description": "`pending` until a runner claims it, `running` on that runner, then `succeeded`, `failed` or `canceled`, which it never leaves.",
+              "example": "pending"
+            },
+            "required": false,
+            "description": "`pending` until a runner claims it, `running` on that runner, then `succeeded`, `failed` or `canceled`, which it never leaves.",
+            "name": "state",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "maxLength": 200,
+              "pattern": "^[A-Za-z0-9_.-]+\\/[A-Za-z0-9_.-]+$",
+              "description": "`owner/name` on GitHub.",
+              "example": "dakotacolorado/python-template"
+            },
+            "required": false,
+            "description": "`owner/name` on GitHub.",
+            "name": "repo",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "description": "Only the runs submitted with this `claimed-by`, as `submittedBy` records it."
+            },
+            "required": false,
+            "description": "Only the runs submitted with this `claimed-by`, as `submittedBy` records it.",
+            "name": "submittedBy",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "`<kind>:<id>`, e.g. `item:28af81bc-…`: only the runs submitted with that `for`.",
+              "example": "item:28af81bc-6a9a-4189-ad1f-8fd9de51308a"
+            },
+            "required": false,
+            "description": "`<kind>:<id>`, e.g. `item:28af81bc-…`: only the runs submitted with that `for`.",
+            "name": "for",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500,
+              "default": 100,
+              "description": "At most this many, newest first."
+            },
+            "required": false,
+            "description": "At most this many, newest first.",
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The runs.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "runs": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Run"
+                      }
+                    }
+                  },
+                  "required": [
+                    "runs"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request failed validation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or incorrect bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "No API token is configured.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/runs/{id}": {
+      "get": {
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "runs"
+        ],
+        "operationId": "getRun",
+        "summary": "Read one run",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The run.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Run"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request failed validation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or incorrect bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No run with that id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "No API token is configured.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "security": [
+          {
+            "runnerAuth": []
+          }
+        ],
+        "tags": [
+          "runners"
+        ],
+        "operationId": "reportRun",
+        "summary": "Report how a run in progress ended",
+        "description": "From the run's own runner. Sending the same end again answers it unchanged, so a lost reply can be retried.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "description": "How it ended.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Report"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The run, ended.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Run"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request failed validation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not a runner's token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Another runner's run.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No run with that id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "It is not running, or ended otherwise.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/runs/{id}/log": {
+      "get": {
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "runs"
+        ],
+        "operationId": "getRunLog",
+        "summary": "Read a run's log from a byte offset",
+        "description": "Send `Range: bytes=N-` to read from offset N; without it, from 0. Answers 206 with `Content-Range: bytes N-M/size` and at most 1 MiB, or an empty body when N is the log's size, so a follower polls from where it got to. `Run-State` says the run's state, so it knows when to stop.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^bytes=\\d+-$",
+              "description": "`bytes=N-`"
+            },
+            "required": false,
+            "description": "`bytes=N-`",
+            "name": "range",
+            "in": "header"
+          }
+        ],
+        "responses": {
+          "206": {
+            "description": "The log from N, up to 1 MiB.",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request failed validation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or incorrect bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No run with that id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "416": {
+            "description": "N is past the end of the log.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "No API token is configured.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "security": [
+          {
+            "runnerAuth": []
+          }
+        ],
+        "tags": [
+          "runners"
+        ],
+        "operationId": "appendRunLog",
+        "summary": "Append to the log of a run in progress, and renew its lease",
+        "description": "The body is the bytes, `Content-Range: bytes S-E/*` where S is the log's current size and E = S + length - 1. An empty body without `Content-Range` only renews the lease. 416 for any other S, with the size to resend from. At most 256 KiB per append and 64 MiB per run (413). The reply says whether a cancel was asked for.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^bytes \\d+-\\d+\\/(\\*|\\d+)$",
+              "description": "`bytes S-E/*`"
+            },
+            "required": false,
+            "description": "`bytes S-E/*`",
+            "name": "content-range",
+            "in": "header"
+          }
+        ],
+        "requestBody": {
+          "description": "The log's next bytes.",
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Stored, and the lease renewed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Appended"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request failed validation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not a runner's token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Another runner's run.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No run with that id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The run is not running: it ended, perhaps by its lease lapsing.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Over 256 KiB, or the log would pass 64 MiB.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "416": {
+            "description": "Not at the log's end: resend from `size`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "size": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "size"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/runs/{id}/cancel": {
+      "post": {
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "runs"
+        ],
+        "operationId": "cancelRun",
+        "summary": "Cancel a run",
+        "description": "A pending run ends `canceled` at once. A running one is marked `cancelRequested`: its runner is told on its next log append, stops it, and reports it `canceled`.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The run, canceled or marked.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Run"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request failed validation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or incorrect bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No run with that id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "It has already ended.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "No API token is configured.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/runners": {
+      "post": {
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "runners"
+        ],
+        "operationId": "registerRunner",
+        "summary": "Register a runner",
+        "description": "With the registration token, not the submitters'. Answers the runner's own token once.",
+        "requestBody": {
+          "description": "What the runner is and has.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Register"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Registered.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Registered"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request failed validation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or incorrect bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "No API token is configured.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "runners"
+        ],
+        "operationId": "listRunners",
+        "summary": "List runners, most recently seen first",
+        "responses": {
+          "200": {
+            "description": "The runners.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "runners": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Runner"
+                      }
+                    }
+                  },
+                  "required": [
+                    "runners"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request failed validation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or incorrect bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "No API token is configured.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/runners/{id}/claim": {
+      "post": {
+        "security": [
+          {
+            "runnerAuth": []
+          }
+        ],
+        "tags": [
+          "runners"
+        ],
+        "operationId": "claimRun",
+        "summary": "Claim the oldest pending run that fits",
+        "description": "The oldest pending run whose labels the runner has, whose memory fits `free`, whose routine or host, if any, it `can` run, and whose `host`, if any, is the runner's own `hostId`, moved to `running` on this runner. Two claims never get the same run. 204 when none fits.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "description": "What the runner can take on.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClaimRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "A run, now running here.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Claim"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "No pending run fits."
+          },
+          "400": {
+            "description": "The request failed validation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not a runner's token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Another runner's run.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/runs/{id}/runs-with": {
+      "put": {
+        "security": [
+          {
+            "runnerAuth": []
+          }
+        ],
+        "tags": [
+          "runners"
+        ],
+        "operationId": "setRunsWith",
+        "summary": "Say what a run in progress runs with",
+        "description": "From the run's own runner, once it has read `jobs.toml` and before it starts the run's container. Sending it again replaces it.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "description": "Its memory, timeout and stall limit.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RunsWith"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The run, with `runsWith`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Run"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request failed validation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not a runner's token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Another runner's run.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No run with that id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "It is not running.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

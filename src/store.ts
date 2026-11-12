@@ -210,10 +210,14 @@ export class Store {
     this.db.prepare("UPDATE runners SET record = ? WHERE id = ?").run(JSON.stringify(next), id);
   }
 
-  /** Deletes log chunks written before `LOG_DAYS` ago; answers how many. */
+  /**
+   * Deletes the log of every run last appended to before `LOG_DAYS` ago, all of it at once, so no read
+   * sees a log with its start gone; answers how many chunks.
+   */
   pruneLogs(at: string): number {
     const before = new Date(Date.parse(at) - LOG_DAYS * 86_400_000).toISOString();
-    return Number(this.db.prepare("DELETE FROM run_logs WHERE written_at < ?").run(before).changes);
+    const sql = "DELETE FROM run_logs WHERE run_id IN (SELECT run_id FROM run_logs GROUP BY run_id HAVING max(written_at) < ?)";
+    return Number(this.db.prepare(sql).run(before).changes);
   }
 
   private transaction<T>(body: () => T): T {

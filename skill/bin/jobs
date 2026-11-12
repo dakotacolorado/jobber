@@ -1,0 +1,203 @@
+#!/bin/sh
+# jobs COMMAND ...  -- submit runs of jobs to job-service, follow their logs, and cancel them.
+# A job is a [jobs.<name>] in a repo's jobs.toml; a run is one execution of it, with its own id.
+#
+#   jobs submit [--for KIND:ID] [--routine RREPO RCOMMIT DIR] [--host HOST] REPO COMMIT JOB [ARG...]
+#                                          run JOB from REPO's jobs.toml at COMMIT (a full sha); prints the run.
+#                                          --for says what it is for: batch, change, item or worker, and its id
+#                                          --routine reads JOB from DIR/jobs.toml in RREPO at RCOMMIT instead,
+#                                          and runs it against REPO at COMMIT, its target
+#                                          --host runs it only on HOST's runner, on the host itself
+#   jobs list [--for KIND:ID] [STATE]      runs, newest first: pending, running, succeeded, failed or canceled
+#   jobs show ID                           one run: its state, exit code, reason and what it was for
+#   jobs log ID [-f]                       its log; -f follows it until the run ends, then exits with its exit code
+#                                          (0 if it succeeded, else its exit, or 1 with none); 75 if job-service
+#                                          stays unreachable for JOBS_RETRY_FOR seconds (default 600)
+#   jobs cancel ID                         a pending run ends canceled; a running one is stopped by its runner
+#   jobs call METHOD PATH [JSON]           any other call
+#
+# `submit` takes JOBS_MEMORY (MiB) and JOBS_TIMEOUT (seconds) and JOBS_LABELS
+# (a JSON object) from the environment, when set, as the run's limits and labels,
+# and records the submitting worker (this session's, or JS_CLAIMED_BY) as `submittedBy`.
+# Prints the response body; exits 1 on an HTTP error, with the status on stderr.
+# `log` rides out a dropped connection, a timeout, a 429 or 5xx, or a short read:
+# it retries, and resumes from the last byte it printed, so no line is lost or repeated.
+#
+# Env: JS_URL and JS_TOKEN: job-service's address and submitter token. The token
+# is never printed. JS_CLAIMED_BY overrides the name recorded as the submitter.
+# JOBS_CALL_TIMEOUT: seconds one call may take (default 60) before it counts as dropped.
+set -eu
+
+usage() { sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+[ $# -ge 1 ] || usage
+
+url=${JS_URL:?"jobs: JS_URL is not set: job-service's address"}
+token=${JS_TOKEN:?"jobs: JS_TOKEN is not set: job-service's submitter token"}
+
+if [ -n "${JS_CLAIMED_BY-}" ]; then
+  who=$JS_CLAIMED_BY
+else
+  case ${CLAUDE_CONFIG_DIR-} in
+  */home/.claude) who=$(basename "$(dirname "$(dirname "$CLAUDE_CONFIG_DIR")")") ;;
+  *) who=${USER:-claude} ;;
+  esac
+fi
+
+out=$(mktemp)
+hdr=$(mktemp)
+trap 'rm -f "$out" "$hdr"' EXIT
+
+# request METHOD PATH [BODY] [RANGE]: the body to $out, headers to $hdr, the status on stdout.
+request() {
+  method=$1 path=$2 body=${3-} range=${4-}
+  # The token goes in by a header file on stdin, so it is never on a command line.
+  set -- -sS --connect-timeout 10 --max-time "${JOBS_CALL_TIMEOUT:-60}" -o "$out" -D "$hdr" -w '%{http_code}' -X "$method" -H @- -H "claimed-by: $who"
+  [ -n "$body" ] && set -- "$@" -H 'content-type: application/json' --data-binary "$body"
+  [ -n "$range" ] && set -- "$@" -H "range: bytes=$range-"
+  printf 'authorization: Bearer %s\n' "$token" | curl "$@" "${url%/}$path"
+}
+
+call() {
+  code=$(request "$@")
+  cat "$out"
+  [ -s "$out" ] && [ "$(tail -c1 "$out")" != "" ] && echo
+  if [ "$code" -ge 400 ]; then
+    echo "jobs: HTTP $code" >&2
+    exit 1
+  fi
+}
+
+header() { tr -d '\r' <"$hdr" | sed -n "s/^$1: *//Ip" | tail -n1; }
+
+# The exit when job-service stays unreachable: not the job's, which is unknown.
+UNREACHABLE=75
+
+# fetch METHOD PATH [BODY] [RANGE]: request, retried with backoff while the call fails to arrive whole
+# (curl fails, a 429 or 5xx, or fewer bytes than Content-Range says), for up to JOBS_RETRY_FOR seconds.
+fetch() {
+  since=$(date +%s) pause=1
+  while :; do
+    if code=$(request "$@"); then
+      case $code in
+      429 | 5??) why="HTTP $code" ;;
+      206)
+        want=$(header content-range | sed -n 's|^bytes \([0-9]*\)-\([0-9]*\)/.*|\2 - \1 + 1|p')
+        got=$(wc -c <"$out")
+        if [ "$got" -eq "$((${want:-0}))" ]; then echo "$code"; return 0; fi
+        why="a short read ($got of $((${want:-0})) bytes)"
+        ;;
+      *) echo "$code"; return 0 ;;
+      esac
+    else
+      why="curl exit $?"
+    fi
+    if [ $(($(date +%s) - since)) -ge "${JOBS_RETRY_FOR:-600}" ]; then
+      echo "jobs: cannot reach job-service ($why), for ${JOBS_RETRY_FOR:-600}s: giving up" >&2
+      return "$UNREACHABLE"
+    fi
+    echo "jobs: $why: retrying in ${pause}s" >&2
+    sleep "$pause"
+    pause=$((pause < 8 ? pause * 2 : 10))
+  done
+}
+
+log() {
+  id=$1 follow=${2-}
+  at=0
+  while :; do
+    code=$(fetch GET "/runs/$id/log" "" "$at") || exit "$UNREACHABLE"
+    if [ "$code" -ge 400 ]; then
+      cat "$out" >&2
+      echo "jobs: HTTP $code" >&2
+      exit 1
+    fi
+    cat "$out"
+    at=$((at + $(wc -c <"$out")))
+    size=$(header content-range | sed 's|.*/||')
+    state=$(header run-state)
+    [ "$at" -lt "$size" ] && continue
+    case $state in
+    succeeded | failed | canceled)
+      [ -n "$follow" ] || exit 0
+      code=$(fetch GET "/runs/$id") || exit "$UNREACHABLE"
+      if [ "$code" -ge 400 ]; then
+        cat "$out" >&2
+        echo "jobs: HTTP $code" >&2
+        exit 1
+      fi
+      exit "$(node -e 'const j=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));process.stderr.write(`jobs: ${j.state}${j.exit===null?"":" with exit "+j.exit}${j.reason?": "+j.reason:""}\n`);console.log(j.state==="succeeded"?0:(j.exit||1))' "$out")"
+      ;;
+    esac
+    [ -n "$follow" ] || exit 0
+    sleep 1
+  done
+}
+
+json_args() { node -e 'console.log(JSON.stringify(process.argv.slice(1)))' -- "$@"; }
+
+# for_json KIND:ID: the `for` object, or exits 2 saying what it takes.
+for_json() {
+  case $1 in
+  batch:?* | change:?* | item:?* | worker:?*) node -e 'const [k,...i]=process.argv[1].split(":");console.log(JSON.stringify({kind:k,id:i.join(":")}))' -- "$1" ;;
+  *) echo "jobs: --for takes KIND:ID, KIND one of batch, change, item, worker" >&2; exit 2 ;;
+  esac
+}
+
+# encode TEXT: TEXT percent-encoded for a query string.
+encode() { node -e 'console.log(encodeURIComponent(process.argv[1]))' -- "$1"; }
+
+cmd=$1
+shift
+case $cmd in
+submit)
+  for=null routine=null host=null
+  while :; do
+    case ${1-} in
+    --for)
+      [ $# -ge 2 ] || usage
+      for=$(for_json "$2") || exit 2
+      shift 2
+      ;;
+    --routine)
+      [ $# -ge 4 ] || usage
+      routine=$(node -e 'const [repo,commit,dir]=process.argv.slice(1);console.log(JSON.stringify({repo,commit,dir}))' -- "$2" "$3" "$4")
+      shift 4
+      ;;
+    --host)
+      [ $# -ge 2 ] || usage
+      host=$(node -e 'console.log(JSON.stringify(process.argv[1]))' -- "$2")
+      shift 2
+      ;;
+    *) break ;;
+    esac
+  done
+  [ $# -ge 3 ] || usage
+  repo=$1 commit=$2 job=$3
+  shift 3
+  limits="{\"memory\":${JOBS_MEMORY:-null},\"timeout\":${JOBS_TIMEOUT:-null}}"
+  # Not `${JOBS_LABELS:-{\}}`: bash 3.2, macOS's sh, keeps the backslash.
+  labels=${JOBS_LABELS:-}
+  [ -n "$labels" ] || labels='{}'
+  call POST /runs "{\"repo\":\"$repo\",\"commit\":\"$commit\",\"job\":\"$job\",\"args\":$(json_args "$@"),\"limits\":$limits,\"labels\":$labels,\"for\":$for,\"routine\":$routine,\"host\":$host}"
+  ;;
+list)
+  query=
+  if [ "${1-}" = --for ]; then
+    [ $# -ge 2 ] || usage
+    for_json "$2" >/dev/null || exit 2
+    query="for=$(encode "$2")"
+    shift 2
+  fi
+  [ $# -le 1 ] || usage
+  [ -n "${1-}" ] && query="${query:+$query&}state=$1"
+  call GET "/runs${query:+?$query}"
+  ;;
+show) [ $# -eq 1 ] || usage; call GET "/runs/$1" ;;
+log)
+  [ $# -ge 1 ] || usage
+  case ${2-} in "" ) log "$1" ;; -f) log "$1" follow ;; *) usage ;; esac
+  ;;
+cancel) [ $# -eq 1 ] || usage; call POST "/runs/$1/cancel" ;;
+call) [ $# -ge 2 ] || usage; call "$@" ;;
+*) usage ;;
+esac

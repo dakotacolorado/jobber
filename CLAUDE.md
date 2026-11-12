@@ -16,7 +16,8 @@ or platform behaviour not visible in the source.
 `docs/index.html` and the skill's `reference/api.md`; `src/mcp.ts`, whose
 tools are the API operations the submitters' token calls, of `mcp.json`,
 `docs/MCP.md` and `docs/mcp.html`. The pre-commit hook regenerates them all
-(`npm run spec`); a test fails if any drifts. job-runner follows these shapes; change them with it.
+(`npm run spec`); a test fails if any drifts. The page is `ui/`, served as
+it is, with no build: it makes every element as text, never HTML. job-runner follows these shapes; change them with it.
 
 How a run moves between states is `src/domain.ts`, as pure functions: keep
 every transition there, tested, and let the store only refuse a write that lost

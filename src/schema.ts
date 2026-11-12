@@ -221,6 +221,19 @@ export const submitRoute = createRoute({
   responses: { 201: json(RunSchema, "Stored, `pending`."), ...FAILS },
 });
 
+/** `listRuns`'s filters, which `list_runs` takes too. */
+export const ListQuery = z.object({
+  state: State.optional(),
+  repo: Repo.optional(),
+  submittedBy: z.string().min(1).max(200).optional().describe("Only the runs submitted with this `claimed-by`, as `submittedBy` records it."),
+  for: z
+    .string()
+    .optional()
+    .describe("`<kind>:<id>`, e.g. `item:28af81bc-…`: only the runs submitted with that `for`.")
+    .openapi({ example: "item:28af81bc-6a9a-4189-ad1f-8fd9de51308a" }),
+  limit: z.coerce.number().int().min(1).max(500).default(100).describe("At most this many, newest first."),
+});
+
 export const listRoute = createRoute({
   ...secured,
   method: "get",
@@ -228,17 +241,7 @@ export const listRoute = createRoute({
   operationId: "listRuns",
   summary: "List runs, newest first",
   request: {
-    query: z.object({
-      state: State.optional(),
-      repo: Repo.optional(),
-      submittedBy: z.string().min(1).max(200).optional().describe("Only the runs submitted with this `claimed-by`, as `submittedBy` records it."),
-      for: z
-        .string()
-        .optional()
-        .describe("`<kind>:<id>`, e.g. `item:28af81bc-…`: only the runs submitted with that `for`.")
-        .openapi({ example: "item:28af81bc-6a9a-4189-ad1f-8fd9de51308a" }),
-      limit: z.coerce.number().int().min(1).max(500).default(100).describe("At most this many, newest first."),
-    }),
+    query: ListQuery,
   },
   responses: { 200: json(z.object({ runs: z.array(RunSchema) }), "The runs."), ...FAILS },
 });

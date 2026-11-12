@@ -1,0 +1,342 @@
+{
+  "instructions": "job-service runs jobs: a job is a named script in a repo's jobs.toml, a run one execution of it at one commit, claimed by a runner whose labels and free memory fit.\n\n- A run is submitted pending, claimed and running, and ends succeeded, failed or canceled with its exit code.\n- A run's log is read from a byte offset: get_run_log answers the bytes from offset, the log's size, and the run's state, so call it again from offset + the bytes read until the state has ended.\n- cancel_run ends a pending run at once; a running one is canceled by its runner shortly after.\n- Every tool takes the submitters' token this server was connected with. Registering runners and their claims and reports are the runner protocol, not tools.",
+  "tools": [
+    {
+      "name": "submit_run",
+      "title": "Submit a run",
+      "description": "One run, stored `pending` until a runner whose labels and free memory fit claims it, with what it was for when `for` says. Nothing is checked against the repo here: a run of a job missing from `jobs.toml` at that commit fails on its runner, saying so in its log.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "repo": {
+            "type": "string",
+            "maxLength": 200,
+            "pattern": "^[A-Za-z0-9_.-]+\\/[A-Za-z0-9_.-]+$",
+            "description": "`owner/name` on GitHub."
+          },
+          "commit": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{40}$",
+            "description": "The commit to run, as a full lowercase sha: the runner checks out exactly this."
+          },
+          "job": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9_-]{0,62}$",
+            "description": "A `[jobs.<name>]` in the repo's `jobs.toml` at that commit, or in the routine directory's when it has a routine."
+          },
+          "args": {
+            "default": [],
+            "description": "Appended to the job's `run` command from `jobs.toml`.",
+            "maxItems": 50,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 4000
+            }
+          },
+          "limits": {
+            "default": {
+              "memory": null,
+              "timeout": null
+            },
+            "type": "object",
+            "properties": {
+              "memory": {
+                "default": null,
+                "description": "MiB the container may use, and the runner reserves for it. Null: `jobs.toml`'s, within the 1024 MiB a run without one is admitted with.",
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 16,
+                    "maximum": 1048576
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "timeout": {
+                "default": null,
+                "description": "Seconds before the runner stops it and it fails. Null: `jobs.toml`'s.",
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 86400
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          },
+          "labels": {
+            "default": {},
+            "description": "Labels as Kubernetes writes them. On a run, what a runner must have, every key with that value; on a runner, what it has.",
+            "type": "object",
+            "propertyNames": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9]([A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?$"
+            },
+            "additionalProperties": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9]([A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?$"
+            }
+          },
+          "for": {
+            "default": null,
+            "description": "What the run was for, as `GET /runs?for=<kind>:<id>` lists it.",
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "batch",
+                      "change",
+                      "item",
+                      "worker"
+                    ],
+                    "description": "What asked for the run: an approval-service batch or change, a work-tracker item, or a worker."
+                  },
+                  "id": {
+                    "type": "string",
+                    "pattern": "^\\S{1,200}$",
+                    "description": "Its id there, without spaces."
+                  }
+                },
+                "required": [
+                  "kind",
+                  "id"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "routine": {
+            "default": null,
+            "description": "Where the job's steps live, when not in its own repo: `job` is read from `<dir>/jobs.toml` in `repo` at `commit`, and the run's own `repo` and `commit` are its target, the package checked out at `/work` beside the routine. Only a runner that says it `can` run a `routine` claims it.",
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "repo": {
+                    "type": "string",
+                    "maxLength": 200,
+                    "pattern": "^[A-Za-z0-9_.-]+\\/[A-Za-z0-9_.-]+$"
+                  },
+                  "commit": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{40}$",
+                    "description": "The routine repo's commit, as a full lowercase sha: the runner checks out exactly this."
+                  },
+                  "dir": {
+                    "type": "string",
+                    "maxLength": 200,
+                    "pattern": "^(?!\\.{1,2}(\\/|$))[A-Za-z0-9_.-]+(\\/(?!\\.{1,2}(\\/|$))[A-Za-z0-9_.-]+)*$"
+                  }
+                },
+                "required": [
+                  "repo",
+                  "commit",
+                  "dir"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "host": {
+            "default": null,
+            "description": "The machine it must run on, as a runner's `hostId`: claimed only by that machine's runner, and only one that says it `can` run `host` runs, which runs it on the host itself, with the host's user services, if that host's config lets it. Null: any runner that fits.",
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200,
+                "description": "The machine it runs on: its worker-host's `host_id`, by default the hostname."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "repo",
+          "commit",
+          "job"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      }
+    },
+    {
+      "name": "list_runs",
+      "title": "List runs",
+      "description": "Returns runs matching every filter given, newest first.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "state": {
+            "description": "`pending` until a runner claims it, `running` on that runner, then `succeeded`, `failed` or `canceled`, which it never leaves.",
+            "type": "string",
+            "enum": [
+              "pending",
+              "running",
+              "succeeded",
+              "failed",
+              "canceled"
+            ]
+          },
+          "repo": {
+            "description": "`owner/name` on GitHub.",
+            "type": "string",
+            "maxLength": 200,
+            "pattern": "^[A-Za-z0-9_.-]+\\/[A-Za-z0-9_.-]+$"
+          },
+          "submittedBy": {
+            "description": "Only the runs submitted with this `claimed-by`, as `submittedBy` records it.",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "for": {
+            "description": "`<kind>:<id>`, e.g. `item:28af81bc-…`: only the runs submitted with that `for`.",
+            "type": "string"
+          },
+          "limit": {
+            "default": 100,
+            "description": "At most this many, newest first.",
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 500
+          }
+        }
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      }
+    },
+    {
+      "name": "get_run",
+      "title": "Get a run",
+      "description": "Returns one run.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "description": "The run's id."
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      }
+    },
+    {
+      "name": "get_run_log",
+      "title": "Read a run's log",
+      "description": "Returns the log from byte `offset`, at most 1 MiB, with the log's size so far and the run's state. Empty when `offset` is the log's size: call again later from there while the run is `pending` or `running`.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "description": "The run's id."
+          },
+          "offset": {
+            "description": "The byte to read from; default 0.",
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      }
+    },
+    {
+      "name": "cancel_run",
+      "title": "Cancel a run",
+      "description": "A pending run ends `canceled` at once. A running one is marked `cancelRequested`: its runner is told on its next log append, stops it, and reports it `canceled`.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "description": "The run's id."
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      }
+    },
+    {
+      "name": "list_runners",
+      "title": "List runners",
+      "description": "Returns every registered runner, most recently seen first, with its labels and host.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {}
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      }
+    }
+  ]
+}

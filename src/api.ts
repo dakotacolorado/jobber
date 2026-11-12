@@ -1,7 +1,9 @@
 import { OpenAPIHono } from "@hono/zod-openapi";
+import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import type { Context, Next } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { readFileSync } from "node:fs";
 import {
   admittedMemory,
   appendAt,
@@ -22,6 +24,7 @@ import {
   type Run,
   type Runner,
 } from "./domain.ts";
+import { LOCAL_URL, mcpServer, type Call } from "./mcp.ts";
 import * as routes from "./schema.ts";
 import type { Skill } from "./skill.ts";
 import type { Store, StoredRunner } from "./store.ts";
@@ -66,6 +69,8 @@ export class JobApi {
     });
     this.auth();
     this.routes();
+    this.mcp();
+    this.pages();
     this.spec();
   }
 
@@ -84,6 +89,7 @@ export class JobApi {
     // A runner writes a run with PUT and PATCH, under its own token, checked by the route.
     const submitterReads = (c: Context, next: Next) => (["PUT", "PATCH"].includes(c.req.method) ? next() : submitter(c, next));
     this.hono.use("/skill", submitter);
+    this.hono.use("/mcp", submitter);
     this.hono.use("/runs", submitter);
     this.hono.use("/runs/*", submitterReads);
     this.hono.on("POST", "/runners", bearer(this.tokens.registration));
@@ -236,6 +242,57 @@ export class JobApi {
       if (err instanceof HTTPException) return c.json({ error: err.message || "Bad request." }, err.status);
       console.error("Unhandled error:", err);
       return c.json({ error: "Internal error." }, 500);
+    });
+  }
+
+  /**
+   * The MCP server, at `/mcp`, stateless: each request gets its own, whose
+   * tools make their API requests in-process with the request's own
+   * `authorization` and `claimed-by`.
+   */
+  private mcp(): void {
+    this.hono.all("/mcp", async (c) => {
+      const authorization = c.req.header("authorization")!;
+      const claimedBy = c.req.header("claimed-by");
+      const call: Call = (method, path, init = {}) =>
+        Promise.resolve(
+          this.hono.fetch(
+            new Request(`http://local${path}`, {
+              method,
+              headers: {
+                authorization,
+                ...(init.body !== undefined && { "content-type": "application/json" }),
+                ...(claimedBy && { "claimed-by": claimedBy }),
+                ...init.headers,
+              },
+              body: init.body === undefined ? undefined : JSON.stringify(init.body),
+            }),
+          ),
+        );
+      const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
+      await mcpServer(this.about.version, call).connect(transport);
+      return transport.handleRequest(c.req.raw);
+    });
+  }
+
+  /** The API's and the MCP server's docs, read at their first request: none needs a token, and none holds data. */
+  private pages(): void {
+    const files = new Map<string, string>();
+    const file = (path: string) => {
+      if (!files.has(path)) files.set(path, readFileSync(new URL(`../${path}`, import.meta.url), "utf8"));
+      return files.get(path)!;
+    };
+    const page = (path: string, type: string) => (c: Context) => c.body(file(path), 200, { "content-type": `${type}; charset=utf-8` });
+    this.hono.get("/docs/api", page("docs/index.html", "text/html"));
+    this.hono.get("/mcp.json", page("mcp.json", "application/json"));
+    // The docs' example address is a local one; served, they give the address they were reached at.
+    this.hono.get("/docs/mcp", (c) => {
+      const url = new URL(c.req.url);
+      const proto = c.req.header("x-forwarded-proto") ?? url.protocol.slice(0, -1);
+      const host = c.req.header("x-forwarded-host") ?? c.req.header("host") ?? url.host;
+      // Reflected into the page: only what an address can be.
+      const at = /^https?$/.test(proto) && /^[\w.-]+(:\d+)?$/.test(host) ? `${proto}://${host}` : LOCAL_URL;
+      return c.body(file("docs/mcp.html").replaceAll(LOCAL_URL, at), 200, { "content-type": "text/html; charset=utf-8" });
     });
   }
 

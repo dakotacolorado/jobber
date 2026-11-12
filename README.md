@@ -6,9 +6,20 @@ it. A run is submitted `pending`, claimed and `running`, and ends
 `succeeded`, `failed` or `canceled` with its exit code. Its log can be read
 from any offset while it runs and after.
 
-One Node 24 process serves the HTTP API, with everything in one SQLite file.
-The contract is [`openapi.json`](./openapi.json), rendered in
-[`docs/API.md`](./docs/API.md).
+One Node 24 process serves the HTTP API and an MCP server, with everything in
+one SQLite file. The API's contract is [`openapi.json`](./openapi.json),
+rendered in [`docs/API.md`](./docs/API.md) and served at `/docs/api`; the MCP
+server's is [`mcp.json`](./mcp.json), rendered in [`docs/MCP.md`](./docs/MCP.md)
+and served at `/docs/mcp`. Neither page needs a token.
+
+`/mcp` is streamable HTTP, stateless, under the submitters' token: one tool per
+operation that token calls (`submit_run`, `list_runs`, `get_run`,
+`get_run_log`, `cancel_run`, `list_runners`), each one API request made with the
+caller's `authorization` and `claimed-by`:
+
+```json
+{ "mcpServers": { "job-service": { "type": "http", "url": "https://<host>:8445/mcp", "headers": { "Authorization": "Bearer <AUTH_TOKEN>" } } } }
+```
 
 ```
 POST /runs               {repo, commit, job, args?, limits?, labels?, for?, routine?, host?}  → run, pending

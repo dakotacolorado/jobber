@@ -10,7 +10,10 @@ One Node 24 process serves the HTTP API, an MCP server and a page, with
 everything in one SQLite file. The page, at `/`, takes the submitters' token
 (kept in the browser), lists runs by state with filters, shows a run and
 follows its log, submits and cancels runs, and lists runners. The API's contract is [`openapi.json`](./openapi.json),
-rendered in [`docs/API.md`](./docs/API.md) and served at `/docs/api`; the MCP
+rendered as an AWS API reference in [`docs/API.md`](./docs/API.md) and served
+at `/docs/api` (Redoc's view at `/docs/redoc`): operations named VerbNoun
+(`SubmitRun`, `GetRunLog`, `ClaimRun`, …), and errors `{code, message}` with
+AWS's exception names (`ValidationException`, `ResourceNotFoundException`, …); the MCP
 server's is [`mcp.json`](./mcp.json), rendered in [`docs/MCP.md`](./docs/MCP.md)
 and served at `/docs/mcp`. Neither page needs a token.
 

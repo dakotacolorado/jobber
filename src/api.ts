@@ -26,10 +26,23 @@ import {
 } from "./domain.ts";
 import { LOCAL_URL, mcpServer, type Call } from "./mcp.ts";
 import * as routes from "./schema.ts";
+import { ERROR_CODES, type ErrorStatus } from "./schema.ts";
 import type { Skill } from "./skill.ts";
 import type { Store, StoredRunner } from "./store.ts";
 
 export const SPEC_PATH = "/openapi.json";
+
+/** The API's version, dated as AWS dates theirs: changed only when the contract is. */
+export const API_VERSION = "2026-11-12";
+
+/** The API's overview, at the top of its reference. Markdown. */
+export const OVERVIEW = `Runs of jobs. A **job** is a named script in a repo's \`jobs.toml\`; a **run** is one execution of it, to completion at one commit, by a **runner** that claims it.
+
+- A run is submitted \`pending\`, claimed and \`running\`, and ends \`succeeded\`, \`failed\` or \`canceled\` with its exit code. It says what it was for when its submitter said.
+- A run's log is read from any byte offset, while it runs and after: \`GetRunLog\` from where the last read ended, until \`Run-State\` says the run has ended.
+- Runners call in and are never called: one registers with the registration token, then claims runs, appends to their logs and completes them with its own token, \`<runner id>.<secret>\`.
+
+Submitters send \`Authorization: Bearer <token>\` with the submitters' token, and may send \`claimed-by\`, recorded on a run they submit. \`GetHealth\` takes no token. Errors are \`{code, message}\`, the code an exception name for the HTTP status: \`ValidationException\` (400), \`UnauthorizedException\` (401), \`AccessDeniedException\` (403), \`ResourceNotFoundException\` (404), \`ConflictException\` (409), \`PayloadTooLargeException\` (413), \`InvalidRangeException\` (416), \`InternalServerException\` (500) and \`ServiceUnavailableException\` (503).`;
 
 export interface Tokens {
   /** Submitters': submit, read and cancel runs, list runners. Null: every such call answers 503. */
@@ -65,7 +78,7 @@ export class JobApi {
     this.skill = skill;
     this.about = about;
     this.hono = new OpenAPIHono({
-      defaultHook: (result, c) => (result.success ? undefined : c.json({ error: issues(result.error) }, 400)),
+      defaultHook: (result, c) => (result.success ? undefined : fail(c, 400, issues(result.error))),
     });
     this.auth();
     this.routes();
@@ -80,9 +93,9 @@ export class JobApi {
 
   private auth(): void {
     const bearer = (token: string | null) => async (c: Context, next: Next) => {
-      if (!token) return c.json({ error: "API token is not configured." }, 503);
+      if (!token) return fail(c, 503, "The service has no token configured for this call.");
       const given = /^Bearer (.+)$/.exec(c.req.header("authorization") ?? "")?.[1];
-      if (!given || !same(given, token)) return c.json({ error: "Unauthorized." }, 401);
+      if (!given || !same(given, token)) return fail(c, 401, "The bearer token is missing or wrong.");
       await next();
     };
     const submitter = bearer(this.tokens.submitter);
@@ -209,7 +222,7 @@ export class JobApi {
       try {
         appendAt(run, start, bytes.length);
       } catch (err) {
-        if (err instanceof RequestError && err.status === 416) return c.json({ error: err.message, size: run.logSize }, 416);
+        if (err instanceof RequestError && err.status === 416) return c.json({ code: ERROR_CODES[416], message: err.message, size: run.logSize }, 416);
         throw err;
       }
       const at = stamp(run);
@@ -238,10 +251,10 @@ export class JobApi {
     // Hono throws HTTPException for a malformed body before any handler runs;
     // collapsing this to 500 would report a bad request as our failure.
     app.onError((err, c) => {
-      if (err instanceof RequestError) return c.json({ error: err.message }, err.status);
-      if (err instanceof HTTPException) return c.json({ error: err.message || "Bad request." }, err.status);
+      if (err instanceof RequestError) return fail(c, err.status, err.message);
+      if (err instanceof HTTPException) return fail(c, err.status in ERROR_CODES ? (err.status as ErrorStatus) : 400, err.message || "The request is malformed.");
       console.error("Unhandled error:", err);
-      return c.json({ error: "Internal error." }, 500);
+      return fail(c, 500, "Something went wrong on our side.");
     });
   }
 
@@ -286,7 +299,8 @@ export class JobApi {
     this.hono.get("/", page("ui/index.html", "text/html"));
     this.hono.get("/ui/app.js", page("ui/app.js", "text/javascript"));
     this.hono.get("/ui/style.css", page("ui/style.css", "text/css"));
-    this.hono.get("/docs/api", page("docs/index.html", "text/html"));
+    this.hono.get("/docs/api", page("docs/api.html", "text/html"));
+    this.hono.get("/docs/redoc", page("docs/redoc.html", "text/html"));
     this.hono.get("/mcp.json", page("mcp.json", "application/json"));
     // The docs' example address is a local one; served, they give the address they were reached at.
     this.hono.get("/docs/mcp", (c) => {
@@ -308,18 +322,19 @@ export class JobApi {
     });
     this.hono.doc(SPEC_PATH, {
       openapi: "3.1.0",
-      info: {
-        version: "0.1.0",
-        title: "job-service",
-        description:
-          "A job is a named script in a repo's `jobs.toml`; a run is one execution of it, to completion at one commit, " +
-          "by a runner that claims it. A run is submitted `pending`, claimed and `running`, and ends `succeeded`, " +
-          "`failed` or `canceled` with its exit code, and says what it was for when its submitter said. Its log can be " +
-          "read from any offset while it runs and after.",
-      },
-      tags: [{ name: "runs" }, { name: "runners" }, { name: "meta" }],
+      info: { version: API_VERSION, title: "job-service", description: OVERVIEW },
+      tags: [
+        { name: "Runs", description: "What submitters call, with the submitters' token." },
+        { name: "Runners", description: "What job-runner calls: registering with the registration token, then the rest with its own." },
+        { name: "Service", description: "Its health, and the client workers call it with." },
+      ],
     });
   }
+}
+
+/** An error answer as an AWS API gives one: `{code, message}`, the code named for the status. */
+function fail(c: Context, status: ErrorStatus, message: string) {
+  return c.json({ code: ERROR_CODES[status], message }, status);
 }
 
 function issues(error: { issues: { path: PropertyKey[]; message: string }[] }): string {

@@ -83,7 +83,7 @@ describe("POST /runs", () => {
     const { call } = setup();
     const res = await call("POST", "/runs", { repo: "dakotacolorado/python-template", commit: COMMIT, job: "hello", ...over });
     expect(res.status).toBe(400);
-    expect(((await res.json()) as { error: string }).error).toBeTruthy();
+    expect(await res.json()).toEqual({ code: "ValidationException", message: expect.any(String) });
   });
 
   it("refuses malformed JSON with 400", async () => {

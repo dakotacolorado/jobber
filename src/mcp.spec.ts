@@ -91,20 +91,18 @@ describe("the MCP server", () => {
 
   it("answers an API refusal as the tool's error, in the API's words", async () => {
     const { use } = setup();
-    const missing = await use<{ error: string }>("get_run", { id: "00000000-0000-4000-8000-000000000000" });
-    expect(missing).toEqual({ isError: true, json: { error: "no run 00000000-0000-4000-8000-000000000000" } });
+    const missing = await use<{ code: string; message: string }>("get_run", { id: "00000000-0000-4000-8000-000000000000" });
+    expect(missing).toEqual({ isError: true, json: { code: "ResourceNotFoundException", message: "no run 00000000-0000-4000-8000-000000000000" } });
     expect((await use("get_run_log", { id: "00000000-0000-4000-8000-000000000000" })).isError).toBe(true);
   });
 
   it("has one tool per operation the submitters' token calls, named the same in snake_case", async () => {
-    const { paths } = (await openApiDocument()) as {
-      paths: Record<string, Record<string, { operationId: string; tags: string[]; security?: Record<string, unknown>[] }>>;
-    };
+    const { paths } = await openApiDocument();
     const snake = (id: string) => id.replace(/([a-z])([A-Z])/g, "$1_$2").toLowerCase();
     // The runner protocol takes a runner's token, or the registration token; meta is for the platform.
     const submitters = Object.values(paths)
       .flatMap((methods) => Object.values(methods))
-      .filter((op) => !op.tags.includes("meta") && op.operationId !== "registerRunner" && op.security?.some((s) => "bearerAuth" in s))
+      .filter((op) => !op.tags?.includes("Service") && op.operationId !== "RegisterRunner" && op.security?.some((s) => typeof s === "object" && s !== null && "bearerAuth" in s))
       .map((op) => snake(op.operationId));
     expect((await mcpDocument()).tools.map((tool) => tool.name).sort()).toEqual(submitters.sort());
   });

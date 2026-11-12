@@ -65,6 +65,7 @@ type Schema = {
 };
 type Parameter = { name: string; in: string; required?: boolean; description?: string; schema?: Schema };
 type Operation = {
+  operationId?: string;
   tags?: string[];
   summary?: string;
   description?: string;
@@ -126,7 +127,7 @@ const body = (content: Record<string, { schema?: Schema }> | undefined) => {
 
 /**
  * A worker's reference to the API, from its OpenAPI document: every operation
- * but `meta`'s, with its parameters, body and answers, then every named schema's fields.
+ * but `Service`'s, with its parameters, body and answers, then every named schema's fields.
  * Short enough for a worker's context, where the full rendering is not.
  */
 export function renderReference(doc: Document): string {
@@ -142,9 +143,9 @@ export function renderReference(doc: Document): string {
     for (const method of METHODS) {
       const op = item[method];
       // Liveness and the skill itself are for the platform, not a worker's calls.
-      if (!op || op.tags?.includes("meta")) continue;
+      if (!op || op.tags?.includes("Service")) continue;
       rendered.push(op);
-      out.push(`## ${method.toUpperCase()} ${path}`, "");
+      out.push(`## ${op.operationId ? `${op.operationId}: ` : ""}${method.toUpperCase()} ${path}`, "");
       if (op.summary) out.push(op.summary + ".", "");
       if (op.description) out.push(op.description, "");
       const params = (op.parameters ?? []).filter((p) => p.in !== "header");

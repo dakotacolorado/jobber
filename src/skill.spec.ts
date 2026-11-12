@@ -14,7 +14,7 @@ describe("the skill's reference", () => {
 
   it("covers the calls a worker makes, and not the platform's", async () => {
     const reference = renderReference(await doc());
-    expect(reference).toContain("## POST /runs");
+    expect(reference).toContain("## SubmitRun: POST /runs");
     expect(reference).not.toContain("/skill");
     expect(reference).not.toContain("/health");
   });

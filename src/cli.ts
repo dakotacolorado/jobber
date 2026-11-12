@@ -83,6 +83,11 @@ const server = serve({ fetch: running.api.fetch, hostname: host, port }, (info) 
   );
 });
 
+server.on("error", (err) => {
+  running.close();
+  fail(`cannot serve on ${host}:${port}: ${err.message}`);
+});
+
 const stop = () => {
   server.close();
   running.close();

@@ -66,6 +66,16 @@ function follow(url: string, env: Record<string, string> = {}) {
 const LINES = Array.from({ length: 6 }, (_, i) => `line ${i + 1}\n`);
 
 describe("jobs log -f", () => {
+  it("ends when the log it has not read is no longer kept, rather than polling", async () => {
+    const url = await serve((req, res) => {
+      if (req.url === `/runs/${ID}`) return res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ id: ID, state: "succeeded", exit: 0, reason: null }));
+      res.writeHead(206, { "content-range": "bytes */12", "run-state": "succeeded", "content-type": "text/plain" }).end();
+    });
+    const run = await follow(url);
+    expect(run.code).toBe(0);
+    expect(run.stderr).toContain("from byte 0 of 12, is no longer kept");
+  }, 30_000);
+
   it("rides out a dropped connection, a 503, a short read and a timeout, and prints each line once", async () => {
     const url = await serve(stub([...LINES], { state: "succeeded", exit: 0 }, ["drop", "503", "short", "hang"]));
     const run = await follow(url);

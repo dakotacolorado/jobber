@@ -119,4 +119,17 @@ describe("the timers", () => {
     stop();
     store.close();
   });
+
+  it("prune a run's log only once its last append is past LOG_DAYS, and then all of it", () => {
+    const store = Store.open(":memory:");
+    const insert = store.db.prepare("INSERT INTO run_logs (run_id, start, data, written_at) VALUES (?, ?, ?, ?)");
+    const enc = new TextEncoder();
+    insert.run("old-start", 0, enc.encode("AAAAA"), "2025-01-01T00:00:00.000Z");
+    insert.run("old-start", 5, enc.encode("BBBBB"), "2026-01-01T00:00:00.000Z");
+    insert.run("all-old", 0, enc.encode("CCCCC"), "2025-01-01T00:00:00.000Z");
+    expect(store.pruneLogs("2026-01-02T00:00:00.000Z")).toBe(1);
+    const left = store.db.prepare("SELECT run_id, start FROM run_logs ORDER BY run_id, start").all();
+    expect(left.map((r) => `${r.run_id}@${r.start}`)).toEqual(["old-start@0", "old-start@5"]);
+    store.close();
+  });
 });

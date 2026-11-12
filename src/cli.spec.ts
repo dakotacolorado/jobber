@@ -55,6 +55,16 @@ describe("job-service serve", () => {
   });
 });
 
+describe("job-service serve on a port already taken", () => {
+  it("says so and exits 1", async () => {
+    const { url } = await serve(join(temp(), "a.db"), {});
+    const port = new URL(url).port;
+    const done = spawnSync(process.execPath, [CLI, "--port", port, "--db", join(temp(), "b.db")], { env: clean(), encoding: "utf8", timeout: 10_000 });
+    expect(done.status).toBe(1);
+    expect(done.stderr).toContain(`job-service: cannot serve on 127.0.0.1:${port}`);
+  });
+});
+
 describe("job-service backup", () => {
   it("copies the database to the file it names", () => {
     const dir = temp();

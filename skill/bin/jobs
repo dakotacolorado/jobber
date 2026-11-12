@@ -112,10 +112,16 @@ log() {
       exit 1
     fi
     cat "$out"
-    at=$((at + $(wc -c <"$out")))
+    got=$(wc -c <"$out")
+    at=$((at + got))
     size=$(header content-range | sed 's|.*/||')
     state=$(header run-state)
-    [ "$at" -lt "$size" ] && continue
+    if [ "$at" -lt "$size" ]; then
+      [ "$got" -gt 0 ] && continue
+      # Nothing from where it got to, short of the end: the log is gone (kept 90 days).
+      echo "jobs: the rest of the log, from byte $at of $size, is no longer kept" >&2
+      at=$size
+    fi
     case $state in
     succeeded | failed | canceled)
       [ -n "$follow" ] || exit 0

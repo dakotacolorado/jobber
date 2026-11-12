@@ -1,0 +1,17 @@
+#!/bin/sh
+# backup STAGE OTHER_HOST: copies a consistent backup of this host's
+# job-service database to OTHER_HOST over the tailnet, as
+# ~/backups/job-service/job-service-STAGE-<date>.db there, and keeps 14 days
+# of them. Run by job-service-backup.timer, which ops/deploy installs.
+set -eu
+[ $# -eq 2 ] || { echo "usage: backup STAGE OTHER_HOST" >&2; exit 2; }
+stage=$1 other=$2
+. "$(dirname "$0")/common"
+name=job-service-$stage-$(date -u +%F).db
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+"$node" "$routines/$app/current/dist/cli.js" backup --db "$data/job-service.db" "$tmp/$name"
+ssh -o BatchMode=yes "$other" 'mkdir -p ~/backups/job-service'
+scp -q -o BatchMode=yes "$tmp/$name" "$other:backups/job-service/$name.partial"
+ssh -o BatchMode=yes "$other" "mv ~/backups/job-service/$name.partial ~/backups/job-service/$name && find ~/backups/job-service -name 'job-service-$stage-*.db' -mtime +13 -delete"
+echo "backup: $name is on $other"

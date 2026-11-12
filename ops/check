@@ -1,0 +1,22 @@
+#!/bin/sh
+# check [REPO COMMIT JOB]: run on a host after ops/deploy and ops/runner.
+# Submits a run (default: dakotacolorado/python-template's hello at its
+# main) to this host's job-service at its public address, follows its log,
+# and exits with the run's exit: 0 once it ends `succeeded`. Then lists the
+# runners, which name the one that claimed it.
+set -eu
+here=$(cd "$(dirname "$0")" && pwd)
+. "$here/common"
+repo=${1:-dakotacolorado/python-template}
+commit=${2:-$(git ls-remote "https://github.com/$repo.git" refs/heads/main | cut -f1)}
+job=${3:-hello}
+export JS_URL=$url JS_TOKEN
+JS_TOKEN=$(token AUTH_TOKEN)
+jobs=$here/../skill/bin/jobs
+id=$(JS_CLAIMED_BY=job-service-check sh "$jobs" submit --for worker:job-service-check "$repo" "$commit" "$job" | "$node" -p 'JSON.parse(require("fs").readFileSync(0,"utf8")).id')
+echo "check: run $id of $repo $job at $commit, on $url"
+code=0
+sh "$jobs" log "$id" -f || code=$?
+sh "$jobs" show "$id" | "$node" -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const r=JSON.parse(s);console.log(`check: run ${r.id} ${r.state}, exit ${r.exit}, ${r.logSize} bytes of log, on runner ${r.runner}`)})'
+sh "$jobs" call GET /runners | "$node" -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{for(const r of JSON.parse(s).runners)console.log(`check: runner ${r.id} ${r.name} on ${r.hostId}, version ${r.version}, last seen ${r.lastSeenAt}`)})'
+exit $code

@@ -57,6 +57,29 @@ token, `RUNNER_TOKEN` the registration token; without one, what needs it
 answers 503. `GET /health` answers the version and commit it runs, without a
 token.
 
+## On the hosts
+
+Beta runs on `dakotajp-hp-laptop`, prod on `dakotajp-lenovo-laptop`, each at
+`https://<host>.tail90863a.ts.net:8445` (`tailscale serve` to 127.0.0.1:4500),
+from a checkout at the commit to release, as the hosts' user:
+
+```sh
+ops/deploy beta dakotajp-lenovo-laptop     # on the HP; prod: ops/deploy prod dakotajp-hp-laptop on the Lenovo
+ops/runner beta <job-runner binary>        # the second job-runner, registered here (api = "runs")
+ops/check                                  # a run of python-template's hello, claimed by it, to `succeeded`
+```
+
+`ops/deploy` installs the build under `~/.local/share/routines/job-service/`
+(`current`, `previous`), makes the host's `AUTH_TOKEN` and `RUNNER_TOKEN` once
+in `~/.config/job-service/env` (mode 600, never committed), restarts
+`job-service.service`, checks `/health` answers the commit and puts the
+previous release back if not, and installs `job-service-backup.timer`: each
+night a consistent copy of `~/.local/share/job-service/job-service.db` goes
+to the other host's `~/backups/job-service/`, 14 days kept. Run at an earlier
+commit, it is the rollback. `ops/runner` installs `job-runner-local.service`
+beside the host's own job-runner, which stays on the AWS job-service until
+cutover, with its own config, identity, checkouts and `jobslocal.slice`.
+
 ## Client
 
 `skill/bin/jobs` is the client a worker calls it with, served by `GET /skill`

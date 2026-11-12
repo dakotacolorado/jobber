@@ -1,0 +1,70 @@
+#!/bin/sh
+# runner STAGE BINARY [MEMORY]: run on a host after ops/deploy. Installs a
+# second job-runner, beside the host's own (which stays on the AWS
+# job-service until cutover), registered with this host's job-service:
+# BINARY (a job-runner built with `api = "runs"`) as
+# ~/.local/share/routines/job-runner-local/job-runner, its config in
+# ~/.config/job-runner-local/, its identity in ~/.local/state/job-runner-local/,
+# its checkouts in ~/.local/share/job-runner-local/, its jobs in its own
+# jobslocal.slice (MEMORY MiB, default 1024, one at a time), and
+# job-runner-local.service. Rerun to upgrade: it keeps its identity.
+set -eu
+[ $# -ge 2 ] || { echo "usage: runner STAGE BINARY [MEMORY]" >&2; exit 2; }
+stage=$1 binary=$2 memory=${3:-1024}
+here=$(cd "$(dirname "$0")" && pwd)
+. "$here/common"
+name=job-runner-local
+rconf=$HOME/.config/$name
+mkdir -p "$routines/$name" "$rconf" "$HOME/.local/state/$name" "$HOME/.local/share/$name" "$units"
+cp "$binary" "$routines/$name/job-runner.new"
+chmod 755 "$routines/$name/job-runner.new"
+mv "$routines/$name/job-runner.new" "$routines/$name/job-runner"
+bin=$routines/$name/job-runner
+echo "runner: installed $bin ($("$bin" --version))"
+
+(umask 077 && token RUNNER_TOKEN >"$rconf/registration-token")
+host_id=$(sed -n 's/^host_id *= *"\(.*\)"/\1/p' "$HOME/.config/job-runner/config.toml")
+[ -n "$host_id" ] || host_id=$(hostname)
+cat >"$rconf/config.toml" <<CONF
+# The second job-runner on this host, registered with its own job-service
+# ($stage), written by dakotacolorado/job-service-2's ops/runner.
+service = "http://127.0.0.1:$port"
+api = "runs"
+registration_token_file = "$rconf/registration-token"
+state_file = "$HOME/.local/state/$name/runner.json"
+work_dir = "$HOME/.local/share/$name"
+name = "$host_id-local"
+host_id = "$host_id"
+labels = { arch = "x86_64" }
+slots = 1
+memory = $memory
+build_memory = $memory
+git_credential_helper = "!gh auth git-credential"
+cgroup_parent = "jobslocal.slice"
+
+[slice]
+memory_max = "${memory}M"
+cpu_weight = 20
+CONF
+"$bin" --config "$rconf/config.toml" --slice-unit >"$units/jobslocal.slice"
+cat >"$units/$name.service" <<UNIT
+[Unit]
+Description=job-runner for this host's own job-service ($stage), in jobslocal.slice
+After=network-online.target $app.service
+
+[Service]
+ExecStart=$bin --config $rconf/config.toml
+# SIGTERM to job-runner alone: it stops and reports its jobs itself.
+KillMode=mixed
+TimeoutStopSec=90
+Restart=always
+RestartSec=10
+Environment=PATH=$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin
+
+[Install]
+WantedBy=default.target
+UNIT
+systemctl --user daemon-reload
+systemctl --user enable "$name.service" >/dev/null 2>&1
+systemctl --user restart "$name.service"
+echo "runner: (re)started $name.service; its log: journalctl --user -u $name -f"

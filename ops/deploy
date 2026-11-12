@@ -1,0 +1,123 @@
+#!/bin/sh
+# deploy STAGE OTHER_HOST: run on a host, from a checkout of job-service at
+# the commit to release. Builds it, installs it as
+# ~/.local/share/routines/job-service/versions/<version>+<commit> and points
+# current at it (the one it replaces is previous), makes the host's tokens
+# once (~/.config/job-service/env, mode 600), writes and restarts
+# job-service.service, and checks /health answers this commit; if not, puts
+# previous back and fails. Exposes it at https://<host>:8445 with tailscale
+# serve, and installs the nightly backup to OTHER_HOST. Prints `deployed: <commit>`.
+# Run at an earlier commit, it puts that release back.
+set -eu
+[ $# -eq 2 ] || { echo "usage: deploy STAGE OTHER_HOST" >&2; exit 2; }
+stage=$1 other=$2
+here=$(cd "$(dirname "$0")" && pwd)
+. "$here/common"
+src=$(cd "$here/.." && pwd)
+commit=$(git -C "$src" rev-parse HEAD)
+[ -z "$(git -C "$src" status --porcelain)" ] || { echo "deploy: $src has uncommitted changes" >&2; exit 1; }
+version=$("$node" -p "require('$src/package.json').version")+$(printf %.7s "$commit")
+
+(cd "$src" && npm ci --no-audit --no-fund && npm run build) >&2
+
+dest=$routines/$app/versions/$version
+if [ ! -d "$dest" ]; then
+  mkdir -p "$dest.partial"
+  cp -R "$src/dist" "$src/skill" "$src/package.json" "$src/package-lock.json" "$dest.partial/"
+  (cd "$dest.partial" && npm ci --omit=dev --no-audit --no-fund) >&2
+  mv "$dest.partial" "$dest"
+fi
+was=$(readlink "$routines/$app/current" 2>/dev/null || true)
+if [ "$was" != "versions/$version" ]; then
+  [ -n "$was" ] && echo "$was" >"$routines/$app/previous"
+  ln -sfn "versions/$version" "$routines/$app/current.new"
+  mv -T "$routines/$app/current.new" "$routines/$app/current"
+fi
+# Keep current, previous and three more.
+keep=$(cat "$routines/$app/previous" 2>/dev/null || true)
+ls -1t "$routines/$app/versions" | tail -n +6 | while read -r old; do
+  [ "versions/$old" = "versions/$version" ] || [ "versions/$old" = "$keep" ] || rm -rf "$routines/$app/versions/$old"
+done
+echo "deploy: $routines/$app/current is $version (was ${was:-nothing})"
+
+umask 077
+mkdir -p "$conf" "$data"
+if [ ! -s "$conf/env" ]; then
+  printf 'AUTH_TOKEN=%s\nRUNNER_TOKEN=%s\n' "$(openssl rand -hex 32)" "$(openssl rand -hex 32)" >"$conf/env"
+  echo "deploy: made $conf/env (AUTH_TOKEN and RUNNER_TOKEN, mode 600)"
+fi
+umask 022
+
+mkdir -p "$units"
+cat >"$units/$app.service" <<UNIT
+[Unit]
+Description=job-service ($stage): runs of jobs, claimed by runners (dakotacolorado/job-service-2 ops/)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+EnvironmentFile=%h/.config/job-service/env
+Environment=JOB_SERVICE_DB=%h/.local/share/job-service/job-service.db
+Environment=JOB_SERVICE_HOST=127.0.0.1
+Environment=JOB_SERVICE_PORT=$port
+ExecStart=$node %h/.local/share/routines/$app/current/dist/cli.js serve
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=default.target
+UNIT
+
+check() {
+  i=0
+  while [ $i -lt 30 ]; do
+    if curl -fsS "http://127.0.0.1:$port/health" 2>/dev/null | grep -q "\"commit\":\"$commit\""; then return 0; fi
+    i=$((i + 1))
+    sleep 1
+  done
+  return 1
+}
+systemctl --user daemon-reload
+systemctl --user enable "$app.service" >/dev/null 2>&1
+systemctl --user restart "$app.service"
+if ! check; then
+  echo "deploy: $version did not answer /health with $commit; putting back ${was:-nothing}" >&2
+  journalctl --user -u "$app.service" -n 20 --no-pager >&2 || true
+  if [ -n "$was" ]; then
+    ln -sfn "$was" "$routines/$app/current.new" && mv -T "$routines/$app/current.new" "$routines/$app/current"
+    systemctl --user restart "$app.service"
+  fi
+  exit 1
+fi
+echo "deploy: http://127.0.0.1:$port/health answers $commit"
+
+tailscale serve --bg --https="$https_port" "http://127.0.0.1:$port" >/dev/null
+curl -fsS "$url/health" | grep -q "\"commit\":\"$commit\"" || { echo "deploy: $url/health does not answer $commit" >&2; exit 1; }
+echo "deploy: $url/health answers $commit"
+
+mkdir -p "$routines/$app-backup"
+cp "$here/common" "$here/backup" "$routines/$app-backup/"
+cat >"$units/$app-backup.service" <<UNIT
+[Unit]
+Description=job-service's nightly backup to $other
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh %h/.local/share/routines/$app-backup/backup $stage $other
+UNIT
+cat >"$units/$app-backup.timer" <<UNIT
+[Unit]
+Description=job-service's nightly backup to $other
+
+[Timer]
+OnCalendar=*-*-* 03:45:00
+RandomizedDelaySec=15min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+UNIT
+systemctl --user daemon-reload
+systemctl --user enable --now "$app-backup.timer" >/dev/null 2>&1
+echo "deploy: $app-backup.timer backs up to $other nightly"
+echo "deployed: $commit"

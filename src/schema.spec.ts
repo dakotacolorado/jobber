@@ -1,9 +1,9 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { folded, renderApiHtml, renderApiReference } from "./api-doc.ts";
+import { folded, renderApiReference } from "./api-doc.ts";
 import { JobApi } from "./api.ts";
 import { ERROR_CODES } from "./schema.ts";
-import { API_DOC, API_PAGE, openApiDocument, REDOC_PAGE, SPEC_FILE } from "./spec.ts";
+import { API_DOC, API_PAGE, openApiDocument, SPEC_FILE } from "./spec.ts";
 import { Store } from "./store.ts";
 
 const operations = async () => Object.values((await openApiDocument()).paths).flatMap((methods) => Object.values(methods));
@@ -40,13 +40,12 @@ describe("openapi.json", () => {
   });
 });
 
-describe("docs/API.md, docs/api.html and docs/redoc.html", () => {
+describe("docs/API.md and docs/index.html", () => {
   it("render the served openapi.json", async () => {
     const served = await openApiDocument();
     expect(readFileSync(API_DOC, "utf8")).toBe(renderApiReference(served));
-    expect(readFileSync(API_PAGE, "utf8")).toBe(renderApiHtml(served));
     // Redoc's page carries the document it renders.
-    const embedded = /const __redoc_definition = (.*);\n/.exec(readFileSync(REDOC_PAGE, "utf8"))?.[1];
+    const embedded = /const __redoc_definition = (.*);\n/.exec(readFileSync(API_PAGE, "utf8"))?.[1];
     expect(JSON.parse(embedded ?? "null")).toEqual(served);
   });
 
@@ -61,10 +60,7 @@ describe("docs/API.md, docs/api.html and docs/redoc.html", () => {
     expect(reference.split("\n# Data types\n")[1]).toContain("\n## Run\n");
   });
 
-  it.each([
-    ["/docs/api", API_PAGE],
-    ["/docs/redoc", REDOC_PAGE],
-  ])("serves %s without a token", async (path, file) => {
+  it.each([["/docs/api", API_PAGE]])("serves %s without a token", async (path, file) => {
     const api = new JobApi(Store.open(":memory:"), { submitter: "t", registration: null }, () => ({ key: "jobs", version: 0, commit: "x", files: [] }), {
       version: "0",
       commit: "x",

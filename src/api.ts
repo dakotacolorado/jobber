@@ -299,8 +299,7 @@ export class JobApi {
     this.hono.get("/", page("ui/index.html", "text/html"));
     this.hono.get("/ui/app.js", page("ui/app.js", "text/javascript"));
     this.hono.get("/ui/style.css", page("ui/style.css", "text/css"));
-    this.hono.get("/docs/api", page("docs/api.html", "text/html"));
-    this.hono.get("/docs/redoc", page("docs/redoc.html", "text/html"));
+    this.hono.get("/docs/api", page("docs/index.html", "text/html"));
     this.hono.get("/mcp.json", page("mcp.json", "application/json"));
     // The docs' example address is a local one; served, they give the address they were reached at.
     this.hono.get("/docs/mcp", (c) => {

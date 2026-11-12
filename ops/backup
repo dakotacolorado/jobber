@@ -4,6 +4,7 @@
 # ~/backups/job-service/job-service-STAGE-<date>.db there, and keeps 14 days
 # of them. Run by job-service-backup.timer, which ops/deploy installs.
 set -eu
+umask 077
 [ $# -eq 2 ] || { echo "usage: backup STAGE OTHER_HOST" >&2; exit 2; }
 stage=$1 other=$2
 . "$(dirname "$0")/common"

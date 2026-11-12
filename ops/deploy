@@ -91,7 +91,9 @@ if ! check; then
 fi
 echo "deploy: http://127.0.0.1:$port/health answers $commit"
 
-tailscale serve --bg --https="$https_port" "http://127.0.0.1:$port" >/dev/null
+# Changing the serve config needs root unless this user is tailscale's operator.
+tailscale serve --bg --https="$https_port" "http://127.0.0.1:$port" >/dev/null 2>&1 ||
+  sudo -n tailscale serve --bg --https="$https_port" "http://127.0.0.1:$port" >/dev/null
 curl -fsS "$url/health" | grep -q "\"commit\":\"$commit\"" || { echo "deploy: $url/health does not answer $commit" >&2; exit 1; }
 echo "deploy: $url/health answers $commit"
 

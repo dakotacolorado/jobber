@@ -275,7 +275,7 @@ export class JobApi {
     });
   }
 
-  /** The API's and the MCP server's docs, read at their first request: none needs a token, and none holds data. */
+  /** The page, and the API's and the MCP server's docs, read at their first request: none needs a token, and none holds data. */
   private pages(): void {
     const files = new Map<string, string>();
     const file = (path: string) => {
@@ -283,6 +283,9 @@ export class JobApi {
       return files.get(path)!;
     };
     const page = (path: string, type: string) => (c: Context) => c.body(file(path), 200, { "content-type": `${type}; charset=utf-8` });
+    this.hono.get("/", page("ui/index.html", "text/html"));
+    this.hono.get("/ui/app.js", page("ui/app.js", "text/javascript"));
+    this.hono.get("/ui/style.css", page("ui/style.css", "text/css"));
     this.hono.get("/docs/api", page("docs/index.html", "text/html"));
     this.hono.get("/mcp.json", page("mcp.json", "application/json"));
     // The docs' example address is a local one; served, they give the address they were reached at.

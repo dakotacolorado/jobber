@@ -1,0 +1,408 @@
+// job-service's page: runs by state, a run and its log, a form to submit one, and the runners, over the API.
+// Every element is made with `h`, which sets text, never HTML, so nothing a run or its log says is run.
+
+const TOKEN_KEY = "job-service.token";
+const STATES = ["pending", "running", "succeeded", "failed", "canceled"];
+const ENDED = ["succeeded", "failed", "canceled"];
+/** How often a run's page asks for more of its log, and the runs list for changes. */
+const FOLLOW_MS = 1000;
+const REFRESH_MS = 5000;
+
+const main = document.getElementById("main");
+const signout = document.getElementById("signout");
+
+function h(tag, props = {}, ...children) {
+  const el = document.createElement(tag);
+  for (const [key, value] of Object.entries(props)) {
+    if (value === undefined || value === null || value === false) continue;
+    if (key.startsWith("on")) el.addEventListener(key.slice(2), value);
+    else if (key === "class") el.className = value;
+    else if (value === true) el.setAttribute(key, "");
+    else el.setAttribute(key, value);
+  }
+  for (const child of children.flat()) if (child !== null && child !== undefined && child !== false) el.append(child instanceof Node ? child : String(child));
+  return el;
+}
+
+const token = () => localStorage.getItem(TOKEN_KEY);
+
+class ApiError extends Error {
+  constructor(status, body) {
+    super(body?.error ?? `HTTP ${status}`);
+    this.status = status;
+  }
+}
+
+/** One API call, relative to this page. A 401 forgets the token and asks for another. */
+async function request(method, path, { body, headers = {} } = {}) {
+  const res = await fetch(path.replace(/^\//, ""), {
+    method,
+    headers: { authorization: `Bearer ${token()}`, ...(body !== undefined && { "content-type": "application/json" }), ...headers },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (res.status === 401) {
+    localStorage.removeItem(TOKEN_KEY);
+    route();
+    throw new ApiError(401, { error: "That is not this job-service's submitters' token." });
+  }
+  return res;
+}
+
+async function api(method, path, body) {
+  const res = await request(method, path, { body });
+  const data = res.status === 204 ? null : await res.json().catch(() => null);
+  if (!res.ok) throw new ApiError(res.status, data);
+  return data;
+}
+
+const when = (iso) => (iso ? new Date(iso).toLocaleString() : "");
+const short = (id) => id.slice(0, 8);
+const errorBox = () => h("div", { class: "error", hidden: true });
+const show = (box, err) => {
+  box.hidden = false;
+  box.textContent = err.message;
+};
+const state = (run) => h("span", { class: `state ${run.state}` }, run.state, run.cancelRequested && !ENDED.includes(run.state) ? " · cancel asked" : "");
+const repoAt = (run) => [run.repo, h("span", { class: "muted mono" }, ` @${run.commit.slice(0, 7)}`)];
+const forOf = (run) => (run.for ? `${run.for.kind}:${run.for.id}` : "");
+function took(run) {
+  if (run.duration !== null) return `${run.duration.toFixed(1)} s`;
+  if (run.startedAt && !run.endedAt) return `${Math.round((Date.now() - Date.parse(run.startedAt)) / 1000)} s so far`;
+  return "";
+}
+
+/**
+ * What the page is showing, so a timer a page left behind stops: each draw
+ * takes a new generation, and a timer whose generation is not the current
+ * one does nothing more.
+ */
+let generation = 0;
+const current = () => {
+  const mine = ++generation;
+  return () => mine === generation;
+};
+const every = (ms, live, fn) => {
+  const tick = async () => {
+    if (!live()) return;
+    try {
+      await fn();
+    } catch {
+      // Shown on the next draw; a dropped poll is retried.
+    }
+    if (live()) setTimeout(tick, ms);
+  };
+  setTimeout(tick, ms);
+};
+
+function signIn() {
+  signout.hidden = true;
+  const input = h("input", { type: "password", placeholder: "AUTH_TOKEN", style: "width:100%", autocomplete: "off" });
+  const box = errorBox();
+  const form = h(
+    "form",
+    {
+      class: "panel",
+      onsubmit: async (event) => {
+        event.preventDefault();
+        localStorage.setItem(TOKEN_KEY, input.value.trim());
+        try {
+          await api("GET", "/runs?limit=1");
+          route();
+        } catch (err) {
+          show(box, err);
+        }
+      },
+    },
+    h("h2", {}, "Sign in"),
+    h("p", { class: "muted" }, "Paste this host's submitters' token: AUTH_TOKEN in ~/.config/job-service/env. It stays in this browser."),
+    input,
+    box,
+    h("div", { class: "row" }, h("button", { class: "primary", type: "submit" }, "Sign in")),
+  );
+  main.replaceChildren(
+    h(
+      "div",
+      { class: "signin" },
+      h("h1", {}, "job-service"),
+      h("p", { class: "muted" }, "Runs of jobs, claimed by runners. The API is at ", h("code", {}, `${location.origin}/runs`), ", the MCP server at ", h("code", {}, `${location.origin}/mcp`), "."),
+      form,
+    ),
+  );
+  input.focus();
+}
+
+async function runs(params) {
+  const live = current();
+  const filters = { state: params.get("state") ?? "", repo: params.get("repo") ?? "", submittedBy: params.get("submittedBy") ?? "", for: params.get("for") ?? "" };
+  const query = new URLSearchParams(Object.entries(filters).filter(([, value]) => value));
+  query.set("limit", params.get("limit") ?? "100");
+  const load = () => api("GET", `/runs?${query}`);
+  const { runs: list } = await load();
+  if (!live()) return;
+
+  const set = (key, value) => {
+    const next = new URLSearchParams(params);
+    if (value) next.set(key, value);
+    else next.delete(key);
+    location.hash = `#/?${next}`;
+  };
+  const text = (key, placeholder) => h("input", { value: filters[key], placeholder, onchange: (e) => set(key, e.target.value.trim()) });
+  const bar = h(
+    "div",
+    { class: "filters" },
+    h("select", { onchange: (e) => set("state", e.target.value) }, h("option", { value: "" }, "Every state"), STATES.map((each) => h("option", { value: each, selected: each === filters.state }, each))),
+    text("repo", "owner/name"),
+    text("submittedBy", "submitted by"),
+    text("for", "for kind:id"),
+    h("button", { onclick: () => (location.hash = "#/") }, "Clear"),
+  );
+  const count = h("span", { class: "muted" });
+  const body = h("tbody");
+  const draw = (rows) => {
+    count.textContent = `${rows.length} run${rows.length === 1 ? "" : "s"}, newest first${rows.length >= Number(query.get("limit")) ? ` (the latest ${query.get("limit")})` : ""}`;
+    body.replaceChildren(
+      ...(rows.length
+        ? rows.map((run) =>
+            h(
+              "tr",
+              {},
+              h("td", {}, h("a", { class: "mono", href: `#/run/${run.id}` }, short(run.id))),
+              h("td", {}, state(run), run.exit !== null ? h("span", { class: "muted" }, ` exit ${run.exit}`) : ""),
+              h("td", {}, repoAt(run)),
+              h("td", { class: "mono" }, run.job, run.args.length ? h("span", { class: "muted" }, ` ${run.args.join(" ")}`) : ""),
+              h("td", {}, run.submittedBy ?? ""),
+              h("td", { class: "mono" }, forOf(run)),
+              h("td", {}, when(run.createdAt)),
+              h("td", {}, took(run)),
+            ),
+          )
+        : [h("tr", {}, h("td", { colspan: 8, class: "muted" }, "No runs."))]),
+    );
+  };
+  draw(list);
+  bar.append(count);
+  main.replaceChildren(
+    bar,
+    h(
+      "table",
+      {},
+      h("thead", {}, h("tr", {}, ["Run", "State", "Repo", "Job", "Submitted by", "For", "Submitted", "Took"].map((name) => h("th", {}, name)))),
+      body,
+    ),
+  );
+  every(REFRESH_MS, live, async () => {
+    const { runs: rows } = await load();
+    if (live()) draw(rows);
+  });
+}
+
+async function runPage(id) {
+  const live = current();
+  let run = await api("GET", `/runs/${id}`);
+  if (!live()) return;
+  const box = errorBox();
+  const head = h("div", { class: "panel" });
+  const drawHead = () => {
+    const fields = [
+      ["Repo", repoAt(run)],
+      ["Commit", h("span", { class: "mono" }, run.commit)],
+      ["Job", h("span", { class: "mono" }, [run.job, ...run.args].join(" "))],
+      run.routine && ["Routine", `${run.routine.repo} @${run.routine.commit.slice(0, 7)} ${run.routine.dir}`],
+      run.host && ["Host", run.host],
+      ["Labels", Object.entries(run.labels).map(([k, v]) => `${k}=${v}`).join(", ") || "none"],
+      ["Limits", `memory ${run.limits.memory === null ? "from jobs.toml" : `${run.limits.memory} MiB`}, timeout ${run.limits.timeout === null ? "from jobs.toml" : `${run.limits.timeout} s`}`],
+      run.runsWith && ["Runs with", `memory ${run.runsWith.memory} MiB, timeout ${run.runsWith.timeout} s, stall ${run.runsWith.stall ?? "never"}${run.runsWith.stall ? " s" : ""}`],
+      ["Runner", run.runner ? h("a", { href: "#/runners", class: "mono" }, short(run.runner)) : "not yet claimed"],
+      ["Submitted", `${when(run.createdAt)}${run.submittedBy ? ` by ${run.submittedBy}` : ""}`],
+      run.for && ["For", h("a", { class: "mono", href: `#/?for=${encodeURIComponent(forOf(run))}` }, forOf(run))],
+      run.startedAt && ["Started", when(run.startedAt)],
+      run.endedAt && ["Ended", `${when(run.endedAt)}${run.duration !== null ? `, after ${run.duration.toFixed(1)} s` : ""}`],
+      run.exit !== null && ["Exit", String(run.exit)],
+      run.reason && ["Reason", run.reason],
+    ].filter(Boolean);
+    const cancel = !ENDED.includes(run.state) && h(
+      "button",
+      {
+        class: "danger",
+        disabled: run.cancelRequested,
+        onclick: async () => {
+          try {
+            run = await api("POST", `/runs/${run.id}/cancel`);
+            drawHead();
+          } catch (err) {
+            show(box, err);
+          }
+        },
+      },
+      run.cancelRequested ? "Cancel asked" : "Cancel",
+    );
+    head.replaceChildren(
+      h("h1", { class: "mono" }, run.id),
+      h("div", { class: "row" }, state(run), cancel),
+      box,
+      h("dl", { class: "fields" }, fields.flatMap(([name, value]) => [h("dt", {}, name), h("dd", {}, value)])),
+    );
+  };
+  drawHead();
+
+  const pre = h("pre", { class: "log" });
+  const status = h("span", { class: "muted" });
+  const follow = h("input", { type: "checkbox", checked: true });
+  const decoder = new TextDecoder();
+  let offset = 0;
+  /** Reads the log on from `offset`, and says whether there may be more. */
+  const more = async () => {
+    const res = await request("GET", `/runs/${run.id}/log`, { headers: { range: `bytes=${offset}-` } });
+    if (res.status !== 206) throw new ApiError(res.status, await res.json().catch(() => null));
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    const size = Number(res.headers.get("content-range")?.split("/")[1] ?? offset);
+    offset += bytes.length;
+    const ended = ENDED.includes(res.headers.get("run-state"));
+    if (bytes.length) {
+      const atBottom = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 24;
+      // `stream` holds a character split across two reads until the rest arrives.
+      pre.append(decoder.decode(bytes, { stream: offset < size || !ended }));
+      if (follow.checked && atBottom) pre.scrollTop = pre.scrollHeight;
+    }
+    status.textContent = `${offset} of ${size} bytes${ended && offset >= size ? ", the whole log" : ", following"}`;
+    return offset < size || !ended;
+  };
+
+  main.replaceChildren(
+    head,
+    h("div", { class: "panel" }, h("h2", {}, "Log"), h("div", { class: "row", style: "margin:0 0 8px" }, status, h("label", { class: "muted", style: "margin:0;text-transform:none;letter-spacing:0;font-size:13px" }, follow, " keep at the end")), pre),
+  );
+  let going = await more();
+  while (going && live() && offset < run.logSize) going = await more();
+  if (going) {
+    every(FOLLOW_MS, live, async () => {
+      if (!going) return;
+      going = await more();
+      // The head follows the run too: it says when it is claimed, asked to cancel and ended.
+      const next = await api("GET", `/runs/${run.id}`);
+      if (live() && next.updatedAt !== run.updatedAt) {
+        run = next;
+        drawHead();
+      }
+      if (!going) generation++;
+    });
+  }
+}
+
+const lines = (area) => area.value.split("\n").map((line) => line.trim()).filter(Boolean);
+
+function newRun(params) {
+  current();
+  const input = (name, attrs = {}) => h("input", { name, style: "width:100%", value: params.get(name) ?? "", ...attrs });
+  const repo = input("repo", { placeholder: "owner/name", required: true });
+  const commit = input("commit", { placeholder: "the full 40-character sha", required: true, pattern: "[0-9a-f]{40}", class: "mono" });
+  const job = input("job", { placeholder: "a [jobs.<name>] in its jobs.toml", required: true });
+  const args = h("textarea", { placeholder: "one argument a line" });
+  const labels = h("textarea", { placeholder: "key=value, one a line: what a runner must have" });
+  const memory = input("memory", { type: "number", min: 16, placeholder: "jobs.toml's" });
+  const timeout = input("timeout", { type: "number", min: 1, placeholder: "jobs.toml's" });
+  const host = input("host", { placeholder: "any runner that fits" });
+  const box = errorBox();
+  main.replaceChildren(
+    h(
+      "form",
+      {
+        class: "panel",
+        onsubmit: async (e) => {
+          e.preventDefault();
+          try {
+            const pairs = lines(labels).map((line) => {
+              const at = line.indexOf("=");
+              if (at < 1) throw new Error(`"${line}" is not key=value`);
+              return [line.slice(0, at).trim(), line.slice(at + 1).trim()];
+            });
+            const run = await api("POST", "/runs", {
+              repo: repo.value.trim(),
+              commit: commit.value.trim(),
+              job: job.value.trim(),
+              args: lines(args),
+              labels: Object.fromEntries(pairs),
+              limits: { memory: memory.value ? Number(memory.value) : null, timeout: timeout.value ? Number(timeout.value) : null },
+              host: host.value.trim() || null,
+            });
+            location.hash = `#/run/${run.id}`;
+          } catch (err) {
+            show(box, err);
+          }
+        },
+      },
+      h("h1", {}, "Submit a run"),
+      h("p", { class: "muted" }, "Stored pending until a runner whose labels and free memory fit claims it. Nothing is checked against the repo here: a job missing from jobs.toml fails on its runner, saying so in its log."),
+      h("label", {}, "Repo"), repo,
+      h("label", {}, "Commit"), commit,
+      h("label", {}, "Job"), job,
+      h("label", {}, "Arguments"), args,
+      h("div", { class: "grid2" }, h("div", {}, h("label", {}, "Memory, MiB"), memory), h("div", {}, h("label", {}, "Timeout, s"), timeout)),
+      h("label", {}, "Labels"), labels,
+      h("label", {}, "Host"), host,
+      box,
+      h("div", { class: "row" }, h("button", { class: "primary", type: "submit" }, "Submit")),
+    ),
+  );
+}
+
+async function runners() {
+  current();
+  const { runners: list } = await api("GET", "/runners");
+  main.replaceChildren(
+    h(
+      "table",
+      {},
+      h("thead", {}, h("tr", {}, ["Runner", "Name", "Host", "Labels", "Slots", "Memory", "Version", "Registered", "Last seen"].map((name) => h("th", {}, name)))),
+      h(
+        "tbody",
+        {},
+        list.length
+          ? list.map((runner) =>
+              h(
+                "tr",
+                {},
+                h("td", { class: "mono" }, short(runner.id)),
+                h("td", {}, runner.name),
+                h("td", {}, runner.hostId ?? ""),
+                h("td", { class: "mono" }, Object.entries(runner.labels).map(([k, v]) => `${k}=${v}`).join(", ")),
+                h("td", {}, runner.slots),
+                h("td", {}, `${runner.memory} MiB`),
+                h("td", {}, runner.version ?? ""),
+                h("td", {}, when(runner.createdAt)),
+                h("td", {}, when(runner.lastSeenAt)),
+              ),
+            )
+          : h("tr", {}, h("td", { colspan: 9, class: "muted" }, "No runner has registered.")),
+      ),
+    ),
+  );
+}
+
+async function route() {
+  if (!token()) return signIn();
+  signout.hidden = false;
+  const [path, search = ""] = location.hash.replace(/^#/, "").split("?");
+  const params = new URLSearchParams(search);
+  try {
+    const run = /^\/run\/([0-9a-f-]{36})$/.exec(path ?? "");
+    if (run) await runPage(run[1]);
+    else if (path === "/new") newRun(params);
+    else if (path === "/runners") await runners();
+    else await runs(params);
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 401) return;
+    main.replaceChildren(h("div", { class: "panel error" }, err.message));
+  }
+}
+
+signout.addEventListener("click", () => {
+  localStorage.removeItem(TOKEN_KEY);
+  route();
+});
+window.addEventListener("hashchange", route);
+fetch("health")
+  .then((res) => res.json())
+  .then((about) => (document.getElementById("about").textContent = `v${about.version} · ${about.commit.slice(0, 7)}`))
+  .catch(() => {});
+route();

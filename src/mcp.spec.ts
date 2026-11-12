@@ -1,0 +1,132 @@
+import { readFileSync } from "node:fs";
+import { describe, expect, it } from "vitest";
+import { JobApi } from "./api.ts";
+import type { Run, Runner } from "./domain.ts";
+import { mcpDocument, renderMcp, renderMcpHtml } from "./mcp-doc.ts";
+import { MCP_DOC, MCP_FILE, MCP_PAGE, openApiDocument } from "./spec.ts";
+import { Store } from "./store.ts";
+
+const TOKEN = "submitter";
+const REGISTRATION = "registration";
+const COMMIT = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+
+function setup() {
+  const api = new JobApi(Store.open(":memory:"), { submitter: TOKEN, registration: REGISTRATION }, () => ({ key: "jobs", version: 0, commit: "x", files: [] }), {
+    version: "0.1.0",
+    commit: "x",
+  });
+  const fetch = (path: string, auth: string, init: { method?: string; body?: unknown; headers?: Record<string, string> } = {}) =>
+    api.fetch(
+      new Request(`http://local${path}`, {
+        method: init.method ?? "GET",
+        headers: { authorization: `Bearer ${auth}`, ...init.headers },
+        body: init.body === undefined ? undefined : init.body instanceof Uint8Array ? init.body : JSON.stringify(init.body),
+      }),
+    );
+  const rpc = (auth: string, method: string, params: unknown, headers: Record<string, string> = {}) =>
+    fetch("/mcp", auth, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json, text/event-stream", ...headers },
+      body: { jsonrpc: "2.0", id: 1, method, params },
+    });
+  /** A tool's answer: its JSON, and whether it is an error. */
+  const use = async <T = unknown>(name: string, args: unknown, headers: Record<string, string> = {}) => {
+    const res = await rpc(TOKEN, "tools/call", { name, arguments: args }, headers);
+    expect(res.status).toBe(200);
+    const { result } = (await res.json()) as { result: { content: { text: string }[]; isError?: boolean } };
+    return { isError: result.isError === true, json: JSON.parse(result.content[0]!.text) as T };
+  };
+  /** A runner, as job-runner is: registered, claiming and appending under its own token. */
+  const runner = async () => {
+    const reg = await fetch("/runners", REGISTRATION, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: { name: "host", slots: 1, memory: 2048, labels: {} },
+    });
+    const { runner, token } = (await reg.json()) as { runner: Runner; token: string };
+    const claim = async () =>
+      ((await (await fetch(`/runners/${runner.id}/claim`, token, { method: "POST", headers: { "content-type": "application/json" }, body: { free: { slots: 1, memory: 2048 } } })).json()) as { run: Run }).run;
+    const append = (id: string, text: string, start: number) => {
+      const bytes = new TextEncoder().encode(text);
+      return fetch(`/runs/${id}/log`, token, {
+        method: "PATCH",
+        headers: { "content-type": "application/octet-stream", "content-range": `bytes ${start}-${start + bytes.length - 1}/*` },
+        body: bytes,
+      });
+    };
+    return { claim, append };
+  };
+  return { rpc, use, runner, fetch };
+}
+
+describe("the MCP server", () => {
+  it("takes the submitters' token, and none other", async () => {
+    const { rpc } = setup();
+    expect((await rpc("nobody", "tools/list", {})).status).toBe(401);
+    expect((await rpc(REGISTRATION, "tools/list", {})).status).toBe(401);
+  });
+
+  it("submits a run as the caller, follows its log, and cancels it", async () => {
+    const { use, runner } = setup();
+    const submitted = await use<Run>("submit_run", { repo: "dakotacolorado/python-template", commit: COMMIT, job: "hello" }, { "claimed-by": "agent-7" });
+    expect(submitted.isError).toBe(false);
+    expect(submitted.json).toMatchObject({ state: "pending", submittedBy: "agent-7", args: [] });
+    const run = submitted.json;
+
+    const r = await runner();
+    expect((await r.claim()).id).toBe(run.id);
+    await r.append(run.id, "hello\n", 0);
+    type Log = { state: string; offset: number; size: number; next: number; log: string };
+    const first = (await use<Log>("get_run_log", { id: run.id })).json;
+    expect(first).toEqual({ state: "running", offset: 0, size: 6, next: 6, log: "hello\n" });
+    await r.append(run.id, "wörld\n", 6);
+    expect((await use<Log>("get_run_log", { id: run.id, offset: first.next })).json).toMatchObject({ log: "wörld\n", size: 13, next: 13 });
+    expect((await use<Log>("get_run_log", { id: run.id, offset: 13 })).json).toMatchObject({ log: "", next: 13 });
+
+    expect((await use<{ runs: Run[] }>("list_runs", { state: "running" })).json.runs.map((each) => each.id)).toEqual([run.id]);
+    expect((await use<{ runners: Runner[] }>("list_runners", {})).json.runners).toHaveLength(1);
+    expect((await use<Run>("cancel_run", { id: run.id })).json).toMatchObject({ id: run.id, cancelRequested: true });
+    expect((await use<Run>("get_run", { id: run.id })).json.cancelRequested).toBe(true);
+  });
+
+  it("answers an API refusal as the tool's error, in the API's words", async () => {
+    const { use } = setup();
+    const missing = await use<{ error: string }>("get_run", { id: "00000000-0000-4000-8000-000000000000" });
+    expect(missing).toEqual({ isError: true, json: { error: "no run 00000000-0000-4000-8000-000000000000" } });
+    expect((await use("get_run_log", { id: "00000000-0000-4000-8000-000000000000" })).isError).toBe(true);
+  });
+
+  it("has one tool per operation the submitters' token calls, named the same in snake_case", async () => {
+    const { paths } = (await openApiDocument()) as {
+      paths: Record<string, Record<string, { operationId: string; tags: string[]; security?: Record<string, unknown>[] }>>;
+    };
+    const snake = (id: string) => id.replace(/([a-z])([A-Z])/g, "$1_$2").toLowerCase();
+    // The runner protocol takes a runner's token, or the registration token; meta is for the platform.
+    const submitters = Object.values(paths)
+      .flatMap((methods) => Object.values(methods))
+      .filter((op) => !op.tags.includes("meta") && op.operationId !== "registerRunner" && op.security?.some((s) => "bearerAuth" in s))
+      .map((op) => snake(op.operationId));
+    expect((await mcpDocument()).tools.map((tool) => tool.name).sort()).toEqual(submitters.sort());
+  });
+});
+
+describe("mcp.json, docs/MCP.md and docs/mcp.html", () => {
+  it("match what the server serves", async () => {
+    const served = await mcpDocument();
+    expect(JSON.parse(readFileSync(MCP_FILE, "utf8"))).toEqual(served);
+    expect(readFileSync(MCP_DOC, "utf8")).toBe(renderMcp(served));
+    expect(readFileSync(MCP_PAGE, "utf8")).toBe(renderMcpHtml(served));
+  });
+
+  it("are served without a token, giving the address they were reached at", async () => {
+    const { fetch } = setup();
+    const page = await fetch("/docs/mcp", "", { headers: { host: "beta.example.ts.net:8445", "x-forwarded-proto": "https" } });
+    expect(page.status).toBe(200);
+    const html = await page.text();
+    expect(html).toContain("https://beta.example.ts.net:8445/mcp");
+    expect(html).not.toContain("127.0.0.1");
+    const forged = await (await fetch("/docs/mcp", "", { headers: { host: "x\"><script>" } })).text();
+    expect(forged).not.toContain("<script>");
+    expect((await fetch("/mcp.json", "")).status).toBe(200);
+  });
+});

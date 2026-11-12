@@ -24,8 +24,9 @@ Environment:
   AUTH_TOKEN      the submitters' bearer token: submit, read and cancel runs, list runners
   RUNNER_TOKEN    the registration token: registers runners, which then call with their own
 
-Without AUTH_TOKEN, every call but /health and /openapi.json answers 503; without
-RUNNER_TOKEN, so does registering a runner.
+Without AUTH_TOKEN, every call but /health, /openapi.json, /mcp.json and the
+docs at /docs/api and /docs/mcp answers 503; without RUNNER_TOKEN, so does
+registering a runner. /mcp is the MCP server, under AUTH_TOKEN.
 `;
 
 const { values, positionals } = parseArgs({

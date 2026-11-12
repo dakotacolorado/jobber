@@ -107,17 +107,17 @@ export const SubmitSchema = z
           "run `host` runs, which runs it on the host itself, with the host's user services, if that host's config lets it. Null: any runner that fits.",
       ),
   })
-  .openapi("Submit");
+  .openapi("SubmitRunInput");
 
 export const RunSchema = z
   .object({
-    id: z.string().uuid(),
+    id: z.string().uuid().describe("The run's id."),
     repo: Repo.describe("`owner/name` on GitHub: checked out at `/work`; with a routine, its target."),
     commit: Commit,
     job: JobName,
     routine: RoutineSchema.nullable().describe("Where its steps live, when not in `repo`'s own `jobs.toml`; null when they are."),
     host: z.string().nullable().describe("The machine it must run on, on the host itself; null: any runner that fits."),
-    args: z.array(z.string()),
+    args: z.array(z.string()).describe("Appended to the job's `run` command from `jobs.toml`."),
     limits: LimitsSchema,
     labels: Labels,
     for: ForSchema.nullable().describe("What it was for; null when its submitter did not say."),
@@ -132,65 +132,91 @@ export const RunSchema = z
     duration: z.number().nullable().describe("Seconds it ran, as its runner reported."),
     logSize: z.int().describe("Bytes of log stored so far."),
     submittedBy: z.string().nullable().describe("The `claimed-by` it was submitted with."),
-    createdAt: z.string(),
-    updatedAt: z.string(),
-    startedAt: z.string().nullable(),
-    endedAt: z.string().nullable(),
+    createdAt: z.string().describe("When it was submitted, as an ISO 8601 timestamp."),
+    updatedAt: z.string().describe("When it last changed, as an ISO 8601 timestamp."),
+    startedAt: z.string().nullable().describe("When a runner claimed it; null while pending."),
+    endedAt: z.string().nullable().describe("When it ended; null until it does."),
     leaseExpiresAt: z.string().nullable().describe("While running: if no log append renews it by then, the run fails."),
   })
   .openapi("Run");
 
 const SkillFileSchema = z.object({
   path: z.string().describe("Under the worker's Claude Code folder: `skills/jobs/bin/…` or `skills/jobs/reference/…`."),
-  content: z.string(),
-  executable: z.boolean(),
-});
+  content: z.string().describe("The file's text."),
+  executable: z.boolean().describe("Whether to install it executable: true for everything under `bin/`."),
+}).openapi("SkillFile");
 
 export const SkillSchema = z
   .object({
     key: z.string().describe("The skill's name, which its files are under."),
     version: z.int().describe("The deployed tree's commit count, 0 when deployed from outside git."),
     commit: z.string().describe("The deployed commit, ending `-dirty` when deployed with uncommitted changes."),
-    files: z.array(SkillFileSchema),
+    files: z.array(SkillFileSchema).describe("Every file of the skill, as a worker installs it."),
   })
   .openapi("Skill");
 
-export const ErrorSchema = z.object({ error: z.string() }).openapi("Error");
+/** Each status's exception, as an AWS API names it. */
+export const ERROR_CODES = {
+  400: "ValidationException",
+  401: "UnauthorizedException",
+  403: "AccessDeniedException",
+  404: "ResourceNotFoundException",
+  409: "ConflictException",
+  413: "PayloadTooLargeException",
+  416: "InvalidRangeException",
+  500: "InternalServerException",
+  503: "ServiceUnavailableException",
+} as const;
+
+export type ErrorStatus = keyof typeof ERROR_CODES;
+
+export const ErrorSchema = z
+  .object({
+    code: z.enum(Object.values(ERROR_CODES) as [string, ...string[]]).describe("What went wrong, as an exception name: one per HTTP status."),
+    message: z.string().describe("What went wrong, in words."),
+  })
+  .describe("Every error's body.")
+  .openapi("Error");
 
 const ClaimHeader = z.object({
   "claimed-by": z.string().min(1).max(200).optional().describe("Who is submitting: recorded on the run as `submittedBy`."),
 });
 
-const IdParam = z.object({ id: z.string().uuid().openapi({ param: { name: "id", in: "path" } }) });
+const IdParam = z.object({ id: z.string().uuid().describe("The run's id.").openapi({ param: { name: "id", in: "path" } }) });
 
 const json = <T extends z.ZodType>(schema: T, description: string) => ({
   content: { "application/json": { schema } },
   description,
 });
 
+/** An error answer, described as `<code>: <cause>`, which the reference lists as AWS's do. */
+const fails = (status: ErrorStatus, cause: string) => json(ErrorSchema, `${ERROR_CODES[status]}: ${cause}`);
+
 const FAILS = {
-  400: json(ErrorSchema, "The request failed validation."),
-  401: json(ErrorSchema, "Missing or incorrect bearer token."),
-  503: json(ErrorSchema, "No API token is configured."),
+  400: fails(400, "The request failed validation."),
+  401: fails(401, "The bearer token is missing or is not the submitters'."),
+  503: fails(503, "The service has no submitters' token configured."),
 };
-const MISSING = { 404: json(ErrorSchema, "No run with that id.") };
-const secured = { security: [{ bearerAuth: [] }], tags: ["runs"] };
+const MISSING = { 404: fails(404, "No run has that id.") };
+const secured = { security: [{ bearerAuth: [] }], tags: ["Runs"] };
 
 // --- routes -----------------------------------------------------------------
 
 export const healthRoute = createRoute({
   method: "get",
   path: "/health",
-  operationId: "healthCheck",
-  tags: ["meta"],
-  summary: "Liveness check",
+  operationId: "GetHealth",
+  tags: ["Service"],
+  summary: "Get the service's health and version",
   responses: {
     200: json(
-      z.object({
-        ok: z.literal(true),
-        version: z.string().describe("The package's version."),
-        commit: z.string().describe("The commit it was built from, ending `-dirty` when built with uncommitted changes."),
-      }),
+      z
+        .object({
+          ok: z.literal(true).describe("Always true: an answer at all means it is up."),
+          version: z.string().describe("The package's version."),
+          commit: z.string().describe("The commit it was built from, ending `-dirty` when built with uncommitted changes."),
+        })
+        .openapi("Health"),
       "Service is up.",
     ),
   },
@@ -198,11 +224,11 @@ export const healthRoute = createRoute({
 
 export const skillRoute = createRoute({
   security: [{ bearerAuth: [] }],
-  tags: ["meta"],
+  tags: ["Service"],
   method: "get",
   path: "/skill",
-  operationId: "getSkill",
-  summary: "Read the client workers call this deployment with",
+  operationId: "GetSkill",
+  summary: "Get the client workers call this deployment with",
   description: "The jobs skill's `bin/` and `reference/`, as this deployment was built with them, so a worker calls the API that is deployed.",
   responses: { 200: json(SkillSchema, "The skill's files."), 401: FAILS[401], 503: FAILS[503] },
 });
@@ -211,7 +237,7 @@ export const submitRoute = createRoute({
   ...secured,
   method: "post",
   path: "/runs",
-  operationId: "submitRun",
+  operationId: "SubmitRun",
   summary: "Submit a run of a job: a named script in a repo at a commit",
   description:
     "One run, stored `pending` until a runner whose labels and free memory fit claims it, with what it was for when " +
@@ -238,20 +264,23 @@ export const listRoute = createRoute({
   ...secured,
   method: "get",
   path: "/runs",
-  operationId: "listRuns",
+  operationId: "ListRuns",
   summary: "List runs, newest first",
   request: {
     query: ListQuery,
   },
-  responses: { 200: json(z.object({ runs: z.array(RunSchema) }), "The runs."), ...FAILS },
+  responses: {
+    200: json(z.object({ runs: z.array(RunSchema).describe("The runs, newest first.") }).openapi("ListRunsResponse"), "The runs."),
+    ...FAILS,
+  },
 });
 
 export const getRoute = createRoute({
   ...secured,
   method: "get",
   path: "/runs/{id}",
-  operationId: "getRun",
-  summary: "Read one run",
+  operationId: "GetRun",
+  summary: "Get a run",
   request: { params: IdParam },
   responses: { 200: json(RunSchema, "The run."), ...FAILS, ...MISSING },
 });
@@ -263,8 +292,8 @@ export const logRoute = createRoute({
   ...secured,
   method: "get",
   path: "/runs/{id}/log",
-  operationId: "getRunLog",
-  summary: "Read a run's log from a byte offset",
+  operationId: "GetRunLog",
+  summary: "Get a run's log from a byte offset",
   description:
     "Send `Range: bytes=N-` to read from offset N; without it, from 0. Answers 206 with `Content-Range: bytes N-M/size` " +
     "and at most 1 MiB, or an empty body when N is the log's size, so a follower polls from where it got to. " +
@@ -274,8 +303,15 @@ export const logRoute = createRoute({
     headers: z.object({ range: z.string().regex(/^bytes=\d+-$/).optional().describe("`bytes=N-`") }),
   },
   responses: {
-    206: { content: { "text/plain": { schema: z.string() } }, description: "The log from N, up to 1 MiB." },
-    416: json(ErrorSchema, "N is past the end of the log."),
+    206: {
+      content: { "text/plain": { schema: z.string() } },
+      description: "The log from N, up to 1 MiB.",
+      headers: z.object({
+        "content-range": z.string().describe("`bytes N-M/size` for the bytes sent, or `bytes */size` when there are none: `size` is the log's length so far."),
+        "run-state": State.describe("The run's state: once it has ended and the log is read to `size`, there is no more."),
+      }),
+    },
+    416: fails(416, "N is past the end of the log."),
     ...FAILS,
     ...MISSING,
   },
@@ -285,20 +321,20 @@ export const cancelRoute = createRoute({
   ...secured,
   method: "post",
   path: "/runs/{id}/cancel",
-  operationId: "cancelRun",
+  operationId: "CancelRun",
   summary: "Cancel a run",
   description:
     "A pending run ends `canceled` at once. A running one is marked `cancelRequested`: its runner is told on its next " +
     "log append, stops it, and reports it `canceled`.",
   request: { params: IdParam },
-  responses: { 200: json(RunSchema, "The run, canceled or marked."), 409: json(ErrorSchema, "It has already ended."), ...FAILS, ...MISSING },
+  responses: { 200: json(RunSchema, "The run, canceled or marked."), 409: fails(409, "It has already ended."), ...FAILS, ...MISSING },
 });
 
 // --- runners ----------------------------------------------------------------
 
 export const RunnerSchema = z
   .object({
-    id: z.string().uuid(),
+    id: z.string().uuid().describe("The runner's id."),
     name: z.string().describe("What it calls itself, e.g. its host's name: not unique."),
     labels: Labels,
     slots: z.int().describe("Runs it runs at once."),
@@ -308,29 +344,29 @@ export const RunnerSchema = z
       .string()
       .nullable()
       .describe("The machine it runs on, the same as that machine's worker-host's `host_id` (by default its hostname); null until it says."),
-    createdAt: z.string(),
-    lastSeenAt: z.string().describe("Its last claim."),
+    createdAt: z.string().describe("When it registered, as an ISO 8601 timestamp."),
+    lastSeenAt: z.string().describe("When it last asked for a run, as an ISO 8601 timestamp."),
   })
   .openapi("Runner");
 
 
 export const RegisterSchema = z
   .object({
-    name: z.string().trim().min(1).max(200),
+    name: z.string().trim().min(1).max(200).describe("What it calls itself, e.g. its host's name: not unique."),
     labels: Labels.default({}),
-    slots: z.int().min(1).max(64),
-    memory: z.int().min(16).max(1_048_576).describe("MiB."),
-    version: z.string().max(100).nullable().default(null),
+    slots: z.int().min(1).max(64).describe("Runs it runs at once."),
+    memory: z.int().min(16).max(1_048_576).describe("MiB it has for runs and their image builds."),
+    version: z.string().max(100).nullable().default(null).describe("job-runner's version."),
     hostId: HostId.nullable().default(null),
   })
-  .openapi("Register");
+  .openapi("RegisterRunnerInput");
 
 export const RegisteredSchema = z
   .object({
-    runner: RunnerSchema,
+    runner: RunnerSchema.describe("The runner, registered."),
     token: z.string().describe("Its own bearer token, `<runner id>.<secret>`, shown only here: keep it where only the runner's user can read it."),
   })
-  .openapi("Registered");
+  .openapi("RegisterRunnerResponse");
 
 export const ClaimRequestSchema = z
   .object({
@@ -351,23 +387,23 @@ export const ClaimRequestSchema = z
       })
       .describe("What it can take on now."),
   })
-  .openapi("ClaimRequest");
+  .openapi("ClaimRunInput");
 
 export const ClaimSchema = z
   .object({
-    run: RunSchema,
+    run: RunSchema.describe("The run, now running on this runner."),
     memory: z.int().describe("MiB the run was admitted with: reserve this, and run it with no more."),
     lease: z.int().describe("Seconds the run lives without a log append. Append, or renew with an empty one, well within it."),
   })
-  .openapi("Claim");
+  .openapi("ClaimRunResponse");
 
 export const AppendedSchema = z
   .object({
     size: z.int().describe("Bytes of log stored: the offset the next append starts at."),
     canceled: z.boolean().describe("A cancel was asked for: stop the run and report it `canceled`."),
-    leaseExpiresAt: z.string(),
+    leaseExpiresAt: z.string().describe("When the run fails unless another append renews it, as an ISO 8601 timestamp."),
   })
-  .openapi("Appended");
+  .openapi("AppendRunLogResponse");
 
 export const ReportSchema = z
   .object({
@@ -376,22 +412,22 @@ export const ReportSchema = z
     duration: z.number().min(0).describe("Seconds from claim to end."),
     reason: z.string().trim().min(1).max(2000).nullable().default(null).describe("Why, when the state does not say: `timed out after 600s`, `image build failed`."),
   })
-  .openapi("Report");
+  .openapi("CompleteRunInput");
 
-const RunnerIdParam = z.object({ id: z.string().uuid().openapi({ param: { name: "id", in: "path" } }) });
-const runnerAuth = { security: [{ runnerAuth: [] }], tags: ["runners"] };
+const RunnerIdParam = z.object({ id: z.string().uuid().describe("The runner's id.").openapi({ param: { name: "id", in: "path" } }) });
+const runnerAuth = { security: [{ runnerAuth: [] }], tags: ["Runners"] };
 const RUNNER_FAILS = {
-  400: json(ErrorSchema, "The request failed validation."),
-  401: json(ErrorSchema, "Not a runner's token."),
-  403: json(ErrorSchema, "Another runner's run."),
+  400: fails(400, "The request failed validation."),
+  401: fails(401, "The bearer token is not a runner's own."),
+  403: fails(403, "The run is another runner's, or the path names another runner."),
 };
 
 export const registerRoute = createRoute({
   security: [{ bearerAuth: [] }],
-  tags: ["runners"],
+  tags: ["Runners"],
   method: "post",
   path: "/runners",
-  operationId: "registerRunner",
+  operationId: "RegisterRunner",
   summary: "Register a runner",
   description: "With the registration token, not the submitters'. Answers the runner's own token once.",
   request: { body: json(RegisterSchema, "What the runner is and has.") },
@@ -400,19 +436,25 @@ export const registerRoute = createRoute({
 
 export const runnersRoute = createRoute({
   ...secured,
-  tags: ["runners"],
+  tags: ["Runners"],
   method: "get",
   path: "/runners",
-  operationId: "listRunners",
+  operationId: "ListRunners",
   summary: "List runners, most recently seen first",
-  responses: { 200: json(z.object({ runners: z.array(RunnerSchema) }), "The runners."), ...FAILS },
+  responses: {
+    200: json(
+      z.object({ runners: z.array(RunnerSchema).describe("Every registered runner, most recently seen first.") }).openapi("ListRunnersResponse"),
+      "The runners.",
+    ),
+    ...FAILS,
+  },
 });
 
 export const claimRoute = createRoute({
   ...runnerAuth,
   method: "post",
   path: "/runners/{id}/claim",
-  operationId: "claimRun",
+  operationId: "ClaimRun",
   summary: "Claim the oldest pending run that fits",
   description:
     "The oldest pending run whose labels the runner has, whose memory fits `free`, whose routine or host, if any, it `can` run, " +
@@ -422,11 +464,15 @@ export const claimRoute = createRoute({
   responses: { 200: json(ClaimSchema, "A run, now running here."), 204: { description: "No pending run fits." }, ...RUNNER_FAILS },
 });
 
+export const InvalidRangeSchema = ErrorSchema.extend({
+  size: z.int().describe("Bytes of log stored: the offset to resend from."),
+}).openapi("InvalidRangeError");
+
 export const appendRoute = createRoute({
   ...runnerAuth,
   method: "patch",
   path: "/runs/{id}/log",
-  operationId: "appendRunLog",
+  operationId: "AppendRunLog",
   summary: "Append to the log of a run in progress, and renew its lease",
   description:
     "The body is the bytes, `Content-Range: bytes S-E/*` where S is the log's current size and E = S + length - 1. " +
@@ -439,9 +485,9 @@ export const appendRoute = createRoute({
   },
   responses: {
     200: json(AppendedSchema, "Stored, and the lease renewed."),
-    409: json(ErrorSchema, "The run is not running: it ended, perhaps by its lease lapsing."),
-    413: json(ErrorSchema, "Over 256 KiB, or the log would pass 64 MiB."),
-    416: json(z.object({ error: z.string(), size: z.int() }), "Not at the log's end: resend from `size`."),
+    409: fails(409, "The run is not running: it ended, perhaps by its lease lapsing."),
+    413: fails(413, "Over 256 KiB, or the log would pass 64 MiB."),
+    416: json(InvalidRangeSchema, `${ERROR_CODES[416]}: The append does not start at the log's end: resend from \`size\`.`),
     ...RUNNER_FAILS,
     ...MISSING,
   },
@@ -451,20 +497,20 @@ export const runsWithRoute = createRoute({
   ...runnerAuth,
   method: "put",
   path: "/runs/{id}/runs-with",
-  operationId: "setRunsWith",
-  summary: "Say what a run in progress runs with",
+  operationId: "PutRunsWith",
+  summary: "Put what a run in progress runs with",
   description: "From the run's own runner, once it has read `jobs.toml` and before it starts the run's container. Sending it again replaces it.",
   request: { params: IdParam, body: json(RunsWithSchema, "Its memory, timeout and stall limit.") },
-  responses: { 200: json(RunSchema, "The run, with `runsWith`."), 409: json(ErrorSchema, "It is not running."), ...RUNNER_FAILS, ...MISSING },
+  responses: { 200: json(RunSchema, "The run, with `runsWith`."), 409: fails(409, "It is not running."), ...RUNNER_FAILS, ...MISSING },
 });
 
 export const reportRoute = createRoute({
   ...runnerAuth,
   method: "put",
   path: "/runs/{id}",
-  operationId: "reportRun",
-  summary: "Report how a run in progress ended",
+  operationId: "CompleteRun",
+  summary: "Complete a run in progress, saying how it ended",
   description: "From the run's own runner. Sending the same end again answers it unchanged, so a lost reply can be retried.",
   request: { params: IdParam, body: json(ReportSchema, "How it ended.") },
-  responses: { 200: json(RunSchema, "The run, ended."), 409: json(ErrorSchema, "It is not running, or ended otherwise."), ...RUNNER_FAILS, ...MISSING },
+  responses: { 200: json(RunSchema, "The run, ended."), 409: fails(409, "It is not running, or ended otherwise."), ...RUNNER_FAILS, ...MISSING },
 });

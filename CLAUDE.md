@@ -12,8 +12,12 @@ or platform behaviour not visible in the source.
 
 ## Contract
 
-`src/schema.ts` is the source of `openapi.json`, `docs/API.md`,
-`docs/index.html` and the skill's `reference/api.md`; `src/mcp.ts`, whose
+`src/schema.ts` is the source of `openapi.json`, its AWS-layout reference
+(`docs/API.md`, and `docs/api.html` at `/docs/api`, by `src/api-doc.ts`),
+`docs/redoc.html` and the skill's `reference/api.md`. Name an operation
+VerbNoun as AWS does, describe every field, and answer errors as
+`{code, message}` with the status's exception name (`ERROR_CODES`): tests
+hold all three. Paths and successful shapes are job-runner's contract; `src/mcp.ts`, whose
 tools are the API operations the submitters' token calls, of `mcp.json`,
 `docs/MCP.md` and `docs/mcp.html`. The pre-commit hook regenerates them all
 (`npm run spec`); a test fails if any drifts. The page is `ui/`, served as

@@ -1,2064 +1,1990 @@
-# job-service
-
-> Version 0.1.0
-
-A job is a named script in a repo's `jobs.toml`; a run is one execution of it, to completion at one commit, by a runner that claims it. A run is submitted `pending`, claimed and `running`, and ends `succeeded`, `failed` or `canceled` with its exit code, and says what it was for when its submitter said. Its log can be read from any offset while it runs and after.
-
-
-## Path Table
-
-| Method | Path | Description |
-| --- | --- | --- |
-| GET | [/health](#gethealth) | Liveness check |
-| GET | [/skill](#getskill) | Read the client workers call this deployment with |
-| POST | [/runs](#postruns) | Submit a run of a job: a named script in a repo at a commit |
-| GET | [/runs](#getruns) | List runs, newest first |
-| GET | [/runs/{id}](#getrunsid) | Read one run |
-| PUT | [/runs/{id}](#putrunsid) | Report how a run in progress ended |
-| GET | [/runs/{id}/log](#getrunsidlog) | Read a run's log from a byte offset |
-| PATCH | [/runs/{id}/log](#patchrunsidlog) | Append to the log of a run in progress, and renew its lease |
-| POST | [/runs/{id}/cancel](#postrunsidcancel) | Cancel a run |
-| POST | [/runners](#postrunners) | Register a runner |
-| GET | [/runners](#getrunners) | List runners, most recently seen first |
-| POST | [/runners/{id}/claim](#postrunnersidclaim) | Claim the oldest pending run that fits |
-| PUT | [/runs/{id}/runs-with](#putrunsidruns-with) | Say what a run in progress runs with |
-
-## Reference Table
-
-| Name | Path | Description |
-| --- | --- | --- |
-| bearerAuth | [#/components/securitySchemes/bearerAuth](#componentssecurityschemesbearerauth) |  |
-| runnerAuth | [#/components/securitySchemes/runnerAuth](#componentssecurityschemesrunnerauth) | A runner's own token, `<runner id>.<secret>`, as `registerRunner` answered it. |
-| Skill | [#/components/schemas/Skill](#componentsschemasskill) |  |
-| Error | [#/components/schemas/Error](#componentsschemaserror) |  |
-| Run | [#/components/schemas/Run](#componentsschemasrun) |  |
-| Routine | [#/components/schemas/Routine](#componentsschemasroutine) | Where its steps live, when not in `repo`'s own `jobs.toml`; null when they are. |
-| Limits | [#/components/schemas/Limits](#componentsschemaslimits) |  |
-| For | [#/components/schemas/For](#componentsschemasfor) | What it was for; null when its submitter did not say. |
-| RunsWith | [#/components/schemas/RunsWith](#componentsschemasrunswith) | What its runner runs it with: `limits`, else `jobs.toml`'s for the job, else its `[defaults]`. Null until its runner has read `jobs.toml`, and on a runner that does not say. |
-| Submit | [#/components/schemas/Submit](#componentsschemassubmit) |  |
-| Registered | [#/components/schemas/Registered](#componentsschemasregistered) |  |
-| Runner | [#/components/schemas/Runner](#componentsschemasrunner) |  |
-| Register | [#/components/schemas/Register](#componentsschemasregister) |  |
-| Claim | [#/components/schemas/Claim](#componentsschemasclaim) |  |
-| ClaimRequest | [#/components/schemas/ClaimRequest](#componentsschemasclaimrequest) |  |
-| Appended | [#/components/schemas/Appended](#componentsschemasappended) |  |
-| Report | [#/components/schemas/Report](#componentsschemasreport) |  |
-
-## Path Details
-
-***
-
-### [GET]/health
-
-- Summary  
-  Liveness check
-
-- Operation id  
-  healthCheck
-
-- Tags  
-  meta
-
-#### Responses
-
-- 200 Service is up.
-
-`application/json`
-
-```typescript
-{
-  ok: enum[true]
-  // The package's version.
-  version: string
-  // The commit it was built from, ending `-dirty` when built with uncommitted changes.
-  commit: string
-}
-```
-
-***
-
-### [GET]/skill
-
-- Summary  
-  Read the client workers call this deployment with
-
-- Operation id  
-  getSkill
-
-- Description  
-  The jobs skill's `bin/` and `reference/`, as this deployment was built with them, so a worker calls the API that is deployed.
-
-- Tags  
-  meta
-
-- Security  
-  bearerAuth
-
-#### Responses
-
-- 200 The skill's files.
-
-`application/json`
-
-```typescript
-{
-  // The skill's name, which its files are under.
-  key: string
-  // The deployed tree's commit count, 0 when deployed from outside git.
-  version: integer
-  // The deployed commit, ending `-dirty` when deployed with uncommitted changes.
-  commit: string
-  files: {
-    // Under the worker's Claude Code folder: `skills/jobs/bin/…` or `skills/jobs/reference/…`.
-    path: string
-    content: string
-    executable: boolean
-  }[]
-}
-```
-
-- 401 Missing or incorrect bearer token.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 503 No API token is configured.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-***
-
-### [POST]/runs
-
-- Summary  
-  Submit a run of a job: a named script in a repo at a commit
-
-- Operation id  
-  submitRun
-
-- Description  
-  One run, stored `pending` until a runner whose labels and free memory fit claims it, with what it was for when `for` says. Nothing is checked against the repo here: a run of a job missing from `jobs.toml` at that commit fails on its runner, saying so in its log.
-
-- Tags  
-  runs
-
-- Security  
-  bearerAuth
-
-#### Headers
-
-```typescript
-// Who is submitting: recorded on the run as `submittedBy`.
-// Who is submitting: recorded on the run as `submittedBy`.
-claimed-by?: string //minLength: 1 //maxLength: 200
-```
-
-#### RequestBody
-
-What to run, and where it may run.
-
-- application/json
-
-```typescript
-{
-  // `owner/name` on GitHub.
-  repo: string //maxLength: 200 //pattern: ^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$
-  // The commit to run, as a full lowercase sha: the runner checks out exactly this.
-  commit: string //pattern: ^[0-9a-f]{40}$
-  // A `[jobs.<name>]` in the repo's `jobs.toml` at that commit, or in the routine directory's when it has a routine.
-  job: string //pattern: ^[a-z0-9][a-z0-9_-]{0,62}$
-  args?: string[] //maxLength: 4000 //maxItems: 50
-  limits: {
-    // MiB the container may use, and the runner reserves for it. Null: `jobs.toml`'s, within the 1024 MiB a run without one is admitted with.
-    memory?: integer | null //minimum: 16 //maximum: 1048576 //default: null
-    // Seconds before the runner stops it and it fails. Null: `jobs.toml`'s.
-    timeout?: integer | null //minimum: 1 //maximum: 86400 //default: null
-  }
-  // Labels as Kubernetes writes them. On a run, what a runner must have, every key with that value; on a runner, what it has.
-  labels: {
-    [key: string]: string //pattern: ^[A-Za-z0-9]([A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?$
-  }
-  for?: #/components/schemas/For & 
-  routine?: #/components/schemas/Routine & 
-  // The machine it must run on, as a runner's `hostId`: claimed only by that machine's runner, and only one that says it `can` run `host` runs, which runs it on the host itself, with the host's user services, if that host's config lets it. Null: any runner that fits.
-  host?: string | null //minLength: 1 //maxLength: 200 //default: null
-}
-```
-
-#### Responses
-
-- 201 Stored, `pending`.
-
-`application/json`
-
-```typescript
-{
-  id: string //format: uuid
-  // `owner/name` on GitHub: checked out at `/work`; with a routine, its target.
-  repo: string //maxLength: 200 //pattern: ^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$
-  // The commit to run, as a full lowercase sha: the runner checks out exactly this.
-  commit: string //pattern: ^[0-9a-f]{40}$
-  // A `[jobs.<name>]` in the repo's `jobs.toml` at that commit, or in the routine directory's when it has a routine.
-  job: string //pattern: ^[a-z0-9][a-z0-9_-]{0,62}$
-  // Where its steps live, when not in `repo`'s own `jobs.toml`; null when they are.
-  routine: {
-    // `owner/name` on GitHub: the repo the routine is in.
-    repo: string //maxLength: 200 //pattern: ^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$
-    // The routine repo's commit, as a full lowercase sha: the runner checks out exactly this.
-    commit: string //pattern: ^[0-9a-f]{40}$
-    // The routine's directory in that repo, holding the `jobs.toml` that names `job`: `/`-separated, no `.` or `..`.
-    dir: string //maxLength: 200 //pattern: ^(?!\.{1,2}(\/|$))[A-Za-z0-9_.-]+(\/(?!\.{1,2}(\/|$))[A-Za-z0-9_.-]+)*$
-  }
-  // The machine it must run on, on the host itself; null: any runner that fits.
-  host: string | null
-  args: string[]
-  limits: {
-    // MiB the container may use, and the runner reserves for it. Null: `jobs.toml`'s, within the 1024 MiB a run without one is admitted with.
-    memory?: integer | null //minimum: 16 //maximum: 1048576 //default: null
-    // Seconds before the runner stops it and it fails. Null: `jobs.toml`'s.
-    timeout?: integer | null //minimum: 1 //maximum: 86400 //default: null
-  }
-  // Labels as Kubernetes writes them. On a run, what a runner must have, every key with that value; on a runner, what it has.
-  labels: {
-    [key: string]: string //pattern: ^[A-Za-z0-9]([A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?$
-  }
-  // What it was for; null when its submitter did not say.
-  for: {
-    // What asked for the run: an approval-service batch or change, a work-tracker item, or a worker.
-    kind: enum[batch, change, item, worker]
-    // Its id there, without spaces.
-    id: string //pattern: ^\S{1,200}$
-  }
-  // `pending` until a runner claims it, `running` on that runner, then `succeeded`, `failed` or `canceled`, which it never leaves.
-  state: enum[pending, running, succeeded, failed, canceled]
-  // Why it is in its state, when that is not plain: a cancel, a lapsed lease, a timeout.
-  reason: string | null
-  // A cancel was asked for: the runner of a run in progress is told to stop it on its next log append.
-  cancelRequested: boolean
-  // The runner that claimed it; null while pending.
-  runner: string | null //format: uuid
-  // What its runner runs it with: `limits`, else `jobs.toml`'s for the job, else its `[defaults]`. Null until its runner has read `jobs.toml`, and on a runner that does not say.
-  runsWith: {
-    // MiB the container may use.
-    memory: integer //minimum: 1 //maximum: 1048576
-    // Seconds before the runner stops it and it fails.
-    timeout: integer //minimum: 1 //maximum: 86400
-    // Seconds without progress (output, CPU or network) before the runner ends it, failed as stalled; null when it never does.
-    stall: integer | null //minimum: 1 //maximum: 86400
-  }
-  // The run's exit code, once its runner reports one.
-  exit: integer | null
-  // Seconds it ran, as its runner reported.
-  duration: number | null
-  // Bytes of log stored so far.
-  logSize: integer
-  // The `claimed-by` it was submitted with.
-  submittedBy: string | null
-  createdAt: string
-  updatedAt: string
-  startedAt: string | null
-  endedAt: string | null
-  // While running: if no log append renews it by then, the run fails.
-  leaseExpiresAt: string | null
-}
-```
-
-- 400 The request failed validation.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 401 Missing or incorrect bearer token.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 503 No API token is configured.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-***
-
-### [GET]/runs
-
-- Summary  
-  List runs, newest first
-
-- Operation id  
-  listRuns
-
-- Tags  
-  runs
-
-- Security  
-  bearerAuth
-
-#### Parameters(Query)
-
-```typescript
-// `pending` until a runner claims it, `running` on that runner, then `succeeded`, `failed` or `canceled`, which it never leaves.
-// `pending` until a runner claims it, `running` on that runner, then `succeeded`, `failed` or `canceled`, which it never leaves.
-state?: enum[pending, running, succeeded, failed, canceled]
-```
-
-```typescript
-// `owner/name` on GitHub.
-// `owner/name` on GitHub.
-repo?: string //maxLength: 200 //pattern: ^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$
-```
-
-```typescript
-// Only the runs submitted with this `claimed-by`, as `submittedBy` records it.
-// Only the runs submitted with this `claimed-by`, as `submittedBy` records it.
-submittedBy?: string //minLength: 1 //maxLength: 200
-```
-
-```typescript
-// `<kind>:<id>`, e.g. `item:28af81bc-…`: only the runs submitted with that `for`.
-// `<kind>:<id>`, e.g. `item:28af81bc-…`: only the runs submitted with that `for`.
-for?: string
-```
-
-```typescript
-// At most this many, newest first.
-// At most this many, newest first.
-limit?: integer //minimum: 1 //maximum: 500 //default: 100
-```
-
-#### Responses
-
-- 200 The runs.
-
-`application/json`
-
-```typescript
-{
-  runs: {
-    id: string //format: uuid
-    // `owner/name` on GitHub: checked out at `/work`; with a routine, its target.
-    repo: string //maxLength: 200 //pattern: ^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$
-    // The commit to run, as a full lowercase sha: the runner checks out exactly this.
-    commit: string //pattern: ^[0-9a-f]{40}$
-    // A `[jobs.<name>]` in the repo's `jobs.toml` at that commit, or in the routine directory's when it has a routine.
-    job: string //pattern: ^[a-z0-9][a-z0-9_-]{0,62}$
-    // Where its steps live, when not in `repo`'s own `jobs.toml`; null when they are.
-    routine: {
-      // `owner/name` on GitHub: the repo the routine is in.
-      repo: string //maxLength: 200 //pattern: ^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$
-      // The routine repo's commit, as a full lowercase sha: the runner checks out exactly this.
-      commit: string //pattern: ^[0-9a-f]{40}$
-      // The routine's directory in that repo, holding the `jobs.toml` that names `job`: `/`-separated, no `.` or `..`.
-      dir: string //maxLength: 200 //pattern: ^(?!\.{1,2}(\/|$))[A-Za-z0-9_.-]+(\/(?!\.{1,2}(\/|$))[A-Za-z0-9_.-]+)*$
-    }
-    // The machine it must run on, on the host itself; null: any runner that fits.
-    host: string | null
-    args: string[]
-    limits: {
-      // MiB the container may use, and the runner reserves for it. Null: `jobs.toml`'s, within the 1024 MiB a run without one is admitted with.
-      memory?: integer | null //minimum: 16 //maximum: 1048576 //default: null
-      // Seconds before the runner stops it and it fails. Null: `jobs.toml`'s.
-      timeout?: integer | null //minimum: 1 //maximum: 86400 //default: null
-    }
-    // Labels as Kubernetes writes them. On a run, what a runner must have, every key with that value; on a runner, what it has.
-    labels: {
-      [key: string]: string //pattern: ^[A-Za-z0-9]([A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?$
-    }
-    // What it was for; null when its submitter did not say.
-    for: {
-      // What asked for the run: an approval-service batch or change, a work-tracker item, or a worker.
-      kind: enum[batch, change, item, worker]
-      // Its id there, without spaces.
-      id: string //pattern: ^\S{1,200}$
-    }
-    // `pending` until a runner claims it, `running` on that runner, then `succeeded`, `failed` or `canceled`, which it never leaves.
-    state: enum[pending, running, succeeded, failed, canceled]
-    // Why it is in its state, when that is not plain: a cancel, a lapsed lease, a timeout.
-    reason: string | null
-    // A cancel was asked for: the runner of a run in progress is told to stop it on its next log append.
-    cancelRequested: boolean
-    // The runner that claimed it; null while pending.
-    runner: string | null //format: uuid
-    // What its runner runs it with: `limits`, else `jobs.toml`'s for the job, else its `[defaults]`. Null until its runner has read `jobs.toml`, and on a runner that does not say.
-    runsWith: {
-      // MiB the container may use.
-      memory: integer //minimum: 1 //maximum: 1048576
-      // Seconds before the runner stops it and it fails.
-      timeout: integer //minimum: 1 //maximum: 86400
-      // Seconds without progress (output, CPU or network) before the runner ends it, failed as stalled; null when it never does.
-      stall: integer | null //minimum: 1 //maximum: 86400
-    }
-    // The run's exit code, once its runner reports one.
-    exit: integer | null
-    // Seconds it ran, as its runner reported.
-    duration: number | null
-    // Bytes of log stored so far.
-    logSize: integer
-    // The `claimed-by` it was submitted with.
-    submittedBy: string | null
-    createdAt: string
-    updatedAt: string
-    startedAt: string | null
-    endedAt: string | null
-    // While running: if no log append renews it by then, the run fails.
-    leaseExpiresAt: string | null
-  }[]
-}
-```
-
-- 400 The request failed validation.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 401 Missing or incorrect bearer token.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 503 No API token is configured.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-***
-
-### [GET]/runs/{id}
-
-- Summary  
-  Read one run
-
-- Operation id  
-  getRun
-
-- Tags  
-  runs
-
-- Security  
-  bearerAuth
-
-#### Parameters(Path)
-
-```typescript
-id: string //format: uuid
-```
-
-#### Responses
-
-- 200 The run.
-
-`application/json`
-
-```typescript
-{
-  id: string //format: uuid
-  // `owner/name` on GitHub: checked out at `/work`; with a routine, its target.
-  repo: string //maxLength: 200 //pattern: ^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$
-  // The commit to run, as a full lowercase sha: the runner checks out exactly this.
-  commit: string //pattern: ^[0-9a-f]{40}$
-  // A `[jobs.<name>]` in the repo's `jobs.toml` at that commit, or in the routine directory's when it has a routine.
-  job: string //pattern: ^[a-z0-9][a-z0-9_-]{0,62}$
-  // Where its steps live, when not in `repo`'s own `jobs.toml`; null when they are.
-  routine: {
-    // `owner/name` on GitHub: the repo the routine is in.
-    repo: string //maxLength: 200 //pattern: ^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$
-    // The routine repo's commit, as a full lowercase sha: the runner checks out exactly this.
-    commit: string //pattern: ^[0-9a-f]{40}$
-    // The routine's directory in that repo, holding the `jobs.toml` that names `job`: `/`-separated, no `.` or `..`.
-    dir: string //maxLength: 200 //pattern: ^(?!\.{1,2}(\/|$))[A-Za-z0-9_.-]+(\/(?!\.{1,2}(\/|$))[A-Za-z0-9_.-]+)*$
-  }
-  // The machine it must run on, on the host itself; null: any runner that fits.
-  host: string | null
-  args: string[]
-  limits: {
-    // MiB the container may use, and the runner reserves for it. Null: `jobs.toml`'s, within the 1024 MiB a run without one is admitted with.
-    memory?: integer | null //minimum: 16 //maximum: 1048576 //default: null
-    // Seconds before the runner stops it and it fails. Null: `jobs.toml`'s.
-    timeout?: integer | null //minimum: 1 //maximum: 86400 //default: null
-  }
-  // Labels as Kubernetes writes them. On a run, what a runner must have, every key with that value; on a runner, what it has.
-  labels: {
-    [key: string]: string //pattern: ^[A-Za-z0-9]([A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?$
-  }
-  // What it was for; null when its submitter did not say.
-  for: {
-    // What asked for the run: an approval-service batch or change, a work-tracker item, or a worker.
-    kind: enum[batch, change, item, worker]
-    // Its id there, without spaces.
-    id: string //pattern: ^\S{1,200}$
-  }
-  // `pending` until a runner claims it, `running` on that runner, then `succeeded`, `failed` or `canceled`, which it never leaves.
-  state: enum[pending, running, succeeded, failed, canceled]
-  // Why it is in its state, when that is not plain: a cancel, a lapsed lease, a timeout.
-  reason: string | null
-  // A cancel was asked for: the runner of a run in progress is told to stop it on its next log append.
-  cancelRequested: boolean
-  // The runner that claimed it; null while pending.
-  runner: string | null //format: uuid
-  // What its runner runs it with: `limits`, else `jobs.toml`'s for the job, else its `[defaults]`. Null until its runner has read `jobs.toml`, and on a runner that does not say.
-  runsWith: {
-    // MiB the container may use.
-    memory: integer //minimum: 1 //maximum: 1048576
-    // Seconds before the runner stops it and it fails.
-    timeout: integer //minimum: 1 //maximum: 86400
-    // Seconds without progress (output, CPU or network) before the runner ends it, failed as stalled; null when it never does.
-    stall: integer | null //minimum: 1 //maximum: 86400
-  }
-  // The run's exit code, once its runner reports one.
-  exit: integer | null
-  // Seconds it ran, as its runner reported.
-  duration: number | null
-  // Bytes of log stored so far.
-  logSize: integer
-  // The `claimed-by` it was submitted with.
-  submittedBy: string | null
-  createdAt: string
-  updatedAt: string
-  startedAt: string | null
-  endedAt: string | null
-  // While running: if no log append renews it by then, the run fails.
-  leaseExpiresAt: string | null
-}
-```
-
-- 400 The request failed validation.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 401 Missing or incorrect bearer token.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 404 No run with that id.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 503 No API token is configured.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-***
-
-### [PUT]/runs/{id}
-
-- Summary  
-  Report how a run in progress ended
-
-- Operation id  
-  reportRun
-
-- Description  
-  From the run's own runner. Sending the same end again answers it unchanged, so a lost reply can be retried.
-
-- Tags  
-  runners
-
-- Security  
-  runnerAuth
-
-#### Parameters(Path)
-
-```typescript
-id: string //format: uuid
-```
-
-#### RequestBody
-
-How it ended.
-
-- application/json
-
-```typescript
-{
-  // `canceled` when stopped for a cancel; `failed` for a non-zero exit, a timeout, or an image that would not build.
-  state: enum[succeeded, failed, canceled]
-  // The run's exit code; null when it never ran or was killed.
-  exit: integer | null
-  // Seconds from claim to end.
-  duration: number //minimum: 0
-  // Why, when the state does not say: `timed out after 600s`, `image build failed`.
-  reason?: string | null //minLength: 1 //maxLength: 2000 //default: null
-}
-```
-
-#### Responses
-
-- 200 The run, ended.
-
-`application/json`
-
-```typescript
-{
-  id: string //format: uuid
-  // `owner/name` on GitHub: checked out at `/work`; with a routine, its target.
-  repo: string //maxLength: 200 //pattern: ^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$
-  // The commit to run, as a full lowercase sha: the runner checks out exactly this.
-  commit: string //pattern: ^[0-9a-f]{40}$
-  // A `[jobs.<name>]` in the repo's `jobs.toml` at that commit, or in the routine directory's when it has a routine.
-  job: string //pattern: ^[a-z0-9][a-z0-9_-]{0,62}$
-  // Where its steps live, when not in `repo`'s own `jobs.toml`; null when they are.
-  routine: {
-    // `owner/name` on GitHub: the repo the routine is in.
-    repo: string //maxLength: 200 //pattern: ^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$
-    // The routine repo's commit, as a full lowercase sha: the runner checks out exactly this.
-    commit: string //pattern: ^[0-9a-f]{40}$
-    // The routine's directory in that repo, holding the `jobs.toml` that names `job`: `/`-separated, no `.` or `..`.
-    dir: string //maxLength: 200 //pattern: ^(?!\.{1,2}(\/|$))[A-Za-z0-9_.-]+(\/(?!\.{1,2}(\/|$))[A-Za-z0-9_.-]+)*$
-  }
-  // The machine it must run on, on the host itself; null: any runner that fits.
-  host: string | null
-  args: string[]
-  limits: {
-    // MiB the container may use, and the runner reserves for it. Null: `jobs.toml`'s, within the 1024 MiB a run without one is admitted with.
-    memory?: integer | null //minimum: 16 //maximum: 1048576 //default: null
-    // Seconds before the runner stops it and it fails. Null: `jobs.toml`'s.
-    timeout?: integer | null //minimum: 1 //maximum: 86400 //default: null
-  }
-  // Labels as Kubernetes writes them. On a run, what a runner must have, every key with that value; on a runner, what it has.
-  labels: {
-    [key: string]: string //pattern: ^[A-Za-z0-9]([A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?$
-  }
-  // What it was for; null when its submitter did not say.
-  for: {
-    // What asked for the run: an approval-service batch or change, a work-tracker item, or a worker.
-    kind: enum[batch, change, item, worker]
-    // Its id there, without spaces.
-    id: string //pattern: ^\S{1,200}$
-  }
-  // `pending` until a runner claims it, `running` on that runner, then `succeeded`, `failed` or `canceled`, which it never leaves.
-  state: enum[pending, running, succeeded, failed, canceled]
-  // Why it is in its state, when that is not plain: a cancel, a lapsed lease, a timeout.
-  reason: string | null
-  // A cancel was asked for: the runner of a run in progress is told to stop it on its next log append.
-  cancelRequested: boolean
-  // The runner that claimed it; null while pending.
-  runner: string | null //format: uuid
-  // What its runner runs it with: `limits`, else `jobs.toml`'s for the job, else its `[defaults]`. Null until its runner has read `jobs.toml`, and on a runner that does not say.
-  runsWith: {
-    // MiB the container may use.
-    memory: integer //minimum: 1 //maximum: 1048576
-    // Seconds before the runner stops it and it fails.
-    timeout: integer //minimum: 1 //maximum: 86400
-    // Seconds without progress (output, CPU or network) before the runner ends it, failed as stalled; null when it never does.
-    stall: integer | null //minimum: 1 //maximum: 86400
-  }
-  // The run's exit code, once its runner reports one.
-  exit: integer | null
-  // Seconds it ran, as its runner reported.
-  duration: number | null
-  // Bytes of log stored so far.
-  logSize: integer
-  // The `claimed-by` it was submitted with.
-  submittedBy: string | null
-  createdAt: string
-  updatedAt: string
-  startedAt: string | null
-  endedAt: string | null
-  // While running: if no log append renews it by then, the run fails.
-  leaseExpiresAt: string | null
-}
-```
-
-- 400 The request failed validation.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 401 Not a runner's token.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 403 Another runner's run.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 404 No run with that id.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 409 It is not running, or ended otherwise.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-***
-
-### [GET]/runs/{id}/log
-
-- Summary  
-  Read a run's log from a byte offset
-
-- Operation id  
-  getRunLog
-
-- Description  
-  Send `Range: bytes=N-` to read from offset N; without it, from 0. Answers 206 with `Content-Range: bytes N-M/size` and at most 1 MiB, or an empty body when N is the log's size, so a follower polls from where it got to. `Run-State` says the run's state, so it knows when to stop.
-
-- Tags  
-  runs
-
-- Security  
-  bearerAuth
-
-#### Parameters(Path)
-
-```typescript
-id: string //format: uuid
-```
-
-#### Headers
-
-```typescript
-// `bytes=N-`
-// `bytes=N-`
-range?: string //pattern: ^bytes=\d+-$
-```
-
-#### Responses
-
-- 206 The log from N, up to 1 MiB.
-
-`text/plain`
-
-```typescript
-string
-```
-
-- 400 The request failed validation.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 401 Missing or incorrect bearer token.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 404 No run with that id.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 416 N is past the end of the log.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 503 No API token is configured.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-***
-
-### [PATCH]/runs/{id}/log
-
-- Summary  
-  Append to the log of a run in progress, and renew its lease
-
-- Operation id  
-  appendRunLog
-
-- Description  
-  The body is the bytes, `Content-Range: bytes S-E/*` where S is the log's current size and E = S + length - 1. An empty body without `Content-Range` only renews the lease. 416 for any other S, with the size to resend from. At most 256 KiB per append and 64 MiB per run (413). The reply says whether a cancel was asked for.
-
-- Tags  
-  runners
-
-- Security  
-  runnerAuth
-
-#### Parameters(Path)
-
-```typescript
-id: string //format: uuid
-```
-
-#### Headers
-
-```typescript
-// `bytes S-E/*`
-// `bytes S-E/*`
-content-range?: string //pattern: ^bytes \d+-\d+\/(\*|\d+)$
-```
-
-#### RequestBody
+# job-service API reference
+
+API version 2026-11-12
+
+Runs of jobs. A **job** is a named script in a repo's `jobs.toml`; a **run** is one execution of it, to completion at one commit, by a **runner** that claims it.
+
+- A run is submitted `pending`, claimed and `running`, and ends `succeeded`, `failed` or `canceled` with its exit code. It says what it was for when its submitter said.
+- A run's log is read from any byte offset, while it runs and after: `GetRunLog` from where the last read ended, until `Run-State` says the run has ended.
+- Runners call in and are never called: one registers with the registration token, then claims runs, appends to their logs and completes them with its own token, `<runner id>.<secret>`.
+
+Submitters send `Authorization: Bearer <token>` with the submitters' token, and may send `claimed-by`, recorded on a run they submit. `GetHealth` takes no token. Errors are `{code, message}`, the code an exception name for the HTTP status: `ValidationException` (400), `UnauthorizedException` (401), `AccessDeniedException` (403), `ResourceNotFoundException` (404), `ConflictException` (409), `PayloadTooLargeException` (413), `InvalidRangeException` (416), `InternalServerException` (500) and `ServiceUnavailableException` (503).
+
+## Operations
+
+- [AppendRunLog](#appendrunlog): Append to the log of a run in progress, and renew its lease
+- [CancelRun](#cancelrun): Cancel a run
+- [ClaimRun](#claimrun): Claim the oldest pending run that fits
+- [CompleteRun](#completerun): Complete a run in progress, saying how it ended
+- [GetHealth](#gethealth): Get the service's health and version
+- [GetRun](#getrun): Get a run
+- [GetRunLog](#getrunlog): Get a run's log from a byte offset
+- [GetSkill](#getskill): Get the client workers call this deployment with
+- [ListRunners](#listrunners): List runners, most recently seen first
+- [ListRuns](#listruns): List runs, newest first
+- [PutRunsWith](#putrunswith): Put what a run in progress runs with
+- [RegisterRunner](#registerrunner): Register a runner
+- [SubmitRun](#submitrun): Submit a run of a job: a named script in a repo at a commit
+
+## Data types
+
+- [Error](#error)
+- [For](#for)
+- [Health](#health)
+- [InvalidRangeError](#invalidrangeerror)
+- [Limits](#limits)
+- [Routine](#routine)
+- [Run](#run)
+- [Runner](#runner)
+- [RunsWith](#runswith)
+- [Skill](#skill)
+- [SkillFile](#skillfile)
+
+---
+
+## AppendRunLog
+
+The body is the bytes, `Content-Range: bytes S-E/*` where S is the log's current size and E = S + length - 1. An empty body without `Content-Range` only renews the lease. 416 for any other S, with the size to resend from. At most 256 KiB per append and 64 MiB per run (413). The reply says whether a cancel was asked for.
+
+### Request syntax
+
+```http
+PATCH /runs/{id}/log HTTP/1.1
+Authorization: Bearer token
+content-range: string
+Content-type: application/octet-stream
 
 The log's next bytes.
-
-- application/octet-stream
-
-```typescript
-string //format: binary
 ```
 
-#### Responses
+### URI request parameters
 
-- 200 Stored, and the lease renewed.
+**id**  
+The run's id.  
+Type: String. Required: Yes.
 
-`application/json`
+### Request headers
 
-```typescript
+**content-range**  
+`bytes S-E/*`  
+Type: String. Pattern: `^bytes \d+-\d+\/(\*|\d+)$`. Required: No.
+
+### Request body
+
+The log's next bytes., as `application/octet-stream`.
+
+### Response syntax
+
+```http
+HTTP/1.1 200
+Content-type: application/json
+
 {
-  // Bytes of log stored: the offset the next append starts at.
-  size: integer
-  // A cancel was asked for: stop the run and report it `canceled`.
-  canceled: boolean
-  leaseExpiresAt: string
+   "size": number,
+   "canceled": boolean,
+   "leaseExpiresAt": "string"
 }
 ```
 
-- 400 The request failed validation.
+### Response elements
 
-`application/json`
+**size**  
+Bytes of log stored: the offset the next append starts at.  
+Type: Integer.
 
-```typescript
+**canceled**  
+A cancel was asked for: stop the run and report it `canceled`.  
+Type: Boolean.
+
+**leaseExpiresAt**  
+When the run fails unless another append renews it, as an ISO 8601 timestamp.  
+Type: String.
+
+### Errors
+
+**ValidationException**  
+The request failed validation.  
+HTTP status: 400
+
+**UnauthorizedException**  
+The bearer token is not a runner's own.  
+HTTP status: 401
+
+**AccessDeniedException**  
+The run is another runner's, or the path names another runner.  
+HTTP status: 403
+
+**ResourceNotFoundException**  
+No run has that id.  
+HTTP status: 404
+
+**ConflictException**  
+The run is not running: it ended, perhaps by its lease lapsing.  
+HTTP status: 409
+
+**PayloadTooLargeException**  
+Over 256 KiB, or the log would pass 64 MiB.  
+HTTP status: 413
+
+**InvalidRangeException**  
+The append does not start at the log's end: resend from `size`.  
+HTTP status: 416
+
+---
+
+## CancelRun
+
+A pending run ends `canceled` at once. A running one is marked `cancelRequested`: its runner is told on its next log append, stops it, and reports it `canceled`.
+
+### Request syntax
+
+```http
+POST /runs/{id}/cancel HTTP/1.1
+Authorization: Bearer token
+```
+
+### URI request parameters
+
+**id**  
+The run's id.  
+Type: String. Required: Yes.
+
+### Response syntax
+
+```http
+HTTP/1.1 200
+Content-type: application/json
+
 {
-  error: string
+   "id": "string",
+   "repo": "string",
+   "commit": "string",
+   "job": "string",
+   "routine": {
+      "repo": "string",
+      "commit": "string",
+      "dir": "string"
+   },
+   "host": "string",
+   "args": [ "string" ],
+   "limits": {
+      "memory": number,
+      "timeout": number
+   },
+   "labels": { },
+   "for": {
+      "kind": "batch | change | item | worker",
+      "id": "string"
+   },
+   "state": "pending | running | succeeded | failed | canceled",
+   "reason": "string",
+   "cancelRequested": boolean,
+   "runner": "string",
+   "runsWith": {
+      "memory": number,
+      "timeout": number,
+      "stall": number
+   },
+   "exit": number,
+   "duration": number,
+   "logSize": number,
+   "submittedBy": "string",
+   "createdAt": "string",
+   "updatedAt": "string",
+   "startedAt": "string",
+   "endedAt": "string",
+   "leaseExpiresAt": "string"
 }
 ```
 
-- 401 Not a runner's token.
+### Response elements
 
-`application/json`
+**id**  
+The run's id.  
+Type: String.
 
-```typescript
+**repo**  
+`owner/name` on GitHub: checked out at `/work`; with a routine, its target.  
+Type: String. Length: 0 to 200. Pattern: `^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$`.
+
+**commit**  
+The commit to run, as a full lowercase sha: the runner checks out exactly this.  
+Type: String. Pattern: `^[0-9a-f]{40}$`.
+
+**job**  
+A `[jobs.<name>]` in the repo's `jobs.toml` at that commit, or in the routine directory's when it has a routine.  
+Type: String. Pattern: `^[a-z0-9][a-z0-9_-]{0,62}$`.
+
+**routine**  
+Where its steps live, when not in `repo`'s own `jobs.toml`; null when they are.  
+Type: [Routine](#routine) object.
+
+**host**  
+The machine it must run on, on the host itself; null: any runner that fits.  
+Type: String. Nullable: Yes.
+
+**args**  
+Appended to the job's `run` command from `jobs.toml`.  
+Type: Array of strings.
+
+**limits**  
+Type: [Limits](#limits) object.
+
+**labels**  
+Labels as Kubernetes writes them. On a run, what a runner must have, every key with that value; on a runner, what it has.  
+Type: Object.
+
+**for**  
+What it was for; null when its submitter did not say.  
+Type: [For](#for) object.
+
+**state**  
+`pending` until a runner claims it, `running` on that runner, then `succeeded`, `failed` or `canceled`, which it never leaves.  
+Type: String. Valid values: `pending` | `running` | `succeeded` | `failed` | `canceled`.
+
+**reason**  
+Why it is in its state, when that is not plain: a cancel, a lapsed lease, a timeout.  
+Type: String. Nullable: Yes.
+
+**cancelRequested**  
+A cancel was asked for: the runner of a run in progress is told to stop it on its next log append.  
+Type: Boolean.
+
+**runner**  
+The runner that claimed it; null while pending.  
+Type: String. Nullable: Yes.
+
+**runsWith**  
+What its runner runs it with: `limits`, else `jobs.toml`'s for the job, else its `[defaults]`. Null until its runner has read `jobs.toml`, and on a runner that does not say.  
+Type: [RunsWith](#runswith) object.
+
+**exit**  
+The run's exit code, once its runner reports one.  
+Type: Integer. Nullable: Yes.
+
+**duration**  
+Seconds it ran, as its runner reported.  
+Type: Number. Nullable: Yes.
+
+**logSize**  
+Bytes of log stored so far.  
+Type: Integer.
+
+**submittedBy**  
+The `claimed-by` it was submitted with.  
+Type: String. Nullable: Yes.
+
+**createdAt**  
+When it was submitted, as an ISO 8601 timestamp.  
+Type: String.
+
+**updatedAt**  
+When it last changed, as an ISO 8601 timestamp.  
+Type: String.
+
+**startedAt**  
+When a runner claimed it; null while pending.  
+Type: String. Nullable: Yes.
+
+**endedAt**  
+When it ended; null until it does.  
+Type: String. Nullable: Yes.
+
+**leaseExpiresAt**  
+While running: if no log append renews it by then, the run fails.  
+Type: String. Nullable: Yes.
+
+### Errors
+
+**ValidationException**  
+The request failed validation.  
+HTTP status: 400
+
+**UnauthorizedException**  
+The bearer token is missing or is not the submitters'.  
+HTTP status: 401
+
+**ResourceNotFoundException**  
+No run has that id.  
+HTTP status: 404
+
+**ConflictException**  
+It has already ended.  
+HTTP status: 409
+
+**ServiceUnavailableException**  
+The service has no submitters' token configured.  
+HTTP status: 503
+
+---
+
+## ClaimRun
+
+The oldest pending run whose labels the runner has, whose memory fits `free`, whose routine or host, if any, it `can` run, and whose `host`, if any, is the runner's own `hostId`, moved to `running` on this runner. Two claims never get the same run. 204 when none fits.
+
+### Request syntax
+
+```http
+POST /runners/{id}/claim HTTP/1.1
+Authorization: Bearer token
+Content-type: application/json
+
 {
-  error: string
+   "labels": { },
+   "can": [ "routine | host" ],
+   "hostId": "string",
+   "free": {
+      "slots": number,
+      "memory": number
+   }
 }
 ```
 
-- 403 Another runner's run.
+### URI request parameters
 
-`application/json`
+**id**  
+The runner's id.  
+Type: String. Required: Yes.
 
-```typescript
+### Request body
+
+**labels**  
+What it has now; its registered labels when absent.  
+Type: Object. Required: No.
+
+**can**  
+What it can run beyond a job in its repo's own `jobs.toml`: `routine`, a run with a routine; `host`, a run naming its host, run on the host itself. A run needing one it does not say is left for another.  
+Type: Array of strings. At most 10 items. Required: No.
+
+**hostId**  
+The machine it runs on now, recorded on the runner, so one registered before it said keeps its id.  
+Type: String. Length: 1 to 200. Required: No.
+
+**free**  
+What it can take on now.  
+Type: Object. Required: Yes.
+
+### Response syntax
+
+```http
+HTTP/1.1 200
+Content-type: application/json
+
 {
-  error: string
+   "run": {
+      "id": "string",
+      "repo": "string",
+      "commit": "string",
+      "job": "string",
+      "routine": {
+         "repo": "string",
+         "commit": "string",
+         "dir": "string"
+      },
+      "host": "string",
+      "args": [ "string" ],
+      "limits": {
+         "memory": number,
+         "timeout": number
+      },
+      "labels": { },
+      "for": {
+         "kind": "batch | change | item | worker",
+         "id": "string"
+      },
+      "state": "pending | running | succeeded | failed | canceled",
+      "reason": "string",
+      "cancelRequested": boolean,
+      "runner": "string",
+      "runsWith": {
+         "memory": number,
+         "timeout": number,
+         "stall": number
+      },
+      "exit": number,
+      "duration": number,
+      "logSize": number,
+      "submittedBy": "string",
+      "createdAt": "string",
+      "updatedAt": "string",
+      "startedAt": "string",
+      "endedAt": "string",
+      "leaseExpiresAt": "string"
+   },
+   "memory": number,
+   "lease": number
 }
 ```
 
-- 404 No run with that id.
+### Response elements
 
-`application/json`
+**run**  
+The run, now running on this runner.  
+Type: [Run](#run) object.
 
-```typescript
+**memory**  
+MiB the run was admitted with: reserve this, and run it with no more.  
+Type: Integer.
+
+**lease**  
+Seconds the run lives without a log append. Append, or renew with an empty one, well within it.  
+Type: Integer.
+
+### Errors
+
+**ValidationException**  
+The request failed validation.  
+HTTP status: 400
+
+**UnauthorizedException**  
+The bearer token is not a runner's own.  
+HTTP status: 401
+
+**AccessDeniedException**  
+The run is another runner's, or the path names another runner.  
+HTTP status: 403
+
+---
+
+## CompleteRun
+
+From the run's own runner. Sending the same end again answers it unchanged, so a lost reply can be retried.
+
+### Request syntax
+
+```http
+PUT /runs/{id} HTTP/1.1
+Authorization: Bearer token
+Content-type: application/json
+
 {
-  error: string
+   "state": "succeeded | failed | canceled",
+   "exit": number,
+   "duration": number,
+   "reason": "string"
 }
 ```
 
-- 409 The run is not running: it ended, perhaps by its lease lapsing.
+### URI request parameters
 
-`application/json`
+**id**  
+The run's id.  
+Type: String. Required: Yes.
 
-```typescript
+### Request body
+
+**state**  
+`canceled` when stopped for a cancel; `failed` for a non-zero exit, a timeout, or an image that would not build.  
+Type: String. Valid values: `succeeded` | `failed` | `canceled`. Required: Yes.
+
+**exit**  
+The run's exit code; null when it never ran or was killed.  
+Type: Integer. Nullable: Yes. Required: Yes.
+
+**duration**  
+Seconds from claim to end.  
+Type: Number. Range: 0 to any. Required: Yes.
+
+**reason**  
+Why, when the state does not say: `timed out after 600s`, `image build failed`.  
+Type: String. Length: 1 to 2000. Nullable: Yes. Required: No.
+
+### Response syntax
+
+```http
+HTTP/1.1 200
+Content-type: application/json
+
 {
-  error: string
+   "id": "string",
+   "repo": "string",
+   "commit": "string",
+   "job": "string",
+   "routine": {
+      "repo": "string",
+      "commit": "string",
+      "dir": "string"
+   },
+   "host": "string",
+   "args": [ "string" ],
+   "limits": {
+      "memory": number,
+      "timeout": number
+   },
+   "labels": { },
+   "for": {
+      "kind": "batch | change | item | worker",
+      "id": "string"
+   },
+   "state": "pending | running | succeeded | failed | canceled",
+   "reason": "string",
+   "cancelRequested": boolean,
+   "runner": "string",
+   "runsWith": {
+      "memory": number,
+      "timeout": number,
+      "stall": number
+   },
+   "exit": number,
+   "duration": number,
+   "logSize": number,
+   "submittedBy": "string",
+   "createdAt": "string",
+   "updatedAt": "string",
+   "startedAt": "string",
+   "endedAt": "string",
+   "leaseExpiresAt": "string"
 }
 ```
 
-- 413 Over 256 KiB, or the log would pass 64 MiB.
+### Response elements
 
-`application/json`
+**id**  
+The run's id.  
+Type: String.
 
-```typescript
+**repo**  
+`owner/name` on GitHub: checked out at `/work`; with a routine, its target.  
+Type: String. Length: 0 to 200. Pattern: `^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$`.
+
+**commit**  
+The commit to run, as a full lowercase sha: the runner checks out exactly this.  
+Type: String. Pattern: `^[0-9a-f]{40}$`.
+
+**job**  
+A `[jobs.<name>]` in the repo's `jobs.toml` at that commit, or in the routine directory's when it has a routine.  
+Type: String. Pattern: `^[a-z0-9][a-z0-9_-]{0,62}$`.
+
+**routine**  
+Where its steps live, when not in `repo`'s own `jobs.toml`; null when they are.  
+Type: [Routine](#routine) object.
+
+**host**  
+The machine it must run on, on the host itself; null: any runner that fits.  
+Type: String. Nullable: Yes.
+
+**args**  
+Appended to the job's `run` command from `jobs.toml`.  
+Type: Array of strings.
+
+**limits**  
+Type: [Limits](#limits) object.
+
+**labels**  
+Labels as Kubernetes writes them. On a run, what a runner must have, every key with that value; on a runner, what it has.  
+Type: Object.
+
+**for**  
+What it was for; null when its submitter did not say.  
+Type: [For](#for) object.
+
+**state**  
+`pending` until a runner claims it, `running` on that runner, then `succeeded`, `failed` or `canceled`, which it never leaves.  
+Type: String. Valid values: `pending` | `running` | `succeeded` | `failed` | `canceled`.
+
+**reason**  
+Why it is in its state, when that is not plain: a cancel, a lapsed lease, a timeout.  
+Type: String. Nullable: Yes.
+
+**cancelRequested**  
+A cancel was asked for: the runner of a run in progress is told to stop it on its next log append.  
+Type: Boolean.
+
+**runner**  
+The runner that claimed it; null while pending.  
+Type: String. Nullable: Yes.
+
+**runsWith**  
+What its runner runs it with: `limits`, else `jobs.toml`'s for the job, else its `[defaults]`. Null until its runner has read `jobs.toml`, and on a runner that does not say.  
+Type: [RunsWith](#runswith) object.
+
+**exit**  
+The run's exit code, once its runner reports one.  
+Type: Integer. Nullable: Yes.
+
+**duration**  
+Seconds it ran, as its runner reported.  
+Type: Number. Nullable: Yes.
+
+**logSize**  
+Bytes of log stored so far.  
+Type: Integer.
+
+**submittedBy**  
+The `claimed-by` it was submitted with.  
+Type: String. Nullable: Yes.
+
+**createdAt**  
+When it was submitted, as an ISO 8601 timestamp.  
+Type: String.
+
+**updatedAt**  
+When it last changed, as an ISO 8601 timestamp.  
+Type: String.
+
+**startedAt**  
+When a runner claimed it; null while pending.  
+Type: String. Nullable: Yes.
+
+**endedAt**  
+When it ended; null until it does.  
+Type: String. Nullable: Yes.
+
+**leaseExpiresAt**  
+While running: if no log append renews it by then, the run fails.  
+Type: String. Nullable: Yes.
+
+### Errors
+
+**ValidationException**  
+The request failed validation.  
+HTTP status: 400
+
+**UnauthorizedException**  
+The bearer token is not a runner's own.  
+HTTP status: 401
+
+**AccessDeniedException**  
+The run is another runner's, or the path names another runner.  
+HTTP status: 403
+
+**ResourceNotFoundException**  
+No run has that id.  
+HTTP status: 404
+
+**ConflictException**  
+It is not running, or ended otherwise.  
+HTTP status: 409
+
+---
+
+## GetHealth
+
+Get the service's health and version.
+
+### Request syntax
+
+```http
+GET /health HTTP/1.1
+```
+
+### Response syntax
+
+```http
+HTTP/1.1 200
+Content-type: application/json
+
 {
-  error: string
+   "ok": "true",
+   "version": "string",
+   "commit": "string"
 }
 ```
 
-- 416 Not at the log's end: resend from `size`.
+### Response elements
 
-`application/json`
+**ok**  
+Always true: an answer at all means it is up.  
+Type: Boolean.
 
-```typescript
+**version**  
+The package's version.  
+Type: String.
+
+**commit**  
+The commit it was built from, ending `-dirty` when built with uncommitted changes.  
+Type: String.
+
+---
+
+## GetRun
+
+Get a run.
+
+### Request syntax
+
+```http
+GET /runs/{id} HTTP/1.1
+Authorization: Bearer token
+```
+
+### URI request parameters
+
+**id**  
+The run's id.  
+Type: String. Required: Yes.
+
+### Response syntax
+
+```http
+HTTP/1.1 200
+Content-type: application/json
+
 {
-  error: string
-  size: integer
+   "id": "string",
+   "repo": "string",
+   "commit": "string",
+   "job": "string",
+   "routine": {
+      "repo": "string",
+      "commit": "string",
+      "dir": "string"
+   },
+   "host": "string",
+   "args": [ "string" ],
+   "limits": {
+      "memory": number,
+      "timeout": number
+   },
+   "labels": { },
+   "for": {
+      "kind": "batch | change | item | worker",
+      "id": "string"
+   },
+   "state": "pending | running | succeeded | failed | canceled",
+   "reason": "string",
+   "cancelRequested": boolean,
+   "runner": "string",
+   "runsWith": {
+      "memory": number,
+      "timeout": number,
+      "stall": number
+   },
+   "exit": number,
+   "duration": number,
+   "logSize": number,
+   "submittedBy": "string",
+   "createdAt": "string",
+   "updatedAt": "string",
+   "startedAt": "string",
+   "endedAt": "string",
+   "leaseExpiresAt": "string"
 }
 ```
 
-***
+### Response elements
 
-### [POST]/runs/{id}/cancel
+**id**  
+The run's id.  
+Type: String.
 
-- Summary  
-  Cancel a run
+**repo**  
+`owner/name` on GitHub: checked out at `/work`; with a routine, its target.  
+Type: String. Length: 0 to 200. Pattern: `^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$`.
 
-- Operation id  
-  cancelRun
+**commit**  
+The commit to run, as a full lowercase sha: the runner checks out exactly this.  
+Type: String. Pattern: `^[0-9a-f]{40}$`.
 
-- Description  
-  A pending run ends `canceled` at once. A running one is marked `cancelRequested`: its runner is told on its next log append, stops it, and reports it `canceled`.
+**job**  
+A `[jobs.<name>]` in the repo's `jobs.toml` at that commit, or in the routine directory's when it has a routine.  
+Type: String. Pattern: `^[a-z0-9][a-z0-9_-]{0,62}$`.
 
-- Tags  
-  runs
+**routine**  
+Where its steps live, when not in `repo`'s own `jobs.toml`; null when they are.  
+Type: [Routine](#routine) object.
 
-- Security  
-  bearerAuth
+**host**  
+The machine it must run on, on the host itself; null: any runner that fits.  
+Type: String. Nullable: Yes.
 
-#### Parameters(Path)
+**args**  
+Appended to the job's `run` command from `jobs.toml`.  
+Type: Array of strings.
 
-```typescript
-id: string //format: uuid
+**limits**  
+Type: [Limits](#limits) object.
+
+**labels**  
+Labels as Kubernetes writes them. On a run, what a runner must have, every key with that value; on a runner, what it has.  
+Type: Object.
+
+**for**  
+What it was for; null when its submitter did not say.  
+Type: [For](#for) object.
+
+**state**  
+`pending` until a runner claims it, `running` on that runner, then `succeeded`, `failed` or `canceled`, which it never leaves.  
+Type: String. Valid values: `pending` | `running` | `succeeded` | `failed` | `canceled`.
+
+**reason**  
+Why it is in its state, when that is not plain: a cancel, a lapsed lease, a timeout.  
+Type: String. Nullable: Yes.
+
+**cancelRequested**  
+A cancel was asked for: the runner of a run in progress is told to stop it on its next log append.  
+Type: Boolean.
+
+**runner**  
+The runner that claimed it; null while pending.  
+Type: String. Nullable: Yes.
+
+**runsWith**  
+What its runner runs it with: `limits`, else `jobs.toml`'s for the job, else its `[defaults]`. Null until its runner has read `jobs.toml`, and on a runner that does not say.  
+Type: [RunsWith](#runswith) object.
+
+**exit**  
+The run's exit code, once its runner reports one.  
+Type: Integer. Nullable: Yes.
+
+**duration**  
+Seconds it ran, as its runner reported.  
+Type: Number. Nullable: Yes.
+
+**logSize**  
+Bytes of log stored so far.  
+Type: Integer.
+
+**submittedBy**  
+The `claimed-by` it was submitted with.  
+Type: String. Nullable: Yes.
+
+**createdAt**  
+When it was submitted, as an ISO 8601 timestamp.  
+Type: String.
+
+**updatedAt**  
+When it last changed, as an ISO 8601 timestamp.  
+Type: String.
+
+**startedAt**  
+When a runner claimed it; null while pending.  
+Type: String. Nullable: Yes.
+
+**endedAt**  
+When it ended; null until it does.  
+Type: String. Nullable: Yes.
+
+**leaseExpiresAt**  
+While running: if no log append renews it by then, the run fails.  
+Type: String. Nullable: Yes.
+
+### Errors
+
+**ValidationException**  
+The request failed validation.  
+HTTP status: 400
+
+**UnauthorizedException**  
+The bearer token is missing or is not the submitters'.  
+HTTP status: 401
+
+**ResourceNotFoundException**  
+No run has that id.  
+HTTP status: 404
+
+**ServiceUnavailableException**  
+The service has no submitters' token configured.  
+HTTP status: 503
+
+---
+
+## GetRunLog
+
+Send `Range: bytes=N-` to read from offset N; without it, from 0. Answers 206 with `Content-Range: bytes N-M/size` and at most 1 MiB, or an empty body when N is the log's size, so a follower polls from where it got to. `Run-State` says the run's state, so it knows when to stop.
+
+### Request syntax
+
+```http
+GET /runs/{id}/log HTTP/1.1
+Authorization: Bearer token
+range: string
 ```
 
-#### Responses
+### URI request parameters
 
-- 200 The run, canceled or marked.
+**id**  
+The run's id.  
+Type: String. Required: Yes.
 
-`application/json`
+### Request headers
 
-```typescript
+**range**  
+`bytes=N-`  
+Type: String. Pattern: `^bytes=\d+-$`. Required: No.
+
+### Response syntax
+
+```http
+HTTP/1.1 206
+content-range: string
+run-state: string
+Content-type: text/plain
+
+The log from N, up to 1 MiB.
+```
+
+### Response elements
+
+The log from N, up to 1 MiB. As `text/plain`.
+
+### Response headers
+
+**content-range**  
+`bytes N-M/size` for the bytes sent, or `bytes */size` when there are none: `size` is the log's length so far.  
+Type: String.
+
+**run-state**  
+The run's state: once it has ended and the log is read to `size`, there is no more.  
+Type: String. Valid values: `pending` | `running` | `succeeded` | `failed` | `canceled`.
+
+### Errors
+
+**ValidationException**  
+The request failed validation.  
+HTTP status: 400
+
+**UnauthorizedException**  
+The bearer token is missing or is not the submitters'.  
+HTTP status: 401
+
+**ResourceNotFoundException**  
+No run has that id.  
+HTTP status: 404
+
+**InvalidRangeException**  
+N is past the end of the log.  
+HTTP status: 416
+
+**ServiceUnavailableException**  
+The service has no submitters' token configured.  
+HTTP status: 503
+
+---
+
+## GetSkill
+
+The jobs skill's `bin/` and `reference/`, as this deployment was built with them, so a worker calls the API that is deployed.
+
+### Request syntax
+
+```http
+GET /skill HTTP/1.1
+Authorization: Bearer token
+```
+
+### Response syntax
+
+```http
+HTTP/1.1 200
+Content-type: application/json
+
 {
-  id: string //format: uuid
-  // `owner/name` on GitHub: checked out at `/work`; with a routine, its target.
-  repo: string //maxLength: 200 //pattern: ^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$
-  // The commit to run, as a full lowercase sha: the runner checks out exactly this.
-  commit: string //pattern: ^[0-9a-f]{40}$
-  // A `[jobs.<name>]` in the repo's `jobs.toml` at that commit, or in the routine directory's when it has a routine.
-  job: string //pattern: ^[a-z0-9][a-z0-9_-]{0,62}$
-  // Where its steps live, when not in `repo`'s own `jobs.toml`; null when they are.
-  routine: {
-    // `owner/name` on GitHub: the repo the routine is in.
-    repo: string //maxLength: 200 //pattern: ^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$
-    // The routine repo's commit, as a full lowercase sha: the runner checks out exactly this.
-    commit: string //pattern: ^[0-9a-f]{40}$
-    // The routine's directory in that repo, holding the `jobs.toml` that names `job`: `/`-separated, no `.` or `..`.
-    dir: string //maxLength: 200 //pattern: ^(?!\.{1,2}(\/|$))[A-Za-z0-9_.-]+(\/(?!\.{1,2}(\/|$))[A-Za-z0-9_.-]+)*$
-  }
-  // The machine it must run on, on the host itself; null: any runner that fits.
-  host: string | null
-  args: string[]
-  limits: {
-    // MiB the container may use, and the runner reserves for it. Null: `jobs.toml`'s, within the 1024 MiB a run without one is admitted with.
-    memory?: integer | null //minimum: 16 //maximum: 1048576 //default: null
-    // Seconds before the runner stops it and it fails. Null: `jobs.toml`'s.
-    timeout?: integer | null //minimum: 1 //maximum: 86400 //default: null
-  }
-  // Labels as Kubernetes writes them. On a run, what a runner must have, every key with that value; on a runner, what it has.
-  labels: {
-    [key: string]: string //pattern: ^[A-Za-z0-9]([A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?$
-  }
-  // What it was for; null when its submitter did not say.
-  for: {
-    // What asked for the run: an approval-service batch or change, a work-tracker item, or a worker.
-    kind: enum[batch, change, item, worker]
-    // Its id there, without spaces.
-    id: string //pattern: ^\S{1,200}$
-  }
-  // `pending` until a runner claims it, `running` on that runner, then `succeeded`, `failed` or `canceled`, which it never leaves.
-  state: enum[pending, running, succeeded, failed, canceled]
-  // Why it is in its state, when that is not plain: a cancel, a lapsed lease, a timeout.
-  reason: string | null
-  // A cancel was asked for: the runner of a run in progress is told to stop it on its next log append.
-  cancelRequested: boolean
-  // The runner that claimed it; null while pending.
-  runner: string | null //format: uuid
-  // What its runner runs it with: `limits`, else `jobs.toml`'s for the job, else its `[defaults]`. Null until its runner has read `jobs.toml`, and on a runner that does not say.
-  runsWith: {
-    // MiB the container may use.
-    memory: integer //minimum: 1 //maximum: 1048576
-    // Seconds before the runner stops it and it fails.
-    timeout: integer //minimum: 1 //maximum: 86400
-    // Seconds without progress (output, CPU or network) before the runner ends it, failed as stalled; null when it never does.
-    stall: integer | null //minimum: 1 //maximum: 86400
-  }
-  // The run's exit code, once its runner reports one.
-  exit: integer | null
-  // Seconds it ran, as its runner reported.
-  duration: number | null
-  // Bytes of log stored so far.
-  logSize: integer
-  // The `claimed-by` it was submitted with.
-  submittedBy: string | null
-  createdAt: string
-  updatedAt: string
-  startedAt: string | null
-  endedAt: string | null
-  // While running: if no log append renews it by then, the run fails.
-  leaseExpiresAt: string | null
+   "key": "string",
+   "version": number,
+   "commit": "string",
+   "files": [ {
+      "path": "string",
+      "content": "string",
+      "executable": boolean
+   } ]
 }
 ```
 
-- 400 The request failed validation.
+### Response elements
 
-`application/json`
+**key**  
+The skill's name, which its files are under.  
+Type: String.
 
-```typescript
+**version**  
+The deployed tree's commit count, 0 when deployed from outside git.  
+Type: Integer.
+
+**commit**  
+The deployed commit, ending `-dirty` when deployed with uncommitted changes.  
+Type: String.
+
+**files**  
+Every file of the skill, as a worker installs it.  
+Type: Array of [SkillFile](#skillfile) objects.
+
+### Errors
+
+**UnauthorizedException**  
+The bearer token is missing or is not the submitters'.  
+HTTP status: 401
+
+**ServiceUnavailableException**  
+The service has no submitters' token configured.  
+HTTP status: 503
+
+---
+
+## ListRunners
+
+List runners, most recently seen first.
+
+### Request syntax
+
+```http
+GET /runners HTTP/1.1
+Authorization: Bearer token
+```
+
+### Response syntax
+
+```http
+HTTP/1.1 200
+Content-type: application/json
+
 {
-  error: string
+   "runners": [ {
+      "id": "string",
+      "name": "string",
+      "labels": { },
+      "slots": number,
+      "memory": number,
+      "version": "string",
+      "hostId": "string",
+      "createdAt": "string",
+      "lastSeenAt": "string"
+   } ]
 }
 ```
 
-- 401 Missing or incorrect bearer token.
+### Response elements
 
-`application/json`
+**runners**  
+Every registered runner, most recently seen first.  
+Type: Array of [Runner](#runner) objects.
 
-```typescript
+### Errors
+
+**ValidationException**  
+The request failed validation.  
+HTTP status: 400
+
+**UnauthorizedException**  
+The bearer token is missing or is not the submitters'.  
+HTTP status: 401
+
+**ServiceUnavailableException**  
+The service has no submitters' token configured.  
+HTTP status: 503
+
+---
+
+## ListRuns
+
+List runs, newest first.
+
+### Request syntax
+
+```http
+GET /runs?state=state&repo=repo&submittedBy=submittedBy&for=for&limit=limit HTTP/1.1
+Authorization: Bearer token
+```
+
+### Query parameters
+
+**state**  
+`pending` until a runner claims it, `running` on that runner, then `succeeded`, `failed` or `canceled`, which it never leaves.  
+Type: String. Valid values: `pending` | `running` | `succeeded` | `failed` | `canceled`. Required: No.
+
+**repo**  
+`owner/name` on GitHub.  
+Type: String. Length: 0 to 200. Pattern: `^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$`. Required: No.
+
+**submittedBy**  
+Only the runs submitted with this `claimed-by`, as `submittedBy` records it.  
+Type: String. Length: 1 to 200. Required: No.
+
+**for**  
+`<kind>:<id>`, e.g. `item:28af81bc-…`: only the runs submitted with that `for`.  
+Type: String. Required: No.
+
+**limit**  
+At most this many, newest first.  
+Type: Integer. Range: 1 to 500. Required: No.
+
+### Response syntax
+
+```http
+HTTP/1.1 200
+Content-type: application/json
+
 {
-  error: string
+   "runs": [ {
+      "id": "string",
+      "repo": "string",
+      "commit": "string",
+      "job": "string",
+      "routine": {
+         "repo": "string",
+         "commit": "string",
+         "dir": "string"
+      },
+      "host": "string",
+      "args": [ "string" ],
+      "limits": {
+         "memory": number,
+         "timeout": number
+      },
+      "labels": { },
+      "for": {
+         "kind": "batch | change | item | worker",
+         "id": "string"
+      },
+      "state": "pending | running | succeeded | failed | canceled",
+      "reason": "string",
+      "cancelRequested": boolean,
+      "runner": "string",
+      "runsWith": {
+         "memory": number,
+         "timeout": number,
+         "stall": number
+      },
+      "exit": number,
+      "duration": number,
+      "logSize": number,
+      "submittedBy": "string",
+      "createdAt": "string",
+      "updatedAt": "string",
+      "startedAt": "string",
+      "endedAt": "string",
+      "leaseExpiresAt": "string"
+   } ]
 }
 ```
 
-- 404 No run with that id.
+### Response elements
 
-`application/json`
+**runs**  
+The runs, newest first.  
+Type: Array of [Run](#run) objects.
 
-```typescript
+### Errors
+
+**ValidationException**  
+The request failed validation.  
+HTTP status: 400
+
+**UnauthorizedException**  
+The bearer token is missing or is not the submitters'.  
+HTTP status: 401
+
+**ServiceUnavailableException**  
+The service has no submitters' token configured.  
+HTTP status: 503
+
+---
+
+## PutRunsWith
+
+From the run's own runner, once it has read `jobs.toml` and before it starts the run's container. Sending it again replaces it.
+
+### Request syntax
+
+```http
+PUT /runs/{id}/runs-with HTTP/1.1
+Authorization: Bearer token
+Content-type: application/json
+
 {
-  error: string
+   "memory": number,
+   "timeout": number,
+   "stall": number
 }
 ```
 
-- 409 It has already ended.
+### URI request parameters
 
-`application/json`
+**id**  
+The run's id.  
+Type: String. Required: Yes.
 
-```typescript
+### Request body
+
+**memory**  
+MiB the container may use.  
+Type: Integer. Range: 1 to 1048576. Required: Yes.
+
+**timeout**  
+Seconds before the runner stops it and it fails.  
+Type: Integer. Range: 1 to 86400. Required: Yes.
+
+**stall**  
+Seconds without progress (output, CPU or network) before the runner ends it, failed as stalled; null when it never does.  
+Type: Integer. Range: 1 to 86400. Nullable: Yes. Required: Yes.
+
+### Response syntax
+
+```http
+HTTP/1.1 200
+Content-type: application/json
+
 {
-  error: string
+   "id": "string",
+   "repo": "string",
+   "commit": "string",
+   "job": "string",
+   "routine": {
+      "repo": "string",
+      "commit": "string",
+      "dir": "string"
+   },
+   "host": "string",
+   "args": [ "string" ],
+   "limits": {
+      "memory": number,
+      "timeout": number
+   },
+   "labels": { },
+   "for": {
+      "kind": "batch | change | item | worker",
+      "id": "string"
+   },
+   "state": "pending | running | succeeded | failed | canceled",
+   "reason": "string",
+   "cancelRequested": boolean,
+   "runner": "string",
+   "runsWith": {
+      "memory": number,
+      "timeout": number,
+      "stall": number
+   },
+   "exit": number,
+   "duration": number,
+   "logSize": number,
+   "submittedBy": "string",
+   "createdAt": "string",
+   "updatedAt": "string",
+   "startedAt": "string",
+   "endedAt": "string",
+   "leaseExpiresAt": "string"
 }
 ```
 
-- 503 No API token is configured.
+### Response elements
 
-`application/json`
+**id**  
+The run's id.  
+Type: String.
 
-```typescript
+**repo**  
+`owner/name` on GitHub: checked out at `/work`; with a routine, its target.  
+Type: String. Length: 0 to 200. Pattern: `^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$`.
+
+**commit**  
+The commit to run, as a full lowercase sha: the runner checks out exactly this.  
+Type: String. Pattern: `^[0-9a-f]{40}$`.
+
+**job**  
+A `[jobs.<name>]` in the repo's `jobs.toml` at that commit, or in the routine directory's when it has a routine.  
+Type: String. Pattern: `^[a-z0-9][a-z0-9_-]{0,62}$`.
+
+**routine**  
+Where its steps live, when not in `repo`'s own `jobs.toml`; null when they are.  
+Type: [Routine](#routine) object.
+
+**host**  
+The machine it must run on, on the host itself; null: any runner that fits.  
+Type: String. Nullable: Yes.
+
+**args**  
+Appended to the job's `run` command from `jobs.toml`.  
+Type: Array of strings.
+
+**limits**  
+Type: [Limits](#limits) object.
+
+**labels**  
+Labels as Kubernetes writes them. On a run, what a runner must have, every key with that value; on a runner, what it has.  
+Type: Object.
+
+**for**  
+What it was for; null when its submitter did not say.  
+Type: [For](#for) object.
+
+**state**  
+`pending` until a runner claims it, `running` on that runner, then `succeeded`, `failed` or `canceled`, which it never leaves.  
+Type: String. Valid values: `pending` | `running` | `succeeded` | `failed` | `canceled`.
+
+**reason**  
+Why it is in its state, when that is not plain: a cancel, a lapsed lease, a timeout.  
+Type: String. Nullable: Yes.
+
+**cancelRequested**  
+A cancel was asked for: the runner of a run in progress is told to stop it on its next log append.  
+Type: Boolean.
+
+**runner**  
+The runner that claimed it; null while pending.  
+Type: String. Nullable: Yes.
+
+**runsWith**  
+What its runner runs it with: `limits`, else `jobs.toml`'s for the job, else its `[defaults]`. Null until its runner has read `jobs.toml`, and on a runner that does not say.  
+Type: [RunsWith](#runswith) object.
+
+**exit**  
+The run's exit code, once its runner reports one.  
+Type: Integer. Nullable: Yes.
+
+**duration**  
+Seconds it ran, as its runner reported.  
+Type: Number. Nullable: Yes.
+
+**logSize**  
+Bytes of log stored so far.  
+Type: Integer.
+
+**submittedBy**  
+The `claimed-by` it was submitted with.  
+Type: String. Nullable: Yes.
+
+**createdAt**  
+When it was submitted, as an ISO 8601 timestamp.  
+Type: String.
+
+**updatedAt**  
+When it last changed, as an ISO 8601 timestamp.  
+Type: String.
+
+**startedAt**  
+When a runner claimed it; null while pending.  
+Type: String. Nullable: Yes.
+
+**endedAt**  
+When it ended; null until it does.  
+Type: String. Nullable: Yes.
+
+**leaseExpiresAt**  
+While running: if no log append renews it by then, the run fails.  
+Type: String. Nullable: Yes.
+
+### Errors
+
+**ValidationException**  
+The request failed validation.  
+HTTP status: 400
+
+**UnauthorizedException**  
+The bearer token is not a runner's own.  
+HTTP status: 401
+
+**AccessDeniedException**  
+The run is another runner's, or the path names another runner.  
+HTTP status: 403
+
+**ResourceNotFoundException**  
+No run has that id.  
+HTTP status: 404
+
+**ConflictException**  
+It is not running.  
+HTTP status: 409
+
+---
+
+## RegisterRunner
+
+With the registration token, not the submitters'. Answers the runner's own token once.
+
+### Request syntax
+
+```http
+POST /runners HTTP/1.1
+Authorization: Bearer token
+Content-type: application/json
+
 {
-  error: string
+   "name": "string",
+   "labels": { },
+   "slots": number,
+   "memory": number,
+   "version": "string",
+   "hostId": "string"
 }
 ```
 
-***
+### Request body
 
-### [POST]/runners
+**name**  
+What it calls itself, e.g. its host's name: not unique.  
+Type: String. Length: 1 to 200. Required: Yes.
 
-- Summary  
-  Register a runner
+**labels**  
+Labels as Kubernetes writes them. On a run, what a runner must have, every key with that value; on a runner, what it has.  
+Type: Object. Required: No.
 
-- Operation id  
-  registerRunner
+**slots**  
+Runs it runs at once.  
+Type: Integer. Range: 1 to 64. Required: Yes.
 
-- Description  
-  With the registration token, not the submitters'. Answers the runner's own token once.
+**memory**  
+MiB it has for runs and their image builds.  
+Type: Integer. Range: 16 to 1048576. Required: Yes.
 
-- Tags  
-  runners
+**version**  
+job-runner's version.  
+Type: String. Length: 0 to 100. Nullable: Yes. Required: No.
 
-- Security  
-  bearerAuth
+**hostId**  
+The machine it runs on: its worker-host's `host_id`, by default the hostname.  
+Type: String. Length: 1 to 200. Nullable: Yes. Required: No.
 
-#### RequestBody
+### Response syntax
 
-What the runner is and has.
+```http
+HTTP/1.1 201
+Content-type: application/json
 
-- application/json
-
-```typescript
 {
-  name: string //minLength: 1 //maxLength: 200
-  // Labels as Kubernetes writes them. On a run, what a runner must have, every key with that value; on a runner, what it has.
-  labels: {
-    [key: string]: string //pattern: ^[A-Za-z0-9]([A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?$
-  }
-  slots: integer //minimum: 1 //maximum: 64
-  // MiB.
-  memory: integer //minimum: 16 //maximum: 1048576
-  version?: string | null //maxLength: 100 //default: null
-  // The machine it runs on: its worker-host's `host_id`, by default the hostname.
-  hostId?: string | null //minLength: 1 //maxLength: 200 //default: null
+   "runner": {
+      "id": "string",
+      "name": "string",
+      "labels": { },
+      "slots": number,
+      "memory": number,
+      "version": "string",
+      "hostId": "string",
+      "createdAt": "string",
+      "lastSeenAt": "string"
+   },
+   "token": "string"
 }
 ```
 
-#### Responses
+### Response elements
 
-- 201 Registered.
+**runner**  
+The runner, registered.  
+Type: [Runner](#runner) object.
 
-`application/json`
+**token**  
+Its own bearer token, `<runner id>.<secret>`, shown only here: keep it where only the runner's user can read it.  
+Type: String.
 
-```typescript
+### Errors
+
+**ValidationException**  
+The request failed validation.  
+HTTP status: 400
+
+**UnauthorizedException**  
+The bearer token is missing or is not the submitters'.  
+HTTP status: 401
+
+**ServiceUnavailableException**  
+The service has no submitters' token configured.  
+HTTP status: 503
+
+---
+
+## SubmitRun
+
+One run, stored `pending` until a runner whose labels and free memory fit claims it, with what it was for when `for` says. Nothing is checked against the repo here: a run of a job missing from `jobs.toml` at that commit fails on its runner, saying so in its log.
+
+### Request syntax
+
+```http
+POST /runs HTTP/1.1
+Authorization: Bearer token
+claimed-by: string
+Content-type: application/json
+
 {
-  runner: {
-    id: string //format: uuid
-    // What it calls itself, e.g. its host's name: not unique.
-    name: string
-    // Labels as Kubernetes writes them. On a run, what a runner must have, every key with that value; on a runner, what it has.
-    labels: {
-      [key: string]: string //pattern: ^[A-Za-z0-9]([A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?$
-    }
-    // Runs it runs at once.
-    slots: integer
-    // MiB it has for runs and their image builds.
-    memory: integer
-    // job-runner's version, as it said.
-    version: string | null
-    // The machine it runs on, the same as that machine's worker-host's `host_id` (by default its hostname); null until it says.
-    hostId: string | null
-    createdAt: string
-    // Its last claim.
-    lastSeenAt: string
-  }
-  // Its own bearer token, `<runner id>.<secret>`, shown only here: keep it where only the runner's user can read it.
-  token: string
+   "repo": "string",
+   "commit": "string",
+   "job": "string",
+   "args": [ "string" ],
+   "limits": {
+      "memory": number,
+      "timeout": number
+   },
+   "labels": { },
+   "for": {
+      "kind": "batch | change | item | worker",
+      "id": "string"
+   },
+   "routine": {
+      "repo": "string",
+      "commit": "string",
+      "dir": "string"
+   },
+   "host": "string"
 }
 ```
 
-- 400 The request failed validation.
+### Request headers
 
-`application/json`
+**claimed-by**  
+Who is submitting: recorded on the run as `submittedBy`.  
+Type: String. Length: 1 to 200. Required: No.
 
-```typescript
+### Request body
+
+**repo**  
+`owner/name` on GitHub.  
+Type: String. Length: 0 to 200. Pattern: `^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$`. Required: Yes.
+
+**commit**  
+The commit to run, as a full lowercase sha: the runner checks out exactly this.  
+Type: String. Pattern: `^[0-9a-f]{40}$`. Required: Yes.
+
+**job**  
+A `[jobs.<name>]` in the repo's `jobs.toml` at that commit, or in the routine directory's when it has a routine.  
+Type: String. Pattern: `^[a-z0-9][a-z0-9_-]{0,62}$`. Required: Yes.
+
+**args**  
+Appended to the job's `run` command from `jobs.toml`.  
+Type: Array of strings. At most 50 items. Required: No.
+
+**limits**  
+Type: [Limits](#limits) object. Required: No.
+
+**labels**  
+Labels as Kubernetes writes them. On a run, what a runner must have, every key with that value; on a runner, what it has.  
+Type: Object. Required: No.
+
+**for**  
+What the run was for, as `GET /runs?for=<kind>:<id>` lists it.  
+Type: [For](#for) object. Required: No.
+
+**routine**  
+Where the job's steps live, when not in its own repo: `job` is read from `<dir>/jobs.toml` in `repo` at `commit`, and the run's own `repo` and `commit` are its target, the package checked out at `/work` beside the routine. Only a runner that says it `can` run a `routine` claims it.  
+Type: [Routine](#routine) object. Required: No.
+
+**host**  
+The machine it must run on, as a runner's `hostId`: claimed only by that machine's runner, and only one that says it `can` run `host` runs, which runs it on the host itself, with the host's user services, if that host's config lets it. Null: any runner that fits.  
+Type: String. Length: 1 to 200. Nullable: Yes. Required: No.
+
+### Response syntax
+
+```http
+HTTP/1.1 201
+Content-type: application/json
+
 {
-  error: string
+   "id": "string",
+   "repo": "string",
+   "commit": "string",
+   "job": "string",
+   "routine": {
+      "repo": "string",
+      "commit": "string",
+      "dir": "string"
+   },
+   "host": "string",
+   "args": [ "string" ],
+   "limits": {
+      "memory": number,
+      "timeout": number
+   },
+   "labels": { },
+   "for": {
+      "kind": "batch | change | item | worker",
+      "id": "string"
+   },
+   "state": "pending | running | succeeded | failed | canceled",
+   "reason": "string",
+   "cancelRequested": boolean,
+   "runner": "string",
+   "runsWith": {
+      "memory": number,
+      "timeout": number,
+      "stall": number
+   },
+   "exit": number,
+   "duration": number,
+   "logSize": number,
+   "submittedBy": "string",
+   "createdAt": "string",
+   "updatedAt": "string",
+   "startedAt": "string",
+   "endedAt": "string",
+   "leaseExpiresAt": "string"
 }
 ```
 
-- 401 Missing or incorrect bearer token.
+### Response elements
 
-`application/json`
+**id**  
+The run's id.  
+Type: String.
 
-```typescript
-{
-  error: string
-}
-```
+**repo**  
+`owner/name` on GitHub: checked out at `/work`; with a routine, its target.  
+Type: String. Length: 0 to 200. Pattern: `^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$`.
 
-- 503 No API token is configured.
+**commit**  
+The commit to run, as a full lowercase sha: the runner checks out exactly this.  
+Type: String. Pattern: `^[0-9a-f]{40}$`.
 
-`application/json`
+**job**  
+A `[jobs.<name>]` in the repo's `jobs.toml` at that commit, or in the routine directory's when it has a routine.  
+Type: String. Pattern: `^[a-z0-9][a-z0-9_-]{0,62}$`.
 
-```typescript
-{
-  error: string
-}
-```
+**routine**  
+Where its steps live, when not in `repo`'s own `jobs.toml`; null when they are.  
+Type: [Routine](#routine) object.
 
-***
+**host**  
+The machine it must run on, on the host itself; null: any runner that fits.  
+Type: String. Nullable: Yes.
 
-### [GET]/runners
+**args**  
+Appended to the job's `run` command from `jobs.toml`.  
+Type: Array of strings.
 
-- Summary  
-  List runners, most recently seen first
+**limits**  
+Type: [Limits](#limits) object.
 
-- Operation id  
-  listRunners
+**labels**  
+Labels as Kubernetes writes them. On a run, what a runner must have, every key with that value; on a runner, what it has.  
+Type: Object.
 
-- Tags  
-  runners
+**for**  
+What it was for; null when its submitter did not say.  
+Type: [For](#for) object.
 
-- Security  
-  bearerAuth
+**state**  
+`pending` until a runner claims it, `running` on that runner, then `succeeded`, `failed` or `canceled`, which it never leaves.  
+Type: String. Valid values: `pending` | `running` | `succeeded` | `failed` | `canceled`.
 
-#### Responses
+**reason**  
+Why it is in its state, when that is not plain: a cancel, a lapsed lease, a timeout.  
+Type: String. Nullable: Yes.
 
-- 200 The runners.
+**cancelRequested**  
+A cancel was asked for: the runner of a run in progress is told to stop it on its next log append.  
+Type: Boolean.
 
-`application/json`
+**runner**  
+The runner that claimed it; null while pending.  
+Type: String. Nullable: Yes.
 
-```typescript
-{
-  runners: {
-    id: string //format: uuid
-    // What it calls itself, e.g. its host's name: not unique.
-    name: string
-    // Labels as Kubernetes writes them. On a run, what a runner must have, every key with that value; on a runner, what it has.
-    labels: {
-      [key: string]: string //pattern: ^[A-Za-z0-9]([A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?$
-    }
-    // Runs it runs at once.
-    slots: integer
-    // MiB it has for runs and their image builds.
-    memory: integer
-    // job-runner's version, as it said.
-    version: string | null
-    // The machine it runs on, the same as that machine's worker-host's `host_id` (by default its hostname); null until it says.
-    hostId: string | null
-    createdAt: string
-    // Its last claim.
-    lastSeenAt: string
-  }[]
-}
-```
-
-- 400 The request failed validation.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 401 Missing or incorrect bearer token.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 503 No API token is configured.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-***
-
-### [POST]/runners/{id}/claim
-
-- Summary  
-  Claim the oldest pending run that fits
-
-- Operation id  
-  claimRun
-
-- Description  
-  The oldest pending run whose labels the runner has, whose memory fits `free`, whose routine or host, if any, it `can` run, and whose `host`, if any, is the runner's own `hostId`, moved to `running` on this runner. Two claims never get the same run. 204 when none fits.
-
-- Tags  
-  runners
-
-- Security  
-  runnerAuth
-
-#### Parameters(Path)
-
-```typescript
-id: string //format: uuid
-```
-
-#### RequestBody
-
-What the runner can take on.
-
-- application/json
-
-```typescript
-{
-  // What it has now; its registered labels when absent.
-  labels: {
-    [key: string]: string //pattern: ^[A-Za-z0-9]([A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?$
-  }
-  can?: enum[routine, host][] //maxItems: 10
-  // The machine it runs on now, recorded on the runner, so one registered before it said keeps its id.
-  hostId?: string //minLength: 1 //maxLength: 200
-  // What it can take on now.
-  free: {
-    // Slots not taken by a run.
-    slots: integer //minimum: 0
-    // MiB not reserved by a run in progress or an image build.
-    memory: integer //minimum: 0
-  }
-}
-```
-
-#### Responses
-
-- 200 A run, now running here.
-
-`application/json`
-
-```typescript
-{
-  run: {
-    id: string //format: uuid
-    // `owner/name` on GitHub: checked out at `/work`; with a routine, its target.
-    repo: string //maxLength: 200 //pattern: ^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$
-    // The commit to run, as a full lowercase sha: the runner checks out exactly this.
-    commit: string //pattern: ^[0-9a-f]{40}$
-    // A `[jobs.<name>]` in the repo's `jobs.toml` at that commit, or in the routine directory's when it has a routine.
-    job: string //pattern: ^[a-z0-9][a-z0-9_-]{0,62}$
-    // Where its steps live, when not in `repo`'s own `jobs.toml`; null when they are.
-    routine: {
-      // `owner/name` on GitHub: the repo the routine is in.
-      repo: string //maxLength: 200 //pattern: ^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$
-      // The routine repo's commit, as a full lowercase sha: the runner checks out exactly this.
-      commit: string //pattern: ^[0-9a-f]{40}$
-      // The routine's directory in that repo, holding the `jobs.toml` that names `job`: `/`-separated, no `.` or `..`.
-      dir: string //maxLength: 200 //pattern: ^(?!\.{1,2}(\/|$))[A-Za-z0-9_.-]+(\/(?!\.{1,2}(\/|$))[A-Za-z0-9_.-]+)*$
-    }
-    // The machine it must run on, on the host itself; null: any runner that fits.
-    host: string | null
-    args: string[]
-    limits: {
-      // MiB the container may use, and the runner reserves for it. Null: `jobs.toml`'s, within the 1024 MiB a run without one is admitted with.
-      memory?: integer | null //minimum: 16 //maximum: 1048576 //default: null
-      // Seconds before the runner stops it and it fails. Null: `jobs.toml`'s.
-      timeout?: integer | null //minimum: 1 //maximum: 86400 //default: null
-    }
-    // Labels as Kubernetes writes them. On a run, what a runner must have, every key with that value; on a runner, what it has.
-    labels: {
-      [key: string]: string //pattern: ^[A-Za-z0-9]([A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?$
-    }
-    // What it was for; null when its submitter did not say.
-    for: {
-      // What asked for the run: an approval-service batch or change, a work-tracker item, or a worker.
-      kind: enum[batch, change, item, worker]
-      // Its id there, without spaces.
-      id: string //pattern: ^\S{1,200}$
-    }
-    // `pending` until a runner claims it, `running` on that runner, then `succeeded`, `failed` or `canceled`, which it never leaves.
-    state: enum[pending, running, succeeded, failed, canceled]
-    // Why it is in its state, when that is not plain: a cancel, a lapsed lease, a timeout.
-    reason: string | null
-    // A cancel was asked for: the runner of a run in progress is told to stop it on its next log append.
-    cancelRequested: boolean
-    // The runner that claimed it; null while pending.
-    runner: string | null //format: uuid
-    // What its runner runs it with: `limits`, else `jobs.toml`'s for the job, else its `[defaults]`. Null until its runner has read `jobs.toml`, and on a runner that does not say.
-    runsWith: {
-      // MiB the container may use.
-      memory: integer //minimum: 1 //maximum: 1048576
-      // Seconds before the runner stops it and it fails.
-      timeout: integer //minimum: 1 //maximum: 86400
-      // Seconds without progress (output, CPU or network) before the runner ends it, failed as stalled; null when it never does.
-      stall: integer | null //minimum: 1 //maximum: 86400
-    }
-    // The run's exit code, once its runner reports one.
-    exit: integer | null
-    // Seconds it ran, as its runner reported.
-    duration: number | null
-    // Bytes of log stored so far.
-    logSize: integer
-    // The `claimed-by` it was submitted with.
-    submittedBy: string | null
-    createdAt: string
-    updatedAt: string
-    startedAt: string | null
-    endedAt: string | null
-    // While running: if no log append renews it by then, the run fails.
-    leaseExpiresAt: string | null
-  }
-  // MiB the run was admitted with: reserve this, and run it with no more.
-  memory: integer
-  // Seconds the run lives without a log append. Append, or renew with an empty one, well within it.
-  lease: integer
-}
-```
-
-- 204 No pending run fits.
-
-- 400 The request failed validation.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 401 Not a runner's token.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 403 Another runner's run.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-***
-
-### [PUT]/runs/{id}/runs-with
-
-- Summary  
-  Say what a run in progress runs with
-
-- Operation id  
-  setRunsWith
-
-- Description  
-  From the run's own runner, once it has read `jobs.toml` and before it starts the run's container. Sending it again replaces it.
-
-- Tags  
-  runners
-
-- Security  
-  runnerAuth
-
-#### Parameters(Path)
-
-```typescript
-id: string //format: uuid
-```
-
-#### RequestBody
-
-Its memory, timeout and stall limit.
-
-- application/json
-
-```typescript
-// What its runner runs it with: `limits`, else `jobs.toml`'s for the job, else its `[defaults]`. Null until its runner has read `jobs.toml`, and on a runner that does not say.
-{
-  // MiB the container may use.
-  memory: integer //minimum: 1 //maximum: 1048576
-  // Seconds before the runner stops it and it fails.
-  timeout: integer //minimum: 1 //maximum: 86400
-  // Seconds without progress (output, CPU or network) before the runner ends it, failed as stalled; null when it never does.
-  stall: integer | null //minimum: 1 //maximum: 86400
-}
-```
-
-#### Responses
-
-- 200 The run, with `runsWith`.
-
-`application/json`
-
-```typescript
-{
-  id: string //format: uuid
-  // `owner/name` on GitHub: checked out at `/work`; with a routine, its target.
-  repo: string //maxLength: 200 //pattern: ^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$
-  // The commit to run, as a full lowercase sha: the runner checks out exactly this.
-  commit: string //pattern: ^[0-9a-f]{40}$
-  // A `[jobs.<name>]` in the repo's `jobs.toml` at that commit, or in the routine directory's when it has a routine.
-  job: string //pattern: ^[a-z0-9][a-z0-9_-]{0,62}$
-  // Where its steps live, when not in `repo`'s own `jobs.toml`; null when they are.
-  routine: {
-    // `owner/name` on GitHub: the repo the routine is in.
-    repo: string //maxLength: 200 //pattern: ^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$
-    // The routine repo's commit, as a full lowercase sha: the runner checks out exactly this.
-    commit: string //pattern: ^[0-9a-f]{40}$
-    // The routine's directory in that repo, holding the `jobs.toml` that names `job`: `/`-separated, no `.` or `..`.
-    dir: string //maxLength: 200 //pattern: ^(?!\.{1,2}(\/|$))[A-Za-z0-9_.-]+(\/(?!\.{1,2}(\/|$))[A-Za-z0-9_.-]+)*$
-  }
-  // The machine it must run on, on the host itself; null: any runner that fits.
-  host: string | null
-  args: string[]
-  limits: {
-    // MiB the container may use, and the runner reserves for it. Null: `jobs.toml`'s, within the 1024 MiB a run without one is admitted with.
-    memory?: integer | null //minimum: 16 //maximum: 1048576 //default: null
-    // Seconds before the runner stops it and it fails. Null: `jobs.toml`'s.
-    timeout?: integer | null //minimum: 1 //maximum: 86400 //default: null
-  }
-  // Labels as Kubernetes writes them. On a run, what a runner must have, every key with that value; on a runner, what it has.
-  labels: {
-    [key: string]: string //pattern: ^[A-Za-z0-9]([A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?$
-  }
-  // What it was for; null when its submitter did not say.
-  for: {
-    // What asked for the run: an approval-service batch or change, a work-tracker item, or a worker.
-    kind: enum[batch, change, item, worker]
-    // Its id there, without spaces.
-    id: string //pattern: ^\S{1,200}$
-  }
-  // `pending` until a runner claims it, `running` on that runner, then `succeeded`, `failed` or `canceled`, which it never leaves.
-  state: enum[pending, running, succeeded, failed, canceled]
-  // Why it is in its state, when that is not plain: a cancel, a lapsed lease, a timeout.
-  reason: string | null
-  // A cancel was asked for: the runner of a run in progress is told to stop it on its next log append.
-  cancelRequested: boolean
-  // The runner that claimed it; null while pending.
-  runner: string | null //format: uuid
-  // What its runner runs it with: `limits`, else `jobs.toml`'s for the job, else its `[defaults]`. Null until its runner has read `jobs.toml`, and on a runner that does not say.
-  runsWith: {
-    // MiB the container may use.
-    memory: integer //minimum: 1 //maximum: 1048576
-    // Seconds before the runner stops it and it fails.
-    timeout: integer //minimum: 1 //maximum: 86400
-    // Seconds without progress (output, CPU or network) before the runner ends it, failed as stalled; null when it never does.
-    stall: integer | null //minimum: 1 //maximum: 86400
-  }
-  // The run's exit code, once its runner reports one.
-  exit: integer | null
-  // Seconds it ran, as its runner reported.
-  duration: number | null
-  // Bytes of log stored so far.
-  logSize: integer
-  // The `claimed-by` it was submitted with.
-  submittedBy: string | null
-  createdAt: string
-  updatedAt: string
-  startedAt: string | null
-  endedAt: string | null
-  // While running: if no log append renews it by then, the run fails.
-  leaseExpiresAt: string | null
-}
-```
-
-- 400 The request failed validation.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 401 Not a runner's token.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 403 Another runner's run.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 404 No run with that id.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-- 409 It is not running.
-
-`application/json`
-
-```typescript
-{
-  error: string
-}
-```
-
-## References
-
-### #/components/securitySchemes/bearerAuth
-
-- Type: http
-- Scheme: bearer
-
-### #/components/securitySchemes/runnerAuth
-
-- Type: http
-- Scheme: bearer
-
-A runner's own token, `<runner id>.<secret>`, as `registerRunner` answered it.
-
-### #/components/schemas/Skill
-
-```typescript
-{
-  // The skill's name, which its files are under.
-  key: string
-  // The deployed tree's commit count, 0 when deployed from outside git.
-  version: integer
-  // The deployed commit, ending `-dirty` when deployed with uncommitted changes.
-  commit: string
-  files: {
-    // Under the worker's Claude Code folder: `skills/jobs/bin/…` or `skills/jobs/reference/…`.
-    path: string
-    content: string
-    executable: boolean
-  }[]
-}
-```
-
-### #/components/schemas/Error
-
-```typescript
-{
-  error: string
-}
-```
-
-### #/components/schemas/Run
-
-```typescript
-{
-  id: string //format: uuid
-  // `owner/name` on GitHub: checked out at `/work`; with a routine, its target.
-  repo: string //maxLength: 200 //pattern: ^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$
-  // The commit to run, as a full lowercase sha: the runner checks out exactly this.
-  commit: string //pattern: ^[0-9a-f]{40}$
-  // A `[jobs.<name>]` in the repo's `jobs.toml` at that commit, or in the routine directory's when it has a routine.
-  job: string //pattern: ^[a-z0-9][a-z0-9_-]{0,62}$
-  // Where its steps live, when not in `repo`'s own `jobs.toml`; null when they are.
-  routine: {
-    // `owner/name` on GitHub: the repo the routine is in.
-    repo: string //maxLength: 200 //pattern: ^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$
-    // The routine repo's commit, as a full lowercase sha: the runner checks out exactly this.
-    commit: string //pattern: ^[0-9a-f]{40}$
-    // The routine's directory in that repo, holding the `jobs.toml` that names `job`: `/`-separated, no `.` or `..`.
-    dir: string //maxLength: 200 //pattern: ^(?!\.{1,2}(\/|$))[A-Za-z0-9_.-]+(\/(?!\.{1,2}(\/|$))[A-Za-z0-9_.-]+)*$
-  }
-  // The machine it must run on, on the host itself; null: any runner that fits.
-  host: string | null
-  args: string[]
-  limits: {
-    // MiB the container may use, and the runner reserves for it. Null: `jobs.toml`'s, within the 1024 MiB a run without one is admitted with.
-    memory?: integer | null //minimum: 16 //maximum: 1048576 //default: null
-    // Seconds before the runner stops it and it fails. Null: `jobs.toml`'s.
-    timeout?: integer | null //minimum: 1 //maximum: 86400 //default: null
-  }
-  // Labels as Kubernetes writes them. On a run, what a runner must have, every key with that value; on a runner, what it has.
-  labels: {
-    [key: string]: string //pattern: ^[A-Za-z0-9]([A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?$
-  }
-  // What it was for; null when its submitter did not say.
-  for: {
-    // What asked for the run: an approval-service batch or change, a work-tracker item, or a worker.
-    kind: enum[batch, change, item, worker]
-    // Its id there, without spaces.
-    id: string //pattern: ^\S{1,200}$
-  }
-  // `pending` until a runner claims it, `running` on that runner, then `succeeded`, `failed` or `canceled`, which it never leaves.
-  state: enum[pending, running, succeeded, failed, canceled]
-  // Why it is in its state, when that is not plain: a cancel, a lapsed lease, a timeout.
-  reason: string | null
-  // A cancel was asked for: the runner of a run in progress is told to stop it on its next log append.
-  cancelRequested: boolean
-  // The runner that claimed it; null while pending.
-  runner: string | null //format: uuid
-  // What its runner runs it with: `limits`, else `jobs.toml`'s for the job, else its `[defaults]`. Null until its runner has read `jobs.toml`, and on a runner that does not say.
-  runsWith: {
-    // MiB the container may use.
-    memory: integer //minimum: 1 //maximum: 1048576
-    // Seconds before the runner stops it and it fails.
-    timeout: integer //minimum: 1 //maximum: 86400
-    // Seconds without progress (output, CPU or network) before the runner ends it, failed as stalled; null when it never does.
-    stall: integer | null //minimum: 1 //maximum: 86400
-  }
-  // The run's exit code, once its runner reports one.
-  exit: integer | null
-  // Seconds it ran, as its runner reported.
-  duration: number | null
-  // Bytes of log stored so far.
-  logSize: integer
-  // The `claimed-by` it was submitted with.
-  submittedBy: string | null
-  createdAt: string
-  updatedAt: string
-  startedAt: string | null
-  endedAt: string | null
-  // While running: if no log append renews it by then, the run fails.
-  leaseExpiresAt: string | null
-}
-```
-
-### #/components/schemas/Routine
-
-```typescript
-// Where its steps live, when not in `repo`'s own `jobs.toml`; null when they are.
-{
-  // `owner/name` on GitHub: the repo the routine is in.
-  repo: string //maxLength: 200 //pattern: ^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$
-  // The routine repo's commit, as a full lowercase sha: the runner checks out exactly this.
-  commit: string //pattern: ^[0-9a-f]{40}$
-  // The routine's directory in that repo, holding the `jobs.toml` that names `job`: `/`-separated, no `.` or `..`.
-  dir: string //maxLength: 200 //pattern: ^(?!\.{1,2}(\/|$))[A-Za-z0-9_.-]+(\/(?!\.{1,2}(\/|$))[A-Za-z0-9_.-]+)*$
-}
-```
-
-### #/components/schemas/Limits
-
-```typescript
-{
-  // MiB the container may use, and the runner reserves for it. Null: `jobs.toml`'s, within the 1024 MiB a run without one is admitted with.
-  memory?: integer | null //minimum: 16 //maximum: 1048576 //default: null
-  // Seconds before the runner stops it and it fails. Null: `jobs.toml`'s.
-  timeout?: integer | null //minimum: 1 //maximum: 86400 //default: null
-}
-```
-
-### #/components/schemas/For
-
-```typescript
-// What it was for; null when its submitter did not say.
-{
-  // What asked for the run: an approval-service batch or change, a work-tracker item, or a worker.
-  kind: enum[batch, change, item, worker]
-  // Its id there, without spaces.
-  id: string //pattern: ^\S{1,200}$
-}
-```
-
-### #/components/schemas/RunsWith
-
-```typescript
-// What its runner runs it with: `limits`, else `jobs.toml`'s for the job, else its `[defaults]`. Null until its runner has read `jobs.toml`, and on a runner that does not say.
-{
-  // MiB the container may use.
-  memory: integer //minimum: 1 //maximum: 1048576
-  // Seconds before the runner stops it and it fails.
-  timeout: integer //minimum: 1 //maximum: 86400
-  // Seconds without progress (output, CPU or network) before the runner ends it, failed as stalled; null when it never does.
-  stall: integer | null //minimum: 1 //maximum: 86400
-}
-```
-
-### #/components/schemas/Submit
-
-```typescript
-{
-  // `owner/name` on GitHub.
-  repo: string //maxLength: 200 //pattern: ^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$
-  // The commit to run, as a full lowercase sha: the runner checks out exactly this.
-  commit: string //pattern: ^[0-9a-f]{40}$
-  // A `[jobs.<name>]` in the repo's `jobs.toml` at that commit, or in the routine directory's when it has a routine.
-  job: string //pattern: ^[a-z0-9][a-z0-9_-]{0,62}$
-  args?: string[] //maxLength: 4000 //maxItems: 50
-  limits: {
-    // MiB the container may use, and the runner reserves for it. Null: `jobs.toml`'s, within the 1024 MiB a run without one is admitted with.
-    memory?: integer | null //minimum: 16 //maximum: 1048576 //default: null
-    // Seconds before the runner stops it and it fails. Null: `jobs.toml`'s.
-    timeout?: integer | null //minimum: 1 //maximum: 86400 //default: null
-  }
-  // Labels as Kubernetes writes them. On a run, what a runner must have, every key with that value; on a runner, what it has.
-  labels: {
-    [key: string]: string //pattern: ^[A-Za-z0-9]([A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?$
-  }
-  for?: #/components/schemas/For & 
-  routine?: #/components/schemas/Routine & 
-  // The machine it must run on, as a runner's `hostId`: claimed only by that machine's runner, and only one that says it `can` run `host` runs, which runs it on the host itself, with the host's user services, if that host's config lets it. Null: any runner that fits.
-  host?: string | null //minLength: 1 //maxLength: 200 //default: null
-}
-```
-
-### #/components/schemas/Registered
-
-```typescript
-{
-  runner: {
-    id: string //format: uuid
-    // What it calls itself, e.g. its host's name: not unique.
-    name: string
-    // Labels as Kubernetes writes them. On a run, what a runner must have, every key with that value; on a runner, what it has.
-    labels: {
-      [key: string]: string //pattern: ^[A-Za-z0-9]([A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?$
-    }
-    // Runs it runs at once.
-    slots: integer
-    // MiB it has for runs and their image builds.
-    memory: integer
-    // job-runner's version, as it said.
-    version: string | null
-    // The machine it runs on, the same as that machine's worker-host's `host_id` (by default its hostname); null until it says.
-    hostId: string | null
-    createdAt: string
-    // Its last claim.
-    lastSeenAt: string
-  }
-  // Its own bearer token, `<runner id>.<secret>`, shown only here: keep it where only the runner's user can read it.
-  token: string
-}
-```
-
-### #/components/schemas/Runner
-
-```typescript
-{
-  id: string //format: uuid
-  // What it calls itself, e.g. its host's name: not unique.
-  name: string
-  // Labels as Kubernetes writes them. On a run, what a runner must have, every key with that value; on a runner, what it has.
-  labels: {
-    [key: string]: string //pattern: ^[A-Za-z0-9]([A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?$
-  }
-  // Runs it runs at once.
-  slots: integer
-  // MiB it has for runs and their image builds.
-  memory: integer
-  // job-runner's version, as it said.
-  version: string | null
-  // The machine it runs on, the same as that machine's worker-host's `host_id` (by default its hostname); null until it says.
-  hostId: string | null
-  createdAt: string
-  // Its last claim.
-  lastSeenAt: string
-}
-```
-
-### #/components/schemas/Register
-
-```typescript
-{
-  name: string //minLength: 1 //maxLength: 200
-  // Labels as Kubernetes writes them. On a run, what a runner must have, every key with that value; on a runner, what it has.
-  labels: {
-    [key: string]: string //pattern: ^[A-Za-z0-9]([A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?$
-  }
-  slots: integer //minimum: 1 //maximum: 64
-  // MiB.
-  memory: integer //minimum: 16 //maximum: 1048576
-  version?: string | null //maxLength: 100 //default: null
-  // The machine it runs on: its worker-host's `host_id`, by default the hostname.
-  hostId?: string | null //minLength: 1 //maxLength: 200 //default: null
-}
-```
-
-### #/components/schemas/Claim
-
-```typescript
-{
-  run: {
-    id: string //format: uuid
-    // `owner/name` on GitHub: checked out at `/work`; with a routine, its target.
-    repo: string //maxLength: 200 //pattern: ^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$
-    // The commit to run, as a full lowercase sha: the runner checks out exactly this.
-    commit: string //pattern: ^[0-9a-f]{40}$
-    // A `[jobs.<name>]` in the repo's `jobs.toml` at that commit, or in the routine directory's when it has a routine.
-    job: string //pattern: ^[a-z0-9][a-z0-9_-]{0,62}$
-    // Where its steps live, when not in `repo`'s own `jobs.toml`; null when they are.
-    routine: {
-      // `owner/name` on GitHub: the repo the routine is in.
-      repo: string //maxLength: 200 //pattern: ^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$
-      // The routine repo's commit, as a full lowercase sha: the runner checks out exactly this.
-      commit: string //pattern: ^[0-9a-f]{40}$
-      // The routine's directory in that repo, holding the `jobs.toml` that names `job`: `/`-separated, no `.` or `..`.
-      dir: string //maxLength: 200 //pattern: ^(?!\.{1,2}(\/|$))[A-Za-z0-9_.-]+(\/(?!\.{1,2}(\/|$))[A-Za-z0-9_.-]+)*$
-    }
-    // The machine it must run on, on the host itself; null: any runner that fits.
-    host: string | null
-    args: string[]
-    limits: {
-      // MiB the container may use, and the runner reserves for it. Null: `jobs.toml`'s, within the 1024 MiB a run without one is admitted with.
-      memory?: integer | null //minimum: 16 //maximum: 1048576 //default: null
-      // Seconds before the runner stops it and it fails. Null: `jobs.toml`'s.
-      timeout?: integer | null //minimum: 1 //maximum: 86400 //default: null
-    }
-    // Labels as Kubernetes writes them. On a run, what a runner must have, every key with that value; on a runner, what it has.
-    labels: {
-      [key: string]: string //pattern: ^[A-Za-z0-9]([A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?$
-    }
-    // What it was for; null when its submitter did not say.
-    for: {
-      // What asked for the run: an approval-service batch or change, a work-tracker item, or a worker.
-      kind: enum[batch, change, item, worker]
-      // Its id there, without spaces.
-      id: string //pattern: ^\S{1,200}$
-    }
-    // `pending` until a runner claims it, `running` on that runner, then `succeeded`, `failed` or `canceled`, which it never leaves.
-    state: enum[pending, running, succeeded, failed, canceled]
-    // Why it is in its state, when that is not plain: a cancel, a lapsed lease, a timeout.
-    reason: string | null
-    // A cancel was asked for: the runner of a run in progress is told to stop it on its next log append.
-    cancelRequested: boolean
-    // The runner that claimed it; null while pending.
-    runner: string | null //format: uuid
-    // What its runner runs it with: `limits`, else `jobs.toml`'s for the job, else its `[defaults]`. Null until its runner has read `jobs.toml`, and on a runner that does not say.
-    runsWith: {
-      // MiB the container may use.
-      memory: integer //minimum: 1 //maximum: 1048576
-      // Seconds before the runner stops it and it fails.
-      timeout: integer //minimum: 1 //maximum: 86400
-      // Seconds without progress (output, CPU or network) before the runner ends it, failed as stalled; null when it never does.
-      stall: integer | null //minimum: 1 //maximum: 86400
-    }
-    // The run's exit code, once its runner reports one.
-    exit: integer | null
-    // Seconds it ran, as its runner reported.
-    duration: number | null
-    // Bytes of log stored so far.
-    logSize: integer
-    // The `claimed-by` it was submitted with.
-    submittedBy: string | null
-    createdAt: string
-    updatedAt: string
-    startedAt: string | null
-    endedAt: string | null
-    // While running: if no log append renews it by then, the run fails.
-    leaseExpiresAt: string | null
-  }
-  // MiB the run was admitted with: reserve this, and run it with no more.
-  memory: integer
-  // Seconds the run lives without a log append. Append, or renew with an empty one, well within it.
-  lease: integer
-}
-```
-
-### #/components/schemas/ClaimRequest
-
-```typescript
-{
-  // What it has now; its registered labels when absent.
-  labels: {
-    [key: string]: string //pattern: ^[A-Za-z0-9]([A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?$
-  }
-  can?: enum[routine, host][] //maxItems: 10
-  // The machine it runs on now, recorded on the runner, so one registered before it said keeps its id.
-  hostId?: string //minLength: 1 //maxLength: 200
-  // What it can take on now.
-  free: {
-    // Slots not taken by a run.
-    slots: integer //minimum: 0
-    // MiB not reserved by a run in progress or an image build.
-    memory: integer //minimum: 0
-  }
-}
-```
-
-### #/components/schemas/Appended
-
-```typescript
-{
-  // Bytes of log stored: the offset the next append starts at.
-  size: integer
-  // A cancel was asked for: stop the run and report it `canceled`.
-  canceled: boolean
-  leaseExpiresAt: string
-}
-```
-
-### #/components/schemas/Report
-
-```typescript
-{
-  // `canceled` when stopped for a cancel; `failed` for a non-zero exit, a timeout, or an image that would not build.
-  state: enum[succeeded, failed, canceled]
-  // The run's exit code; null when it never ran or was killed.
-  exit: integer | null
-  // Seconds from claim to end.
-  duration: number //minimum: 0
-  // Why, when the state does not say: `timed out after 600s`, `image build failed`.
-  reason?: string | null //minLength: 1 //maxLength: 2000 //default: null
-}
-```
+**runsWith**  
+What its runner runs it with: `limits`, else `jobs.toml`'s for the job, else its `[defaults]`. Null until its runner has read `jobs.toml`, and on a runner that does not say.  
+Type: [RunsWith](#runswith) object.
+
+**exit**  
+The run's exit code, once its runner reports one.  
+Type: Integer. Nullable: Yes.
+
+**duration**  
+Seconds it ran, as its runner reported.  
+Type: Number. Nullable: Yes.
+
+**logSize**  
+Bytes of log stored so far.  
+Type: Integer.
+
+**submittedBy**  
+The `claimed-by` it was submitted with.  
+Type: String. Nullable: Yes.
+
+**createdAt**  
+When it was submitted, as an ISO 8601 timestamp.  
+Type: String.
+
+**updatedAt**  
+When it last changed, as an ISO 8601 timestamp.  
+Type: String.
+
+**startedAt**  
+When a runner claimed it; null while pending.  
+Type: String. Nullable: Yes.
+
+**endedAt**  
+When it ended; null until it does.  
+Type: String. Nullable: Yes.
+
+**leaseExpiresAt**  
+While running: if no log append renews it by then, the run fails.  
+Type: String. Nullable: Yes.
+
+### Errors
+
+**ValidationException**  
+The request failed validation.  
+HTTP status: 400
+
+**UnauthorizedException**  
+The bearer token is missing or is not the submitters'.  
+HTTP status: 401
+
+**ServiceUnavailableException**  
+The service has no submitters' token configured.  
+HTTP status: 503
+
+---
+
+# Data types
+
+## Error
+
+Every error's body.
+
+### Contents
+
+**code**  
+What went wrong, as an exception name: one per HTTP status.  
+Type: String. Valid values: `ValidationException` | `UnauthorizedException` | `AccessDeniedException` | `ResourceNotFoundException` | `ConflictException` | `PayloadTooLargeException` | `InvalidRangeException` | `InternalServerException` | `ServiceUnavailableException`. Required: Yes.
+
+**message**  
+What went wrong, in words.  
+Type: String. Required: Yes.
+
+## For
+
+What it was for; null when its submitter did not say.
+
+### Contents
+
+**kind**  
+What asked for the run: an approval-service batch or change, a work-tracker item, or a worker.  
+Type: String. Valid values: `batch` | `change` | `item` | `worker`. Required: Yes.
+
+**id**  
+Its id there, without spaces.  
+Type: String. Pattern: `^\S{1,200}$`. Required: Yes.
+
+## Health
+
+### Contents
+
+**ok**  
+Always true: an answer at all means it is up.  
+Type: Boolean. Required: Yes.
+
+**version**  
+The package's version.  
+Type: String. Required: Yes.
+
+**commit**  
+The commit it was built from, ending `-dirty` when built with uncommitted changes.  
+Type: String. Required: Yes.
+
+## InvalidRangeError
+
+Every error's body.
+
+### Contents
+
+## Limits
+
+### Contents
+
+**memory**  
+MiB the container may use, and the runner reserves for it. Null: `jobs.toml`'s, within the 1024 MiB a run without one is admitted with.  
+Type: Integer. Range: 16 to 1048576. Nullable: Yes. Required: No.
+
+**timeout**  
+Seconds before the runner stops it and it fails. Null: `jobs.toml`'s.  
+Type: Integer. Range: 1 to 86400. Nullable: Yes. Required: No.
+
+## Routine
+
+Where its steps live, when not in `repo`'s own `jobs.toml`; null when they are.
+
+### Contents
+
+**repo**  
+`owner/name` on GitHub: the repo the routine is in.  
+Type: String. Length: 0 to 200. Pattern: `^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$`. Required: Yes.
+
+**commit**  
+The routine repo's commit, as a full lowercase sha: the runner checks out exactly this.  
+Type: String. Pattern: `^[0-9a-f]{40}$`. Required: Yes.
+
+**dir**  
+The routine's directory in that repo, holding the `jobs.toml` that names `job`: `/`-separated, no `.` or `..`.  
+Type: String. Length: 0 to 200. Pattern: `^(?!\.{1,2}(\/|$))[A-Za-z0-9_.-]+(\/(?!\.{1,2}(\/|$))[A-Za-z0-9_.-]+)*$`. Required: Yes.
+
+## Run
+
+### Contents
+
+**id**  
+The run's id.  
+Type: String. Required: Yes.
+
+**repo**  
+`owner/name` on GitHub: checked out at `/work`; with a routine, its target.  
+Type: String. Length: 0 to 200. Pattern: `^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$`. Required: Yes.
+
+**commit**  
+The commit to run, as a full lowercase sha: the runner checks out exactly this.  
+Type: String. Pattern: `^[0-9a-f]{40}$`. Required: Yes.
+
+**job**  
+A `[jobs.<name>]` in the repo's `jobs.toml` at that commit, or in the routine directory's when it has a routine.  
+Type: String. Pattern: `^[a-z0-9][a-z0-9_-]{0,62}$`. Required: Yes.
+
+**routine**  
+Where its steps live, when not in `repo`'s own `jobs.toml`; null when they are.  
+Type: [Routine](#routine) object. Required: Yes.
+
+**host**  
+The machine it must run on, on the host itself; null: any runner that fits.  
+Type: String. Nullable: Yes. Required: Yes.
+
+**args**  
+Appended to the job's `run` command from `jobs.toml`.  
+Type: Array of strings. Required: Yes.
+
+**limits**  
+Type: [Limits](#limits) object. Required: Yes.
+
+**labels**  
+Labels as Kubernetes writes them. On a run, what a runner must have, every key with that value; on a runner, what it has.  
+Type: Object. Required: Yes.
+
+**for**  
+What it was for; null when its submitter did not say.  
+Type: [For](#for) object. Required: Yes.
+
+**state**  
+`pending` until a runner claims it, `running` on that runner, then `succeeded`, `failed` or `canceled`, which it never leaves.  
+Type: String. Valid values: `pending` | `running` | `succeeded` | `failed` | `canceled`. Required: Yes.
+
+**reason**  
+Why it is in its state, when that is not plain: a cancel, a lapsed lease, a timeout.  
+Type: String. Nullable: Yes. Required: Yes.
+
+**cancelRequested**  
+A cancel was asked for: the runner of a run in progress is told to stop it on its next log append.  
+Type: Boolean. Required: Yes.
+
+**runner**  
+The runner that claimed it; null while pending.  
+Type: String. Nullable: Yes. Required: Yes.
+
+**runsWith**  
+What its runner runs it with: `limits`, else `jobs.toml`'s for the job, else its `[defaults]`. Null until its runner has read `jobs.toml`, and on a runner that does not say.  
+Type: [RunsWith](#runswith) object. Required: Yes.
+
+**exit**  
+The run's exit code, once its runner reports one.  
+Type: Integer. Nullable: Yes. Required: Yes.
+
+**duration**  
+Seconds it ran, as its runner reported.  
+Type: Number. Nullable: Yes. Required: Yes.
+
+**logSize**  
+Bytes of log stored so far.  
+Type: Integer. Required: Yes.
+
+**submittedBy**  
+The `claimed-by` it was submitted with.  
+Type: String. Nullable: Yes. Required: Yes.
+
+**createdAt**  
+When it was submitted, as an ISO 8601 timestamp.  
+Type: String. Required: Yes.
+
+**updatedAt**  
+When it last changed, as an ISO 8601 timestamp.  
+Type: String. Required: Yes.
+
+**startedAt**  
+When a runner claimed it; null while pending.  
+Type: String. Nullable: Yes. Required: Yes.
+
+**endedAt**  
+When it ended; null until it does.  
+Type: String. Nullable: Yes. Required: Yes.
+
+**leaseExpiresAt**  
+While running: if no log append renews it by then, the run fails.  
+Type: String. Nullable: Yes. Required: Yes.
+
+## Runner
+
+The runner, registered.
+
+### Contents
+
+**id**  
+The runner's id.  
+Type: String. Required: Yes.
+
+**name**  
+What it calls itself, e.g. its host's name: not unique.  
+Type: String. Required: Yes.
+
+**labels**  
+Labels as Kubernetes writes them. On a run, what a runner must have, every key with that value; on a runner, what it has.  
+Type: Object. Required: Yes.
+
+**slots**  
+Runs it runs at once.  
+Type: Integer. Required: Yes.
+
+**memory**  
+MiB it has for runs and their image builds.  
+Type: Integer. Required: Yes.
+
+**version**  
+job-runner's version, as it said.  
+Type: String. Nullable: Yes. Required: Yes.
+
+**hostId**  
+The machine it runs on, the same as that machine's worker-host's `host_id` (by default its hostname); null until it says.  
+Type: String. Nullable: Yes. Required: Yes.
+
+**createdAt**  
+When it registered, as an ISO 8601 timestamp.  
+Type: String. Required: Yes.
+
+**lastSeenAt**  
+When it last asked for a run, as an ISO 8601 timestamp.  
+Type: String. Required: Yes.
+
+## RunsWith
+
+What its runner runs it with: `limits`, else `jobs.toml`'s for the job, else its `[defaults]`. Null until its runner has read `jobs.toml`, and on a runner that does not say.
+
+### Contents
+
+**memory**  
+MiB the container may use.  
+Type: Integer. Range: 1 to 1048576. Required: Yes.
+
+**timeout**  
+Seconds before the runner stops it and it fails.  
+Type: Integer. Range: 1 to 86400. Required: Yes.
+
+**stall**  
+Seconds without progress (output, CPU or network) before the runner ends it, failed as stalled; null when it never does.  
+Type: Integer. Range: 1 to 86400. Nullable: Yes. Required: Yes.
+
+## Skill
+
+### Contents
+
+**key**  
+The skill's name, which its files are under.  
+Type: String. Required: Yes.
+
+**version**  
+The deployed tree's commit count, 0 when deployed from outside git.  
+Type: Integer. Required: Yes.
+
+**commit**  
+The deployed commit, ending `-dirty` when deployed with uncommitted changes.  
+Type: String. Required: Yes.
+
+**files**  
+Every file of the skill, as a worker installs it.  
+Type: Array of [SkillFile](#skillfile) objects. Required: Yes.
+
+## SkillFile
+
+### Contents
+
+**path**  
+Under the worker's Claude Code folder: `skills/jobs/bin/…` or `skills/jobs/reference/…`.  
+Type: String. Required: Yes.
+
+**content**  
+The file's text.  
+Type: String. Required: Yes.
+
+**executable**  
+Whether to install it executable: true for everything under `bin/`.  
+Type: Boolean. Required: Yes.
+

@@ -28,7 +28,7 @@ const token = () => localStorage.getItem(TOKEN_KEY);
 
 class ApiError extends Error {
   constructor(status, body) {
-    super(body?.error ?? `HTTP ${status}`);
+    super(body?.message ?? `HTTP ${status}`);
     this.status = status;
   }
 }
@@ -43,7 +43,7 @@ async function request(method, path, { body, headers = {} } = {}) {
   if (res.status === 401) {
     localStorage.removeItem(TOKEN_KEY);
     route();
-    throw new ApiError(401, { error: "That is not this job-service's submitters' token." });
+    throw new ApiError(401, { message: "That is not this job-service's submitters' token." });
   }
   return res;
 }

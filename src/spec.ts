@@ -1,6 +1,6 @@
 import { writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { renderApiHtml, renderApiReference, type Document } from "./api-doc.ts";
+import { renderApiReference, type Document } from "./api-doc.ts";
 import { JobApi, SPEC_PATH } from "./api.ts";
 import { mcpDocument, renderMcp, renderMcpHtml } from "./mcp-doc.ts";
 import { REFERENCE_FILE, renderReference } from "./skill.ts";
@@ -13,10 +13,9 @@ import { Store } from "./store.ts";
 export const SPEC_FILE = fileURLToPath(new URL("../openapi.json", import.meta.url));
 
 const at = (path: string) => fileURLToPath(new URL(`../${path}`, import.meta.url));
-/** The AWS-layout reference, from `openapi.json`; and Redoc's view of it, by redocly in `npm run spec`. */
+/** The AWS-layout reference, from `openapi.json`; and Redoc's page of it, served at `/docs/api`, by redocly in `npm run spec`. */
 export const API_DOC = at("docs/API.md");
-export const API_PAGE = at("docs/api.html");
-export const REDOC_PAGE = at("docs/redoc.html");
+export const API_PAGE = at("docs/index.html");
 /** The MCP server's contract and docs, from its own `tools/list`. */
 export const MCP_FILE = at("mcp.json");
 export const MCP_DOC = at("docs/MCP.md");
@@ -39,10 +38,9 @@ if (import.meta.main) {
   writeFileSync(SPEC_FILE, `${JSON.stringify(doc, null, 2)}\n`);
   writeFileSync(REFERENCE_FILE, renderReference(doc as Parameters<typeof renderReference>[0]));
   writeFileSync(API_DOC, renderApiReference(doc));
-  writeFileSync(API_PAGE, renderApiHtml(doc));
   const mcp = await mcpDocument();
   writeFileSync(MCP_FILE, `${JSON.stringify(mcp, null, 2)}\n`);
   writeFileSync(MCP_DOC, renderMcp(mcp));
   writeFileSync(MCP_PAGE, renderMcpHtml(mcp));
-  console.log(`wrote ${SPEC_FILE}, ${API_DOC}, ${API_PAGE}, ${REFERENCE_FILE}, ${MCP_FILE}, ${MCP_DOC} and ${MCP_PAGE}`);
+  console.log(`wrote ${SPEC_FILE}, ${API_DOC}, ${REFERENCE_FILE}, ${MCP_FILE}, ${MCP_DOC} and ${MCP_PAGE}`);
 }

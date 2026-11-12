@@ -13,8 +13,8 @@ or platform behaviour not visible in the source.
 ## Contract
 
 `src/schema.ts` is the source of `openapi.json`, its AWS-layout reference
-(`docs/API.md`, and `docs/api.html` at `/docs/api`, by `src/api-doc.ts`),
-`docs/redoc.html` and the skill's `reference/api.md`. Name an operation
+(`docs/API.md`, by `src/api-doc.ts`), Redoc's page of it (`docs/index.html`,
+served at `/docs/api`, as waypoint's is) and the skill's `reference/api.md`. Name an operation
 VerbNoun as AWS does, describe every field, and answer errors as
 `{code, message}` with the status's exception name (`ERROR_CODES`): tests
 hold all three. Paths and successful shapes are job-runner's contract; `src/mcp.ts`, whose

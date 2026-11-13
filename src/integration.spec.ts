@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import WebSocket from "ws";
 
 /**
- * Against a deployed stage: beta only, since it submits and cancels a run of its own.
+ * Against a running instance you started yourself, never a production one, since it submits and cancels a run of its own.
  * Skipped without INTEGRATION_JS_URL/INTEGRATION_JS_TOKEN; how to run it is the test skill.
  */
 const url = process.env.INTEGRATION_JS_URL;

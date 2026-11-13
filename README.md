@@ -107,13 +107,12 @@ capacity and health.
 The reference is [`docs/API.md`](./docs/API.md), served by Redoc at
 `/docs/api`. The contract is [`openapi.json`](./openapi.json).
 
-Every address is HTTPS: beta and prod serve the page, the API and the MCP
-server only at `https://<host>.tail90863a.ts.net:8445` (`tailscale serve`, see
-[On the hosts](#on-the-hosts)), and jobber itself listens only on 127.0.0.1.
-Below, `JOBBER` is one of them:
+jobber listens on 127.0.0.1 by default. To reach it from other machines, put
+it behind an HTTPS proxy (a reverse proxy, or `tailscale serve`) and give that
+address as `--public-url`. Below, `JOBBER` is its address:
 
 ```sh
-JOBBER=https://dakotajp-lenovo-laptop.tail90863a.ts.net:8445   # prod; beta is dakotajp-hp-laptop
+JOBBER=https://<your-jobber>
 curl -s -H "authorization: Bearer $AUTH_TOKEN" -H 'content-type: application/json' "$JOBBER/runs" \
   -d '{"repo": "dakotacolorado/python-template", "commit": "<sha>", "job": "hello", "labels": {"by": "me"}}'
 curl -s -H "authorization: Bearer $AUTH_TOKEN" "$JOBBER/runs?state=running"
@@ -150,40 +149,6 @@ The `JOB_SERVICE_*` names it had before are still read when the `JOBBER_*`
 ones are unset, with a warning. `jobber --help` lists the options.
 `jobber backup copy.db` takes SQLite's online backup of the database,
 consistent while it serves.
-
-## On the hosts
-
-Beta runs on `dakotajp-hp-laptop` and prod on `dakotajp-lenovo-laptop`, each at
-`https://<host>.tail90863a.ts.net:8445` (`tailscale serve` to 127.0.0.1:4500).
-Deploy from a checkout at the commit to release, as the hosts' user:
-
-```sh
-ops/deploy beta dakotajp-lenovo-laptop     # on the HP; prod: ops/deploy prod dakotajp-hp-laptop on the Lenovo
-ops/runner beta <runner binary> 4 4096    # a host for this jobber, on this computer, keeping back 4 CPUs and 4096 MiB
-ops/check                                  # a run of python-template's hello, pushed to this host, to `succeeded`
-ops/check '' '' hello 3                    # three at once, which must all run at the same time
-```
-
-`ops/deploy` installs the build under `~/.local/share/routines/jobber/`
-beside the previous one, makes the host's `AUTH_TOKEN` and `RUNNER_TOKEN` once
-in `~/.config/jobber/env` (mode 600, never committed), restarts
-`jobber.service`, checks that `/health` answers the commit, and puts the
-previous release back if not. On a host still serving it under its former
-name, the first deploy stops and disables that service and its backup timer
-and copies its tokens and database to jobber's paths, so its hosts stay
-registered; if that jobber does not answer, the old service is started again.
-It also installs `jobber-backup.timer`, a nightly backup of the database to the
-other host's `~/backups/jobber/`, keeping 14 days. Run at an earlier commit, it
-is the rollback. Each script's header says where it puts things.
-
-`ops/runner` installs `job-runner-local.service` beside the host's own
-job-runner, which stays on the AWS job-service until cutover. It measures the
-machine each time it starts and offers runs what it has less the reserve
-given, which keeps back what else runs there: the AWS job-runner's
-`jobs.slice` (3 GiB on the HP, 4 GiB on the Lenovo), the services, agents'
-Claude sessions and the desktop. The HP (16 CPUs, 7 GiB) keeps back 4 CPUs
-and 4096 MiB, the Lenovo (16 CPUs, 13 GiB) 4 CPUs and 8192 MiB;
-`jobslocal.slice` is sized to what is left.
 
 ## Developing
 

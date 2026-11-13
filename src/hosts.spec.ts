@@ -337,7 +337,7 @@ describe("a database from before hosts", () => {
       leaseExpiresAt: null,
     };
     db.prepare("INSERT INTO runs VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(old.id, old.state, old.repo, old.submittedBy, "worker:jobber-check", at, at, JSON.stringify(old));
-    const runner = { id: old.runner, name: "dakotas-hp-laptop-local", labels: {}, slots: 2, memory: 4096, version: "87a0b47", hostId: "dakotas-hp-laptop", createdAt: at, lastSeenAt: at, tokenHash: "ab" };
+    const runner = { id: old.runner, name: "example-host-local", labels: {}, slots: 2, memory: 4096, version: "87a0b47", hostId: "example-host", createdAt: at, lastSeenAt: at, tokenHash: "ab" };
     db.prepare("INSERT INTO runners VALUES (?, ?)").run(runner.id, JSON.stringify(runner));
 
     const store = new Store(db);
@@ -350,7 +350,7 @@ describe("a database from before hosts", () => {
     for (const gone of ["limits", "for", "routine", "runsWith", "submittedBy", "runner"]) expect(run).not.toHaveProperty(gone);
     expect(store.runs({ labels: [["worker", "jobber-check"]], limit: 10 }).map((r) => r.id)).toEqual([old.id]);
     expect(store.hosts()).toEqual([
-      { ...runner, name: "dakotas-hp-laptop", os: "linux", arch: "x86_64", free: null, metrics: null, hostId: undefined, ...{} },
+      { ...runner, name: "example-host", os: "linux", arch: "x86_64", free: null, metrics: null, hostId: undefined, ...{} },
     ].map(({ hostId: _, slots, memory, ...h }) => ({ ...h, capacity: { cpu: slots, memory } })));
     // Opening it again changes nothing.
     expect(new Store(db).run(old.id)).toEqual(run);

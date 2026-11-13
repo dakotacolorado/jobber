@@ -1,13 +1,20 @@
 #!/bin/sh
-# deploy STAGE OTHER_HOST: run on a host, from a checkout of job-service at
-# the commit to release. Builds it, installs it as
-# ~/.local/share/routines/job-service/versions/<version>+<commit> and points
+# deploy STAGE OTHER_HOST: run on a host, from a checkout of jobber at the
+# commit to release. Builds it, installs it as
+# ~/.local/share/routines/jobber/versions/<version>+<commit> and points
 # current at it (the one it replaces is previous), makes the host's tokens
-# once (~/.config/job-service/env, mode 600), writes and restarts
-# job-service.service, and checks /health answers this commit; if not, puts
-# previous back and fails. Exposes it at https://<host>:8445 with tailscale
-# serve, and installs the nightly backup to OTHER_HOST. Prints `deployed: <commit>`.
+# once (~/.config/jobber/env, mode 600), writes and restarts jobber.service,
+# and checks /health answers this commit; if not, puts previous back and
+# fails. Exposes it at https://<host>:8445 with tailscale serve, and installs
+# the nightly backup to OTHER_HOST. Prints `deployed: <commit>`.
 # Run at an earlier commit, it puts that release back.
+#
+# On a host still serving job-service, the first deploy stops and disables
+# job-service.service and its backup timer, and copies its env (the same
+# tokens, so its hosts stay registered) and its database to jobber's paths.
+# The old ones are left where they were, as they were, and its units
+# disabled, not removed: if this first jobber does not answer, job-service is
+# started again on them.
 set -eu
 [ $# -eq 2 ] || { echo "usage: deploy STAGE OTHER_HOST" >&2; exit 2; }
 stage=$1 other=$2
@@ -44,6 +51,24 @@ echo "deploy: $routines/$app/current is $version (was ${was:-nothing})"
 
 umask 077
 mkdir -p "$conf" "$data"
+moved=
+if [ -e "$units/$old_app.service" ] && systemctl --user is-enabled -q "$old_app.service" 2>/dev/null; then
+  systemctl --user disable --now "$old_app-backup.timer" >/dev/null 2>&1 || true
+  systemctl --user disable --now "$old_app.service" >/dev/null 2>&1 || true
+  echo "deploy: stopped and disabled $old_app.service and $old_app-backup.timer"
+  moved=1
+fi
+if [ ! -s "$conf/env" ] && [ -s "$old_conf/env" ]; then
+  cp -p "$old_conf/env" "$conf/env"
+  echo "deploy: copied $old_conf/env to $conf/env, the same tokens"
+fi
+if [ ! -e "$data/jobber.db" ] && [ -e "$old_data/job-service.db" ]; then
+  # Stopped above, so the database and its WAL are at rest.
+  for suffix in "" -wal -shm; do
+    [ ! -e "$old_data/job-service.db$suffix" ] || cp -p "$old_data/job-service.db$suffix" "$data/jobber.db$suffix"
+  done
+  echo "deploy: copied $old_data/job-service.db to $data/jobber.db"
+fi
 if [ ! -s "$conf/env" ]; then
   printf 'AUTH_TOKEN=%s\nRUNNER_TOKEN=%s\n' "$(openssl rand -hex 32)" "$(openssl rand -hex 32)" >"$conf/env"
   echo "deploy: made $conf/env (AUTH_TOKEN and RUNNER_TOKEN, mode 600)"
@@ -53,15 +78,16 @@ umask 022
 mkdir -p "$units"
 cat >"$units/$app.service" <<UNIT
 [Unit]
-Description=job-service ($stage): runs of jobs, pushed to the hosts of its fleet (dakotacolorado/job-service-2 ops/)
+Description=jobber ($stage): runs of code, pushed to the computers of its fleet (dakotacolorado/jobber ops/)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
-EnvironmentFile=%h/.config/job-service/env
-Environment=JOB_SERVICE_DB=%h/.local/share/job-service/job-service.db
-Environment=JOB_SERVICE_HOST=127.0.0.1
-Environment=JOB_SERVICE_PORT=$port
+EnvironmentFile=%h/.config/jobber/env
+Environment=JOBBER_DB=%h/.local/share/jobber/jobber.db
+Environment=JOBBER_HOST=127.0.0.1
+Environment=JOBBER_PORT=$port
+Environment=JOBBER_PUBLIC_URL=$url
 ExecStart=$node %h/.local/share/routines/$app/current/dist/cli.js serve
 Restart=always
 RestartSec=2
@@ -88,6 +114,12 @@ if ! check; then
   if [ -n "$was" ]; then
     ln -sfn "$was" "$routines/$app/current.new" && mv -T "$routines/$app/current.new" "$routines/$app/current"
     systemctl --user restart "$app.service"
+  elif [ -n "$moved" ]; then
+    systemctl --user disable --now "$app.service" >/dev/null 2>&1 || true
+    # Copied again at the next try, with what job-service writes meanwhile.
+    rm -f "$conf/env" "$data/jobber.db" "$data/jobber.db-wal" "$data/jobber.db-shm"
+    systemctl --user enable --now "$old_app.service" "$old_app-backup.timer" >/dev/null 2>&1
+    echo "deploy: started $old_app.service again, on its own data" >&2
   fi
   exit 1
 fi
@@ -103,7 +135,7 @@ mkdir -p "$routines/$app-backup"
 cp "$here/common" "$here/backup" "$routines/$app-backup/"
 cat >"$units/$app-backup.service" <<UNIT
 [Unit]
-Description=job-service's nightly backup to $other
+Description=jobber's nightly backup to $other
 
 [Service]
 Type=oneshot
@@ -111,7 +143,7 @@ ExecStart=/bin/sh %h/.local/share/routines/$app-backup/backup $stage $other
 UNIT
 cat >"$units/$app-backup.timer" <<UNIT
 [Unit]
-Description=job-service's nightly backup to $other
+Description=jobber's nightly backup to $other
 
 [Timer]
 OnCalendar=*-*-* 03:45:00

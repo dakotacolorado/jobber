@@ -1,7 +1,7 @@
 #!/bin/sh
 # runner STAGE BINARY RESERVE_CPU RESERVE_MIB: run on a host after ops/deploy. Installs a
 # second job-runner, beside the host's own (which stays on the AWS
-# job-service until cutover), registered with this host's job-service:
+# job-service until cutover), registered with this host's jobber:
 # BINARY (a job-runner with the `api = "hosts"` mode) as
 # ~/.local/share/routines/job-runner-local/job-runner, its config in
 # ~/.config/job-runner-local/, its identity in ~/.local/state/job-runner-local/,
@@ -30,8 +30,8 @@ echo "runner: installed $bin ($("$bin" --version))"
 host_id=$(sed -n 's/^host_id *= *"\(.*\)"/\1/p' "$HOME/.config/job-runner/config.toml")
 [ -n "$host_id" ] || host_id=$(hostname)
 cat >"$rconf/config.toml" <<CONF
-# The second job-runner on this host, registered with its own job-service
-# ($stage), written by dakotacolorado/job-service-2's ops/runner.
+# The second job-runner on this host, registered with its own jobber
+# ($stage), written by dakotacolorado/jobber's ops/runner.
 service = "http://127.0.0.1:$port"
 api = "hosts"
 registration_token_file = "$rconf/registration-token"
@@ -52,7 +52,7 @@ mv "$units/jobslocal.slice.new" "$units/jobslocal.slice"
 echo "runner: jobslocal.slice: $(grep -E '^(MemoryMax|CPUQuota)=' "$units/jobslocal.slice" | tr '\n' ' ')"
 cat >"$units/$name.service" <<UNIT
 [Unit]
-Description=job-runner for this host's own job-service ($stage), in jobslocal.slice
+Description=job-runner for this host's own jobber ($stage), in jobslocal.slice
 After=network-online.target $app.service
 
 [Service]

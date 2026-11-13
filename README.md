@@ -154,12 +154,17 @@ ops/check                                  # a run of python-template's hello, p
 ops/check '' '' hello 3                    # three at once, which must all run at the same time
 ```
 
-`ops/deploy` installs the build beside the previous one, makes the host's
-`AUTH_TOKEN` and `RUNNER_TOKEN` once (mode 600, never committed), restarts the
-service, checks that `/health` answers the commit, and puts the previous
-release back if not. It also installs a nightly backup of the database to the
-other host, keeping 14 days. Run at an earlier commit, it is the rollback. Each
-script's header says where it puts things.
+`ops/deploy` installs the build under `~/.local/share/routines/jobber/`
+beside the previous one, makes the host's `AUTH_TOKEN` and `RUNNER_TOKEN` once
+in `~/.config/jobber/env` (mode 600, never committed), restarts
+`jobber.service`, checks that `/health` answers the commit, and puts the
+previous release back if not. On a host still serving it under its former
+name, the first deploy stops and disables that service and its backup timer
+and copies its tokens and database to jobber's paths, so its hosts stay
+registered; if that jobber does not answer, the old service is started again.
+It also installs `jobber-backup.timer`, a nightly backup of the database to the
+other host's `~/backups/jobber/`, keeping 14 days. Run at an earlier commit, it
+is the rollback. Each script's header says where it puts things.
 
 `ops/runner` installs `job-runner-local.service` beside the host's own
 job-runner, which stays on the AWS job-service until cutover. It measures the

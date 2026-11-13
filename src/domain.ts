@@ -73,6 +73,36 @@ export interface RunDraft {
   labels: Labels;
   /** Higher is placed first; runs of one priority go oldest first. */
   priority: number;
+  /** How often a failed attempt is tried again, and after how long. */
+  retry: Retry;
+}
+
+/**
+ * A failed attempt (not a canceled one) is tried again up to `limit` times,
+ * the nth retry `backoff` × 2^(n-1) seconds after the failure, at most
+ * `BACKOFF_MAX_SECONDS`.
+ */
+export interface Retry {
+  limit: number;
+  /** Seconds. */
+  backoff: number;
+}
+
+export const NO_RETRY: Retry = { limit: 0, backoff: 10 };
+export const RETRY_LIMIT_MAX = 10;
+export const BACKOFF_MAX_SECONDS = 3600;
+
+/** One try of a run that has ended and been tried again: where it ran, how it ended, and its log's size. */
+export interface Attempt {
+  attempt: number;
+  host: string | null;
+  state: (typeof FINAL_STATES)[number];
+  exit: number | null;
+  reason: string | null;
+  duration: number | null;
+  logSize: number;
+  startedAt: string | null;
+  endedAt: string;
 }
 
 export interface Run extends RunDraft {
@@ -84,6 +114,10 @@ export interface Run extends RunDraft {
   cancelRequested: boolean;
   /** Which try this is, from 1: a host's writes name the attempt it was started on, and one naming another is refused. */
   attempt: number;
+  /** Its earlier attempts, oldest first; the run's own fields are its latest. */
+  attempts: Attempt[];
+  /** A retry waits in the queue until then; null for a first attempt. */
+  retryAt: string | null;
   /** The host it is assigned to or ran on. */
   host: string | null;
   /** When the scheduler placed it on `host`: it goes back to the queue unless taken within `ASSIGN_SECONDS`. */
@@ -146,6 +180,8 @@ export function submitted(draft: RunDraft, at = now()): Run {
     reason: null,
     cancelRequested: false,
     attempt: 1,
+    attempts: [],
+    retryAt: null,
     host: null,
     assignedAt: null,
     exit: null,
@@ -319,8 +355,9 @@ export function schedule(queue: Run[], hosts: Candidate[]): { run: Run; host: st
 
 /** Only the run's own host writes to it, only while it runs, and, when it names one, only to the attempt it runs. */
 export function ownRunning(run: Run, host: string, attempt?: number): void {
+  const movedOn = (attempt !== undefined && attempt !== run.attempt) || (run.host !== host && run.attempts.some((a) => a.host === host));
+  if (movedOn) throw new RequestError(`run ${run.id} is on attempt ${run.attempt}, not ${attempt ?? "this host's"}`, 409);
   if (run.host !== host) throw new RequestError(`run ${run.id} is not this host's`, 403);
-  if (attempt !== undefined && attempt !== run.attempt) throw new RequestError(`run ${run.id} is on attempt ${run.attempt}, not ${attempt}`, 409);
   if (run.state !== "running") throw new RequestError(`run ${run.id} is ${run.state}, not running${run.reason ? `: ${run.reason}` : ""}`, 409);
 }
 
@@ -347,22 +384,72 @@ export interface Final {
 export function finished(run: Run, final: Final, when = now()): Run {
   const at = stamp(run, when);
   const reason = final.reason ?? (final.state === "canceled" && run.cancelRequested ? "canceled while running" : null);
-  return { ...run, state: final.state, exit: final.exit, duration: final.duration, reason, updatedAt: at, endedAt: at, leaseExpiresAt: null };
+  return retried({ ...run, state: final.state, exit: final.exit, duration: final.duration, reason, updatedAt: at, endedAt: at, leaseExpiresAt: null });
 }
 
-/** A completion that repeats how the run already ended, as a host retrying a lost reply sends. */
-export const sameEnd = (run: Run, final: Final) => run.state === final.state && run.exit === final.exit;
+/** A completion that repeats how the run, or one attempt of it, already ended, as a host retrying a lost reply sends. */
+export const sameEnd = (ended: Pick<Run, "state" | "exit">, final: Final) => ended.state === final.state && ended.exit === final.exit;
+
+/** Seconds before the retry after attempt `attempt` failed. */
+export const backoffAfter = (retry: Retry, attempt: number) => Math.min(BACKOFF_MAX_SECONDS, retry.backoff * 2 ** (attempt - 1));
+
+/**
+ * A run that has just ended `failed`, not by a cancel, with retries left, as
+ * its next attempt: back in the queue from `backoffAfter` its failure, the
+ * failed attempt kept in `attempts`. Any other run as it is.
+ */
+export function retried(run: Run): Run {
+  if (run.state !== "failed" || run.cancelRequested || run.attempt > run.retry.limit) return run;
+  const failedAt = run.endedAt ?? run.updatedAt;
+  const retryAt = new Date(Date.parse(failedAt) + backoffAfter(run.retry, run.attempt) * 1000).toISOString();
+  const past: Attempt = {
+    attempt: run.attempt,
+    host: run.host,
+    state: run.state,
+    exit: run.exit,
+    reason: run.reason,
+    duration: run.duration,
+    logSize: run.logSize,
+    startedAt: run.startedAt,
+    endedAt: failedAt,
+  };
+  return {
+    ...run,
+    state: "pending",
+    reason: `attempt ${run.attempt} failed${run.exit !== null ? ` with exit ${run.exit}` : ""}${run.reason ? `: ${run.reason}` : ""}; retry ${run.attempt} of ${run.retry.limit} from ${retryAt}`,
+    attempt: run.attempt + 1,
+    attempts: [...run.attempts, past],
+    retryAt,
+    host: null,
+    assignedAt: null,
+    exit: null,
+    duration: null,
+    logSize: 0,
+    startedAt: null,
+    endedAt: null,
+    leaseExpiresAt: null,
+  };
+}
+
+/** A pending run may be placed now: it is no retry waiting out its backoff. */
+export const due = (run: Pick<Run, "retryAt">, when = now()) => run.retryAt === null || run.retryAt <= when;
+
+/** Attempt `n` of `run`, earlier or its latest, as an attempt: null if it has none such. */
+export function attemptOf(run: Run, n: number): Pick<Attempt, "attempt" | "state" | "logSize"> | null {
+  if (n === run.attempt) return { attempt: n, state: run.state as Attempt["state"], logSize: run.logSize };
+  return run.attempts.find((a) => a.attempt === n) ?? null;
+}
 
 /** A running run whose lease has passed ends `failed`: its host went away. */
 export function lapsed(run: Run, when = now()): Run | null {
   if (run.state !== "running" || !run.leaseExpiresAt || run.leaseExpiresAt > when) return null;
   const at = stamp(run, when);
-  return {
+  return retried({
     ...run,
     state: "failed",
     reason: `lease lapsed: no heartbeat from host ${run.host} since ${new Date(Date.parse(run.leaseExpiresAt) - LEASE_SECONDS * 1000).toISOString()}`,
     updatedAt: at,
     endedAt: at,
     leaseExpiresAt: null,
-  };
+  });
 }

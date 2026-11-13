@@ -1,5 +1,5 @@
 {
-  "instructions": "job-service runs jobs on a fleet of hosts: a job is a named script in a repo's jobs.toml, a run one execution of it at one commit, claimed by a host that meets its requirements (os, arch, memory).\n\n- A run is submitted pending, assigned to a host by the scheduler, running there, and ends succeeded, failed or canceled with its exit code.\n- A run's log is read from a byte offset: get_run_log answers the bytes from offset, the log's size, and the run's state, so call it again from offset + the bytes read until the state has ended.\n- Label runs to find them again (e.g. {\"item\": \"28af81bc\", \"by\": \"agent-7\"}); list_runs filters by label as key=value.\n- Pending runs are taken highest priority first, then oldest; give priority when submitting, or move a run with update_run_priority.\n- cancel_run ends a pending or assigned run at once; a running one is stopped by its host shortly after.\n- Every tool takes the submitters' token this server was connected with. The host protocol (register, heartbeat, claim, append, complete) is job-runner's, not tools.",
+  "instructions": "job-service runs jobs on a fleet of hosts: a job is a named script in a repo's jobs.toml, a run one execution of it at one commit, claimed by a host that meets its requirements (os, arch, memory).\n\n- A run is submitted pending, assigned to a host by the scheduler, running there, and ends succeeded, failed or canceled with its exit code.\n- A run's log is read from a byte offset: get_run_log answers the bytes from offset, the log's size, and the run's state, so call it again from offset + the bytes read until the state has ended.\n- Label runs to find them again (e.g. {\"item\": \"28af81bc\", \"by\": \"agent-7\"}); list_runs filters by label as key=value.\n- Pending runs are taken highest priority first, then oldest; give priority when submitting, or move a run with update_run_priority.\n- Give retry {limit, backoff} to try a failed run again: each attempt keeps its own log and exit, the run's attempts lists the earlier ones, and get_run_log reads any by attempt.\n- cancel_run ends a pending or assigned run at once; a running one is stopped by its host shortly after.\n- Every tool takes the submitters' token this server was connected with. The host protocol (register, heartbeat, claim, append, complete) is job-runner's, not tools.",
   "tools": [
     {
       "name": "submit_run",
@@ -129,6 +129,30 @@
             "type": "integer",
             "minimum": -1000,
             "maximum": 1000
+          },
+          "retry": {
+            "default": {
+              "limit": 0,
+              "backoff": 10
+            },
+            "description": "Retries a failed attempt (not a canceled one).",
+            "type": "object",
+            "properties": {
+              "limit": {
+                "default": 0,
+                "description": "Retries after a failed attempt, 0 to 10. Default: 0.",
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 10
+              },
+              "backoff": {
+                "default": 10,
+                "description": "Seconds before the first retry, doubling for each after, at most 3600. Default: 10.",
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 3600
+              }
+            }
           }
         },
         "required": [
@@ -232,7 +256,7 @@
     {
       "name": "get_run_log",
       "title": "Read a run's log",
-      "description": "Returns the log from byte `offset`, at most 1 MiB, with the log's size so far and the run's state. Empty when `offset` is the log's size: call again later from there while the run is `pending` or `running`.",
+      "description": "Returns the latest attempt's log, or `attempt`'s, from byte `offset`, at most 1 MiB, with the log's size so far and the attempt's state. Empty when `offset` is the log's size: call again later from there while the run is `pending` or `running`.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "type": "object",
@@ -247,6 +271,12 @@
             "description": "The byte to read from; default 0.",
             "type": "integer",
             "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "attempt": {
+            "description": "Which attempt's log; default the latest. A run's `attempts` lists its earlier ones.",
+            "type": "integer",
+            "minimum": 1,
             "maximum": 9007199254740991
           }
         },

@@ -17,6 +17,8 @@ import {
   now,
   ownRunning,
   parseLabel,
+  attemptOf,
+  due,
   reprioritized,
   RequestError,
   sameEnd,
@@ -164,15 +166,19 @@ export class JobApi {
 
     app.openapi(routes.logRoute, (c) => {
       const run = this.found(c.req.valid("param").id);
+      const n = c.req.valid("query").attempt ?? run.attempt;
+      const attempt = attemptOf(run, n);
+      if (!attempt) throw new RequestError(`run ${run.id} has no attempt ${n}`, 404);
       const range = c.req.valid("header").range;
       const from = range ? Number(range.slice("bytes=".length, -1)) : 0;
-      if (from > run.logSize) {
-        c.header("content-range", `bytes */${run.logSize}`);
-        throw new RequestError(`the log is ${run.logSize} bytes; there is nothing from ${from}`, 416);
+      if (from > attempt.logSize) {
+        c.header("content-range", `bytes */${attempt.logSize}`);
+        throw new RequestError(`the log is ${attempt.logSize} bytes; there is nothing from ${from}`, 416);
       }
-      const bytes = this.store.log(run, from, routes.LOG_READ_MAX);
-      c.header("content-range", bytes.length ? `bytes ${from}-${from + bytes.length - 1}/${run.logSize}` : `bytes */${run.logSize}`);
-      c.header("run-state", run.state);
+      const bytes = this.store.log(run, from, routes.LOG_READ_MAX, n, attempt.logSize);
+      c.header("content-range", bytes.length ? `bytes ${from}-${from + bytes.length - 1}/${attempt.logSize}` : `bytes */${attempt.logSize}`);
+      c.header("run-state", attempt.state);
+      c.header("run-attempt", String(n));
       c.header("content-type", "text/plain; charset=utf-8");
       return c.body(bytes as Uint8Array<ArrayBuffer>, 206) as never;
     });
@@ -239,8 +245,9 @@ export class JobApi {
       const host = this.pathHost(c, c.req.valid("param").id);
       const { free } = c.req.valid("json");
       this.store.seen(host.id, now(), { free });
+      const at = now();
       for (const run of this.store.pending()) {
-        if (!fits(run, { os: host.os, arch: host.arch, free })) continue;
+        if (!due(run, at) || !fits(run, { os: host.os, arch: host.arch, free })) continue;
         const next = claimed(run, host.id);
         try {
           this.store.update(next, run.updatedAt);
@@ -279,7 +286,12 @@ export class JobApi {
       const run = this.found(c.req.valid("param").id);
       const report = c.req.valid("json");
       const attempt = c.req.valid("query").attempt;
-      if (run.host === host.id && run.state !== "running" && (attempt ?? run.attempt) === run.attempt && sameEnd(run, report)) return c.json(run, 200);
+      // A host resending how an attempt ended, its first answer lost: that attempt may since have been retried.
+      const repeated =
+        run.host === host.id && run.state !== "running" && (attempt ?? run.attempt) === run.attempt
+          ? run
+          : run.attempts.findLast((a) => a.host === host.id && (attempt === undefined || a.attempt === attempt));
+      if (repeated && sameEnd(repeated, report)) return c.json(run, 200);
       ownRunning(run, host.id, attempt);
       const next = finished(run, report);
       this.store.update(next, run.updatedAt);

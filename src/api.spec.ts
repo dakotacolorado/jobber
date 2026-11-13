@@ -148,7 +148,7 @@ describe("GET /runs/{id}/log", () => {
     const { store, submit, call } = setup();
     const job = await submit();
     const enc = new TextEncoder();
-    const insert = store.db.prepare("INSERT INTO run_logs (run_id, start, data, written_at) VALUES (?, ?, ?, ?)");
+    const insert = store.db.prepare("INSERT INTO run_logs (run_id, attempt, start, data, written_at) VALUES (?, 1, ?, ?, ?)");
     insert.run(job.id, 0, enc.encode("hello "), job.createdAt);
     insert.run(job.id, 6, enc.encode("world\n"), job.createdAt);
     force(store, { ...store.run(job.id)!, logSize: 12 });

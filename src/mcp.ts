@@ -9,6 +9,7 @@ export const INSTRUCTIONS = `job-service runs jobs on a fleet of hosts: a job is
 - A run's log is read from a byte offset: get_run_log answers the bytes from offset, the log's size, and the run's state, so call it again from offset + the bytes read until the state has ended.
 - Label runs to find them again (e.g. {"item": "28af81bc", "by": "agent-7"}); list_runs filters by label as key=value.
 - Pending runs are taken highest priority first, then oldest; give priority when submitting, or move a run with update_run_priority.
+- Give retry {limit, backoff} to try a failed run again: each attempt keeps its own log and exit, the run's attempts lists the earlier ones, and get_run_log reads any by attempt.
 - cancel_run ends a pending or assigned run at once; a running one is stopped by its host shortly after.
 - Every tool takes the submitters' token this server was connected with. The host protocol (register, heartbeat, claim, append, complete) is job-runner's, not tools.`;
 
@@ -94,15 +95,19 @@ export function mcpServer(version: string, call: Call): McpServer {
   tool(
     "get_run_log",
     "Read a run's log",
-    "Returns the log from byte `offset`, at most 1 MiB, with the log's size so far and the run's state. " +
+    "Returns the latest attempt's log, or `attempt`'s, from byte `offset`, at most 1 MiB, with the log's size so far and the attempt's state. " +
       "Empty when `offset` is the log's size: call again later from there while the run is `pending` or `running`.",
-    { id: RunId, offset: z.int().min(0).optional().describe("The byte to read from; default 0.") },
-    async ({ id, offset = 0 }) => {
-      const res = await call("GET", `/runs/${id}/log`, { headers: { range: `bytes=${offset}-` } });
+    {
+      id: RunId,
+      offset: z.int().min(0).optional().describe("The byte to read from; default 0."),
+      attempt: z.int().min(1).optional().describe("Which attempt's log; default the latest. A run's `attempts` lists its earlier ones."),
+    },
+    async ({ id, offset = 0, attempt }) => {
+      const res = await call("GET", `/runs/${id}/log${attempt === undefined ? "" : `?attempt=${attempt}`}`, { headers: { range: `bytes=${offset}-` } });
       if (res.status !== 206) return answer(res);
       const text = await res.text();
       const size = Number(res.headers.get("content-range")?.split("/")[1]);
-      const read = { state: res.headers.get("run-state"), offset, size, next: offset + Buffer.byteLength(text), log: text };
+      const read = { state: res.headers.get("run-state"), attempt: Number(res.headers.get("run-attempt")), offset, size, next: offset + Buffer.byteLength(text), log: text };
       return { content: [{ type: "text", text: JSON.stringify(read, null, 2) }] };
     },
     { readOnly: true },

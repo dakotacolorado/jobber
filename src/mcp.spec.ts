@@ -78,7 +78,7 @@ describe("the MCP server", () => {
     await r.append(run.id, "hello\n", 0);
     type Log = { state: string; offset: number; size: number; next: number; log: string };
     const first = (await use<Log>("get_run_log", { id: run.id })).json;
-    expect(first).toEqual({ state: "running", offset: 0, size: 6, next: 6, log: "hello\n" });
+    expect(first).toEqual({ state: "running", attempt: 1, offset: 0, size: 6, next: 6, log: "hello\n" });
     await r.append(run.id, "wörld\n", 6);
     expect((await use<Log>("get_run_log", { id: run.id, offset: first.next })).json).toMatchObject({ log: "wörld\n", size: 13, next: 13 });
     expect((await use<Log>("get_run_log", { id: run.id, offset: 13 })).json).toMatchObject({ log: "", next: 13 });

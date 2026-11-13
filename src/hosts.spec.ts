@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { JobApi } from "./api.ts";
 import { LEASE_SECONDS, lapsed, type Host, type Run } from "./domain.ts";
 import { Store } from "./store.ts";
+import { startNext } from "./testing.ts";
 import { sweep } from "./sweep.ts";
 
 const TOKEN = "submitter";
@@ -41,7 +42,11 @@ function setup() {
     expect(res.status).toBe(201);
     return (await res.json()) as Registered;
   };
-  const claim = (h: Registered, free = { slots: 1, memory: 2048 }) => call("POST", `/hosts/${h.host.id}/claim`, h.token, { free });
+  /** Starts the next queued run that fits on `h`, answering it as `ClaimRun` once did: 204 for none. */
+  const claim = async (h: Registered, free = { slots: 1, memory: 2048 }) => {
+    const started = startNext(store, h.host.id, free);
+    return started ? Response.json(started) : new Response(null, { status: 204 });
+  };
   const heartbeat = (h: Registered, running: string[] = [], free = { slots: 1, memory: 2048 }) =>
     call("POST", `/hosts/${h.host.id}/heartbeat`, h.token, { free, metrics: METRICS, running });
   const append = (id: string, token: string, text: string, start: number) => {
@@ -67,14 +72,14 @@ describe("RegisterHost", () => {
   });
 
   it("keeps a host's id when its name registers again, and only the new token works", async () => {
-    const { register, claim, hosts } = setup();
+    const { register, heartbeat, hosts } = setup();
     const first = await register({ name: "studio" });
     const again = await register({ name: "studio", slots: 4 });
     expect(again.host.id).toBe(first.host.id);
     expect(again.host.slots).toBe(4);
     expect(await hosts()).toHaveLength(1);
-    expect((await claim(first)).status).toBe(401);
-    expect((await claim(again)).status).toBe(204);
+    expect((await heartbeat(first)).status).toBe(401);
+    expect((await heartbeat(again)).status).toBe(200);
   });
 
   it("refuses the submitter token, and a host token cannot list or submit", async () => {
@@ -102,9 +107,10 @@ describe("host auth", () => {
     const b = await register();
     const run = await submit();
     const free = { free: { slots: 1, memory: 2048 } };
-    expect((await call("POST", `/hosts/${a.host.id}/claim`, TOKEN, free)).status).toBe(401);
-    expect((await call("POST", `/hosts/${a.host.id}/claim`, `${a.host.id}.wrong`, free)).status).toBe(401);
-    expect((await call("POST", `/hosts/${a.host.id}/claim`, b.token, free)).status).toBe(403);
+    const beat = { ...free, metrics: METRICS, running: [] };
+    expect((await call("POST", `/hosts/${a.host.id}/heartbeat`, TOKEN, beat)).status).toBe(401);
+    expect((await call("POST", `/hosts/${a.host.id}/heartbeat`, `${a.host.id}.wrong`, beat)).status).toBe(401);
+    expect((await call("POST", `/hosts/${a.host.id}/claim`, a.token, free)).status).toBe(404);
     expect((await call("POST", `/hosts/${a.host.id}/heartbeat`, b.token, { ...free, metrics: METRICS, running: [] })).status).toBe(403);
     expect((await claim(a)).status).toBe(200);
     expect((await append(run.id, TOKEN, "x", 0)).status).toBe(401);
@@ -115,88 +121,6 @@ describe("host auth", () => {
   });
 });
 
-describe("ClaimRun", () => {
-  it("answers the oldest pending run whose requirements the host meets, now running there", async () => {
-    const { register, submit, claim, call } = setup();
-    const h = await register();
-    const tick = () => new Promise((res) => setTimeout(res, 3));
-    const big = await submit({ requirements: { memory: 4096 } });
-    await tick();
-    const mac = await submit({ requirements: { os: "macos" } });
-    await tick();
-    const arm = await submit({ requirements: { arch: "aarch64" } });
-    await tick();
-    const first = await submit({ requirements: { memory: 256, os: "linux", arch: "x86_64" } });
-    await tick();
-    const second = await submit();
-
-    const res = await claim(h);
-    expect(res.status).toBe(200);
-    const got = (await res.json()) as Claim;
-    expect(got.run).toMatchObject({ id: first.id, state: "running", host: h.host.id });
-    expect(got.memory).toBe(256);
-    expect(got.lease).toBe(LEASE_SECONDS);
-    expect(got.run.leaseExpiresAt).not.toBeNull();
-    expect(await (await call("GET", `/runs/${first.id}`, TOKEN)).json()).toMatchObject({ state: "running", host: h.host.id });
-
-    // A run submitted without memory is admitted at 1024 MiB.
-    expect((await claim(h, { slots: 1, memory: 1023 })).status).toBe(204);
-    expect(((await (await claim(h, { slots: 1, memory: 1024 })).json()) as Claim).run.id).toBe(second.id);
-    expect((await claim(h, { slots: 0, memory: 8192 })).status).toBe(204);
-    expect(((await (await claim(h, { slots: 1, memory: 8192 })).json()) as Claim).run.id).toBe(big.id);
-    // Nothing left this host can run: the others need macOS and arm.
-    expect((await claim(h, { slots: 1, memory: 8192 })).status).toBe(204);
-    const m1 = await register({ os: "macos", arch: "aarch64" });
-    expect(((await (await claim(m1)).json()) as Claim).run.id).toBe(mac.id);
-    expect(((await (await claim(m1)).json()) as Claim).run.id).toBe(arm.id);
-  });
-
-  it("answers the highest priority pending run first, and of one priority the oldest", async () => {
-    const { register, submit, claim, call } = setup();
-    const h = await register();
-    const tick = () => new Promise((res) => setTimeout(res, 3));
-    const low = await submit({ priority: -1 });
-    await tick();
-    const oldZero = await submit();
-    await tick();
-    const high = await submit({ priority: 5 });
-    await tick();
-    const newZero = await submit();
-    await tick();
-    const late = await submit();
-    // Moved to the front after it was submitted.
-    await call("POST", `/runs/${late.id}/priority`, TOKEN, { priority: 9 });
-    const order = [];
-    for (let i = 0; i < 5; i++) order.push(((await (await claim(h)).json()) as Claim).run.id);
-    expect(order).toEqual([late.id, high.id, oldZero.id, newZero.id, low.id]);
-  });
-
-  it("records what the host has free", async () => {
-    const { register, claim, hosts } = setup();
-    const h = await register();
-    await claim(h, { slots: 1, memory: 900 });
-    expect((await hosts())[0]!.free).toEqual({ slots: 1, memory: 900 });
-  });
-
-  it("never gives two concurrent claims the same run", async () => {
-    const { register, submit, claim } = setup();
-    const many = await Promise.all(Array.from({ length: 6 }, () => register()));
-    const runs = await Promise.all(Array.from({ length: 3 }, () => submit()));
-    const results = await Promise.all(many.map((h) => claim(h)));
-    const claimed = await Promise.all(results.filter((res) => res.status === 200).map(async (res) => ((await res.json()) as Claim).run.id));
-    expect(results.filter((res) => res.status === 204)).toHaveLength(3);
-    expect(claimed.sort()).toEqual(runs.map((r) => r.id).sort());
-  });
-
-  it("does not claim a canceled run", async () => {
-    const { register, submit, claim, call } = setup();
-    const h = await register();
-    const run = await submit();
-    await call("POST", `/runs/${run.id}/cancel`, TOKEN);
-    expect((await claim(h)).status).toBe(204);
-  });
-});
-
 describe("SendHeartbeat", () => {
   it("records free capacity and metrics, and renews the leases of the host's running runs only", async () => {
     const { store, register, submit, claim, heartbeat, hosts } = setup();
@@ -204,7 +128,7 @@ describe("SendHeartbeat", () => {
     const other = await register();
     await submit();
     await submit();
-    // Read from the claims: two runs submitted in one millisecond have no order between them.
+    // Read from the starts: two runs submitted in one millisecond have no order between them.
     const mine = ((await (await claim(h)).json()) as Claim).run;
     const theirs = ((await (await claim(other)).json()) as Claim).run;
     const old = "2000-01-01T00:00:00.000Z";

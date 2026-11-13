@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { LOG_DAYS, type Host, type Run } from "./domain.ts";
 import { start, type Running } from "./server.ts";
 import { Store } from "./store.ts";
+import { startNext } from "./testing.ts";
 import { PRUNE_SECONDS, startTimers, SWEEP_SECONDS } from "./sweep.ts";
 
 const COMMIT = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
@@ -40,7 +41,7 @@ describe("a database on disk", () => {
       host: Host;
       token: string;
     };
-    expect((await call("POST", `/hosts/${host.id}/claim`, token, { free: { slots: 1, memory: 2048 } })).status).toBe(200);
+    expect(startNext(first.store, host.id)?.run.id).toBe(run.id);
     const append = (text: string, at: number) =>
       call("PATCH", `/runs/${run.id}/log`, token, text, { "content-range": `bytes ${at}-${at + text.length - 1}/*` });
     expect((await append("hello ", 0)).status).toBe(200);

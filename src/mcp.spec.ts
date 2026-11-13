@@ -5,13 +5,15 @@ import type { Host, Run } from "./domain.ts";
 import { mcpDocument, renderMcp, renderMcpHtml } from "./mcp-doc.ts";
 import { MCP_DOC, MCP_FILE, MCP_PAGE, openApiDocument } from "./spec.ts";
 import { Store } from "./store.ts";
+import { startNext } from "./testing.ts";
 
 const TOKEN = "submitter";
 const REGISTRATION = "registration";
 const COMMIT = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
 function setup() {
-  const api = new JobApi(Store.open(":memory:"), { submitter: TOKEN, registration: REGISTRATION }, {
+  const store = Store.open(":memory:");
+  const api = new JobApi(store, { submitter: TOKEN, registration: REGISTRATION }, {
     version: "0.1.0",
     commit: "x",
   });
@@ -36,7 +38,7 @@ function setup() {
     const { result } = (await res.json()) as { result: { content: { text: string }[]; isError?: boolean } };
     return { isError: result.isError === true, json: JSON.parse(result.content[0]!.text) as T };
   };
-  /** A host, as job-runner is: registered, claiming and appending under its own token. */
+  /** A host, as job-runner is: registered, taking runs and appending under its own token. */
   const host = async () => {
     const reg = await fetch("/hosts", REGISTRATION, {
       method: "POST",
@@ -44,8 +46,7 @@ function setup() {
       body: { name: "host", os: "linux", arch: "x86_64", slots: 1, memory: 2048 },
     });
     const { host: me, token } = (await reg.json()) as { host: Host; token: string };
-    const claim = async () =>
-      ((await (await fetch(`/hosts/${me.id}/claim`, token, { method: "POST", headers: { "content-type": "application/json" }, body: { free: { slots: 1, memory: 2048 } } })).json()) as { run: Run }).run;
+    const claim = async () => startNext(store, me.id)!.run;
     const append = (id: string, text: string, start: number) => {
       const bytes = new TextEncoder().encode(text);
       return fetch(`/runs/${id}/log`, token, {

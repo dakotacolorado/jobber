@@ -3,7 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "@hono/zod-openapi";
 import * as routes from "./schema.ts";
 
-export const INSTRUCTIONS = `job-service runs jobs on a fleet of hosts: a job is a named script in a repo's jobs.toml, a run one execution of it at one commit, claimed by a host that meets its requirements (os, arch, memory).
+export const INSTRUCTIONS = `job-service runs jobs on a fleet of hosts: a job is a named script in a repo's jobs.toml, a run one execution of it at one commit, placed by its scheduler on a host that meets its requirements (os, arch, memory).
 
 - A run is submitted pending, assigned to a host by the scheduler, running there, and ends succeeded, failed or canceled with its exit code.
 - A run's log is read from a byte offset: get_run_log answers the bytes from offset, the log's size, and the run's state, so call it again from offset + the bytes read until the state has ended.
@@ -11,7 +11,7 @@ export const INSTRUCTIONS = `job-service runs jobs on a fleet of hosts: a job is
 - Pending runs are taken highest priority first, then oldest; give priority when submitting, or move a run with update_run_priority.
 - Give retry {limit, backoff} to try a failed run again: each attempt keeps its own log and exit, the run's attempts lists the earlier ones, and get_run_log reads any by attempt.
 - cancel_run ends a pending or assigned run at once; a running one is stopped by its host shortly after.
-- Every tool takes the submitters' token this server was connected with. The host protocol (register, heartbeat, claim, append, complete) is job-runner's, not tools.`;
+- Every tool takes the submitters' token this server was connected with. The host protocol (register, connect, heartbeat, append, complete) is job-runner's, not tools.`;
 
 /** The address the MCP docs give; served, the address they were reached at replaces it. */
 export const LOCAL_URL = "http://127.0.0.1:4500";

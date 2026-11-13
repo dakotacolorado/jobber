@@ -52,7 +52,7 @@ describe("jobber serve", () => {
   it("says which token is missing, and answers 503 for what needs it", async () => {
     const { url, out } = await serve(join(temp(), "js.db"), {});
     expect(out()).toContain("AUTH_TOKEN and RUNNER_TOKEN not set");
-    expect(out()).toContain("Submit code to run on whatever computers you have available.");
+    expect(out()).toContain("Submit code to run on whatever computers you have.");
     expect(out()).toMatch(/▸ Page {6}http:\/\/127\.0\.0\.1:\d+\//);
     expect(out(), "piped, it has no colors").not.toContain("\x1b");
     expect((await fetch(`${url}/runs`, { headers: { authorization: "Bearer a" } })).status).toBe(503);
@@ -83,7 +83,7 @@ describe("jobber's settings", () => {
   it("describes jobber in --help", () => {
     const done = spawnSync(process.execPath, [CLI, "--help"], { env: clean(), encoding: "utf8" });
     expect(done.status).toBe(0);
-    expect(done.stdout).toMatch(/^jobber v\S+: submit code to run on whatever computers you have available\./);
+    expect(done.stdout).toMatch(/^jobber v\S+: submit code to run on whatever computers you have\./);
     expect(done.stdout).toContain("JOBBER_PORT");
     expect(done.stdout).not.toMatch(/job[-]service/i);
   });

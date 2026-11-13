@@ -48,7 +48,7 @@ const WIDTH = Math.max(...LETTERS.map((line) => line.length));
 export const WORDMARK = LETTERS.map((line, i) => `${line.padEnd(WIDTH)}  ${MARK[i]}`.trimEnd()).join("\n");
 
 /** The person's line for jobber, verbatim. */
-export const TAGLINE = "Submit code to run on whatever computers you have available.";
+export const TAGLINE = "Submit code to run on whatever computers you have.";
 /** What jobber is, in one line. Every place that describes jobber in a line uses this or TAGLINE, verbatim. */
 export const SUMMARY = "A queue of runs, each placed on a host that fits it and pushed there, with its log streamed back.";
 

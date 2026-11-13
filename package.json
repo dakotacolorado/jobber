@@ -1,7 +1,7 @@
 {
   "name": "@dakotajp/jobber",
   "version": "0.1.0",
-  "description": "Submit code to run on whatever computers you have available.",
+  "description": "Submit code to run on whatever computers you have.",
   "keywords": [
     "jobs",
     "scheduler",

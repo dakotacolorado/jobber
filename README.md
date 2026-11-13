@@ -1,6 +1,6 @@
 # jobber
 
-**Submit code to run on whatever computers you have available.**
+**Submit code to run on whatever computers you have.**
 
 ```
      ██╗ ██████╗ ██████╗ ██████╗ ███████╗██████╗       ▄▄▄▄▄▄▄▄▄▄
@@ -11,7 +11,7 @@
  ╚════╝  ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝╚═╝  ╚═╝  ▀▀▀▀▀▀▀▀  ▀▀▀▀▀▀▀▀
 v0.1.0
 
-Submit code to run on whatever computers you have available.
+Submit code to run on whatever computers you have.
 A queue of runs, each placed on a host that fits it and pushed there, with its log streamed back.
 
   ▸ Page      http://127.0.0.1:4500/

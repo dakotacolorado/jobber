@@ -31,6 +31,7 @@ Runs jobs on a fleet of hosts. A **job** is a named script in a repo's `jobs.tom
 
 ## Data types
 
+- [Attempt](#attempt)
 - [Error](#error)
 - [Free](#free)
 - [Health](#health)
@@ -38,6 +39,7 @@ Runs jobs on a fleet of hosts. A **job** is a named script in a repo's `jobs.tom
 - [InvalidRangeError](#invalidrangeerror)
 - [Metrics](#metrics)
 - [Requirements](#requirements)
+- [Retry](#retry)
 - [Run](#run)
 
 ---
@@ -165,10 +167,26 @@ Content-type: application/json
    },
    "labels": { },
    "priority": number,
+   "retry": {
+      "limit": number,
+      "backoff": number
+   },
    "state": "pending | assigned | running | succeeded | failed | canceled",
    "reason": "string",
    "cancelRequested": boolean,
    "attempt": number,
+   "attempts": [ {
+      "attempt": number,
+      "host": "string",
+      "state": "succeeded | failed | canceled",
+      "exit": number,
+      "reason": "string",
+      "duration": number,
+      "logSize": number,
+      "startedAt": "string",
+      "endedAt": "string"
+   } ],
+   "retryAt": "string",
    "host": "string",
    "assignedAt": "string",
    "exit": number,
@@ -216,6 +234,10 @@ Type: Object.
 Higher is placed first; equal ones oldest first. -1000 to 1000.  
 Type: Integer. Range: -1000 to 1000.
 
+**retry**  
+Retries a failed attempt (not a canceled one).  
+Type: [Retry](#retry) object.
+
 **state**  
 `pending` → `assigned` → `running` → `succeeded`, `failed` or `canceled`. An assignment not taken goes back to `pending`.  
 Type: String. Valid values: `pending` | `assigned` | `running` | `succeeded` | `failed` | `canceled`.
@@ -229,8 +251,16 @@ Cancel asked for; its host will stop it.
 Type: Boolean.
 
 **attempt**  
-Which try this is, from 1.  
+Which try this is, from 1: the run's other fields are this attempt's.  
 Type: Integer. Range: 1 to any.
+
+**attempts**  
+Earlier attempts, oldest first.  
+Type: Array of [Attempt](#attempt) objects.
+
+**retryAt**  
+A retry waits in the queue until then (ISO 8601).  
+Type: String. Nullable: Yes.
 
 **host**  
 Host it is assigned to or ran on.  
@@ -348,10 +378,26 @@ Content-type: application/json
       },
       "labels": { },
       "priority": number,
+      "retry": {
+         "limit": number,
+         "backoff": number
+      },
       "state": "pending | assigned | running | succeeded | failed | canceled",
       "reason": "string",
       "cancelRequested": boolean,
       "attempt": number,
+      "attempts": [ {
+         "attempt": number,
+         "host": "string",
+         "state": "succeeded | failed | canceled",
+         "exit": number,
+         "reason": "string",
+         "duration": number,
+         "logSize": number,
+         "startedAt": "string",
+         "endedAt": "string"
+      } ],
+      "retryAt": "string",
       "host": "string",
       "assignedAt": "string",
       "exit": number,
@@ -467,10 +513,26 @@ Content-type: application/json
    },
    "labels": { },
    "priority": number,
+   "retry": {
+      "limit": number,
+      "backoff": number
+   },
    "state": "pending | assigned | running | succeeded | failed | canceled",
    "reason": "string",
    "cancelRequested": boolean,
    "attempt": number,
+   "attempts": [ {
+      "attempt": number,
+      "host": "string",
+      "state": "succeeded | failed | canceled",
+      "exit": number,
+      "reason": "string",
+      "duration": number,
+      "logSize": number,
+      "startedAt": "string",
+      "endedAt": "string"
+   } ],
+   "retryAt": "string",
    "host": "string",
    "assignedAt": "string",
    "exit": number,
@@ -518,6 +580,10 @@ Type: Object.
 Higher is placed first; equal ones oldest first. -1000 to 1000.  
 Type: Integer. Range: -1000 to 1000.
 
+**retry**  
+Retries a failed attempt (not a canceled one).  
+Type: [Retry](#retry) object.
+
 **state**  
 `pending` → `assigned` → `running` → `succeeded`, `failed` or `canceled`. An assignment not taken goes back to `pending`.  
 Type: String. Valid values: `pending` | `assigned` | `running` | `succeeded` | `failed` | `canceled`.
@@ -531,8 +597,16 @@ Cancel asked for; its host will stop it.
 Type: Boolean.
 
 **attempt**  
-Which try this is, from 1.  
+Which try this is, from 1: the run's other fields are this attempt's.  
 Type: Integer. Range: 1 to any.
+
+**attempts**  
+Earlier attempts, oldest first.  
+Type: Array of [Attempt](#attempt) objects.
+
+**retryAt**  
+A retry waits in the queue until then (ISO 8601).  
+Type: String. Nullable: Yes.
 
 **host**  
 Host it is assigned to or ran on.  
@@ -723,10 +797,26 @@ Content-type: application/json
    },
    "labels": { },
    "priority": number,
+   "retry": {
+      "limit": number,
+      "backoff": number
+   },
    "state": "pending | assigned | running | succeeded | failed | canceled",
    "reason": "string",
    "cancelRequested": boolean,
    "attempt": number,
+   "attempts": [ {
+      "attempt": number,
+      "host": "string",
+      "state": "succeeded | failed | canceled",
+      "exit": number,
+      "reason": "string",
+      "duration": number,
+      "logSize": number,
+      "startedAt": "string",
+      "endedAt": "string"
+   } ],
+   "retryAt": "string",
    "host": "string",
    "assignedAt": "string",
    "exit": number,
@@ -774,6 +864,10 @@ Type: Object.
 Higher is placed first; equal ones oldest first. -1000 to 1000.  
 Type: Integer. Range: -1000 to 1000.
 
+**retry**  
+Retries a failed attempt (not a canceled one).  
+Type: [Retry](#retry) object.
+
 **state**  
 `pending` → `assigned` → `running` → `succeeded`, `failed` or `canceled`. An assignment not taken goes back to `pending`.  
 Type: String. Valid values: `pending` | `assigned` | `running` | `succeeded` | `failed` | `canceled`.
@@ -787,8 +881,16 @@ Cancel asked for; its host will stop it.
 Type: Boolean.
 
 **attempt**  
-Which try this is, from 1.  
+Which try this is, from 1: the run's other fields are this attempt's.  
 Type: Integer. Range: 1 to any.
+
+**attempts**  
+Earlier attempts, oldest first.  
+Type: Array of [Attempt](#attempt) objects.
+
+**retryAt**  
+A retry waits in the queue until then (ISO 8601).  
+Type: String. Nullable: Yes.
 
 **host**  
 Host it is assigned to or ran on.  
@@ -852,12 +954,12 @@ HTTP status: 503
 
 ## GetRunLog
 
-Reads up to 1 MiB from byte N (`Range: bytes=N-`). To follow a run, poll from the last `size` until `Run-State` has ended.
+Reads up to 1 MiB from byte N (`Range: bytes=N-`) of the latest attempt's log, or `attempt`'s. To follow a run, poll from the last `size` until `Run-State` has ended.
 
 ### Request syntax
 
 ```http
-GET /runs/{id}/log HTTP/1.1
+GET /runs/{id}/log?attempt=attempt HTTP/1.1
 Authorization: Bearer token
 range: string
 ```
@@ -867,6 +969,12 @@ range: string
 **id**  
 The run's id.  
 Type: String. Required: Yes.
+
+### Query parameters
+
+**attempt**  
+Which attempt's log. Default: the latest.  
+Type: Integer. Range: 1 to any. Required: No.
 
 ### Request headers
 
@@ -880,6 +988,7 @@ Type: String. Pattern: `^bytes=\d+-$`. Required: No.
 HTTP/1.1 206
 content-range: string
 run-state: string
+run-attempt: string
 Content-type: text/plain
 
 Log bytes from N, up to 1 MiB.
@@ -896,8 +1005,12 @@ Log bytes from N, up to 1 MiB. As `text/plain`.
 Type: String.
 
 **run-state**  
-The run's state: stop polling once it has ended.  
+The attempt's state: stop polling once it has ended.  
 Type: String. Valid values: `pending` | `assigned` | `running` | `succeeded` | `failed` | `canceled`.
+
+**run-attempt**  
+Which attempt's log this is.  
+Type: String.
 
 ### Errors
 
@@ -910,7 +1023,7 @@ The bearer token is missing or is not the submitters'.
 HTTP status: 401
 
 **ResourceNotFoundException**  
-No run has that id.  
+No run has that id, or it has no such attempt.  
 HTTP status: 404
 
 **InvalidRangeException**  
@@ -1039,10 +1152,26 @@ Content-type: application/json
       },
       "labels": { },
       "priority": number,
+      "retry": {
+         "limit": number,
+         "backoff": number
+      },
       "state": "pending | assigned | running | succeeded | failed | canceled",
       "reason": "string",
       "cancelRequested": boolean,
       "attempt": number,
+      "attempts": [ {
+         "attempt": number,
+         "host": "string",
+         "state": "succeeded | failed | canceled",
+         "exit": number,
+         "reason": "string",
+         "duration": number,
+         "logSize": number,
+         "startedAt": "string",
+         "endedAt": "string"
+      } ],
+      "retryAt": "string",
       "host": "string",
       "assignedAt": "string",
       "exit": number,
@@ -1303,7 +1432,11 @@ Content-type: application/json
       "timeout": number
    },
    "labels": { },
-   "priority": number
+   "priority": number,
+   "retry": {
+      "limit": number,
+      "backoff": number
+   }
 }
 ```
 
@@ -1337,6 +1470,10 @@ Type: Object. Required: No.
 Higher is placed first; equal ones oldest first. -1000 to 1000. Default: 0.  
 Type: Integer. Range: -1000 to 1000. Required: No.
 
+**retry**  
+Retries a failed attempt (not a canceled one).  
+Type: [Retry](#retry) object. Required: No.
+
 ### Response syntax
 
 ```http
@@ -1357,10 +1494,26 @@ Content-type: application/json
    },
    "labels": { },
    "priority": number,
+   "retry": {
+      "limit": number,
+      "backoff": number
+   },
    "state": "pending | assigned | running | succeeded | failed | canceled",
    "reason": "string",
    "cancelRequested": boolean,
    "attempt": number,
+   "attempts": [ {
+      "attempt": number,
+      "host": "string",
+      "state": "succeeded | failed | canceled",
+      "exit": number,
+      "reason": "string",
+      "duration": number,
+      "logSize": number,
+      "startedAt": "string",
+      "endedAt": "string"
+   } ],
+   "retryAt": "string",
    "host": "string",
    "assignedAt": "string",
    "exit": number,
@@ -1408,6 +1561,10 @@ Type: Object.
 Higher is placed first; equal ones oldest first. -1000 to 1000.  
 Type: Integer. Range: -1000 to 1000.
 
+**retry**  
+Retries a failed attempt (not a canceled one).  
+Type: [Retry](#retry) object.
+
 **state**  
 `pending` → `assigned` → `running` → `succeeded`, `failed` or `canceled`. An assignment not taken goes back to `pending`.  
 Type: String. Valid values: `pending` | `assigned` | `running` | `succeeded` | `failed` | `canceled`.
@@ -1421,8 +1578,16 @@ Cancel asked for; its host will stop it.
 Type: Boolean.
 
 **attempt**  
-Which try this is, from 1.  
+Which try this is, from 1: the run's other fields are this attempt's.  
 Type: Integer. Range: 1 to any.
+
+**attempts**  
+Earlier attempts, oldest first.  
+Type: Array of [Attempt](#attempt) objects.
+
+**retryAt**  
+A retry waits in the queue until then (ISO 8601).  
+Type: String. Nullable: Yes.
 
 **host**  
 Host it is assigned to or ran on.  
@@ -1528,10 +1693,26 @@ Content-type: application/json
    },
    "labels": { },
    "priority": number,
+   "retry": {
+      "limit": number,
+      "backoff": number
+   },
    "state": "pending | assigned | running | succeeded | failed | canceled",
    "reason": "string",
    "cancelRequested": boolean,
    "attempt": number,
+   "attempts": [ {
+      "attempt": number,
+      "host": "string",
+      "state": "succeeded | failed | canceled",
+      "exit": number,
+      "reason": "string",
+      "duration": number,
+      "logSize": number,
+      "startedAt": "string",
+      "endedAt": "string"
+   } ],
+   "retryAt": "string",
    "host": "string",
    "assignedAt": "string",
    "exit": number,
@@ -1579,6 +1760,10 @@ Type: Object.
 Higher is placed first; equal ones oldest first. -1000 to 1000.  
 Type: Integer. Range: -1000 to 1000.
 
+**retry**  
+Retries a failed attempt (not a canceled one).  
+Type: [Retry](#retry) object.
+
 **state**  
 `pending` → `assigned` → `running` → `succeeded`, `failed` or `canceled`. An assignment not taken goes back to `pending`.  
 Type: String. Valid values: `pending` | `assigned` | `running` | `succeeded` | `failed` | `canceled`.
@@ -1592,8 +1777,16 @@ Cancel asked for; its host will stop it.
 Type: Boolean.
 
 **attempt**  
-Which try this is, from 1.  
+Which try this is, from 1: the run's other fields are this attempt's.  
 Type: Integer. Range: 1 to any.
+
+**attempts**  
+Earlier attempts, oldest first.  
+Type: Array of [Attempt](#attempt) objects.
+
+**retryAt**  
+A retry waits in the queue until then (ISO 8601).  
+Type: String. Nullable: Yes.
 
 **host**  
 Host it is assigned to or ran on.  
@@ -1660,6 +1853,48 @@ HTTP status: 503
 ---
 
 # Data types
+
+## Attempt
+
+An earlier attempt of a run.
+
+### Contents
+
+**attempt**  
+Which try, from 1.  
+Type: Integer. Range: 1 to any. Required: Yes.
+
+**host**  
+Host it ran on.  
+Type: String. Nullable: Yes. Required: Yes.
+
+**state**  
+How it ended.  
+Type: String. Valid values: `succeeded` | `failed` | `canceled`. Required: Yes.
+
+**exit**  
+Exit code.  
+Type: Integer. Nullable: Yes. Required: Yes.
+
+**reason**  
+Why it ended, when not plain.  
+Type: String. Nullable: Yes. Required: Yes.
+
+**duration**  
+Seconds it ran.  
+Type: Number. Nullable: Yes. Required: Yes.
+
+**logSize**  
+Its log's size in bytes: read it with `GetRunLog?attempt=`.  
+Type: Integer. Required: Yes.
+
+**startedAt**  
+Started at (ISO 8601).  
+Type: String. Nullable: Yes. Required: Yes.
+
+**endedAt**  
+Ended at (ISO 8601).  
+Type: String. Required: Yes.
 
 ## Error
 
@@ -1813,6 +2048,20 @@ Type: Integer. Range: 16 to 1048576. Nullable: Yes. Required: No.
 Timeout in seconds. Default: `jobs.toml`'s.  
 Type: Integer. Range: 1 to 86400. Nullable: Yes. Required: No.
 
+## Retry
+
+Retries a failed attempt (not a canceled one).
+
+### Contents
+
+**limit**  
+Retries after a failed attempt, 0 to 10. Default: 0.  
+Type: Integer. Range: 0 to 10. Required: No.
+
+**backoff**  
+Seconds before the first retry, doubling for each after, at most 3600. Default: 10.  
+Type: Integer. Range: 1 to 3600. Required: No.
+
 ## Run
 
 ### Contents
@@ -1849,6 +2098,10 @@ Type: Object. Required: Yes.
 Higher is placed first; equal ones oldest first. -1000 to 1000.  
 Type: Integer. Range: -1000 to 1000. Required: Yes.
 
+**retry**  
+Retries a failed attempt (not a canceled one).  
+Type: [Retry](#retry) object. Required: Yes.
+
 **state**  
 `pending` → `assigned` → `running` → `succeeded`, `failed` or `canceled`. An assignment not taken goes back to `pending`.  
 Type: String. Valid values: `pending` | `assigned` | `running` | `succeeded` | `failed` | `canceled`. Required: Yes.
@@ -1862,8 +2115,16 @@ Cancel asked for; its host will stop it.
 Type: Boolean. Required: Yes.
 
 **attempt**  
-Which try this is, from 1.  
+Which try this is, from 1: the run's other fields are this attempt's.  
 Type: Integer. Range: 1 to any. Required: Yes.
+
+**attempts**  
+Earlier attempts, oldest first.  
+Type: Array of [Attempt](#attempt) objects. Required: Yes.
+
+**retryAt**  
+A retry waits in the queue until then (ISO 8601).  
+Type: String. Nullable: Yes. Required: Yes.
 
 **host**  
 Host it is assigned to or ran on.  

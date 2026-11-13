@@ -50,3 +50,4 @@ pre.log { background: #111; color: #e6e6e1; padding: 12px 14px; border-radius: 6
 h2.section { font-size: 13px; margin: 18px 0 0; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
 a.label { font-size: 12px; }
 @media (max-width: 900px) { .grid2, .grid4 { grid-template-columns: 1fr; } }
+.attempts { margin-top: 12px; }

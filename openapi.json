@@ -117,6 +117,9 @@
             "description": "Higher is placed first; equal ones oldest first. -1000 to 1000.",
             "example": 10
           },
+          "retry": {
+            "$ref": "#/components/schemas/Retry"
+          },
           "state": {
             "type": "string",
             "enum": [
@@ -142,7 +145,19 @@
           "attempt": {
             "type": "integer",
             "minimum": 1,
-            "description": "Which try this is, from 1."
+            "description": "Which try this is, from 1: the run's other fields are this attempt's."
+          },
+          "attempts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Attempt"
+            },
+            "description": "Earlier attempts, oldest first."
+          },
+          "retryAt": {
+            "type": "string",
+            "nullable": true,
+            "description": "A retry waits in the queue until then (ISO 8601)."
           },
           "host": {
             "type": "string",
@@ -202,10 +217,13 @@
           "requirements",
           "labels",
           "priority",
+          "retry",
           "state",
           "reason",
           "cancelRequested",
           "attempt",
+          "attempts",
+          "retryAt",
           "host",
           "assignedAt",
           "exit",
@@ -262,6 +280,91 @@
           }
         },
         "description": "What the run needs from its host."
+      },
+      "Retry": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10,
+            "default": 0,
+            "description": "Retries after a failed attempt, 0 to 10. Default: 0."
+          },
+          "backoff": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 3600,
+            "default": 10,
+            "description": "Seconds before the first retry, doubling for each after, at most 3600. Default: 10."
+          }
+        },
+        "description": "Retries a failed attempt (not a canceled one)."
+      },
+      "Attempt": {
+        "type": "object",
+        "properties": {
+          "attempt": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Which try, from 1."
+          },
+          "host": {
+            "type": "string",
+            "nullable": true,
+            "format": "uuid",
+            "description": "Host it ran on."
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "succeeded",
+              "failed",
+              "canceled"
+            ],
+            "description": "How it ended."
+          },
+          "exit": {
+            "type": "integer",
+            "nullable": true,
+            "description": "Exit code."
+          },
+          "reason": {
+            "type": "string",
+            "nullable": true,
+            "description": "Why it ended, when not plain."
+          },
+          "duration": {
+            "type": "number",
+            "nullable": true,
+            "description": "Seconds it ran."
+          },
+          "logSize": {
+            "type": "integer",
+            "description": "Its log's size in bytes: read it with `GetRunLog?attempt=`."
+          },
+          "startedAt": {
+            "type": "string",
+            "nullable": true,
+            "description": "Started at (ISO 8601)."
+          },
+          "endedAt": {
+            "type": "string",
+            "description": "Ended at (ISO 8601)."
+          }
+        },
+        "required": [
+          "attempt",
+          "host",
+          "state",
+          "exit",
+          "reason",
+          "duration",
+          "logSize",
+          "startedAt",
+          "endedAt"
+        ],
+        "description": "An earlier attempt of a run."
       },
       "Error": {
         "type": "object",
@@ -348,6 +451,9 @@
             "default": 0,
             "description": "Higher is placed first; equal ones oldest first. -1000 to 1000. Default: 0.",
             "example": 10
+          },
+          "retry": {
+            "$ref": "#/components/schemas/Retry"
           }
         },
         "required": [
@@ -1226,7 +1332,7 @@
         ],
         "operationId": "GetRunLog",
         "summary": "Get a run's log",
-        "description": "Reads up to 1 MiB from byte N (`Range: bytes=N-`). To follow a run, poll from the last `size` until `Run-State` has ended.",
+        "description": "Reads up to 1 MiB from byte N (`Range: bytes=N-`) of the latest attempt's log, or `attempt`'s. To follow a run, poll from the last `size` until `Run-State` has ended.",
         "parameters": [
           {
             "schema": {
@@ -1238,6 +1344,17 @@
             "description": "The run's id.",
             "name": "id",
             "in": "path"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Which attempt's log. Default: the latest."
+            },
+            "required": false,
+            "description": "Which attempt's log. Default: the latest.",
+            "name": "attempt",
+            "in": "query"
           },
           {
             "schema": {
@@ -1274,11 +1391,19 @@
                     "failed",
                     "canceled"
                   ],
-                  "description": "The run's state: stop polling once it has ended.",
+                  "description": "The attempt's state: stop polling once it has ended.",
                   "example": "pending"
                 },
                 "required": true,
-                "description": "The run's state: stop polling once it has ended."
+                "description": "The attempt's state: stop polling once it has ended."
+              },
+              "run-attempt": {
+                "schema": {
+                  "type": "string",
+                  "description": "Which attempt's log this is."
+                },
+                "required": true,
+                "description": "Which attempt's log this is."
               }
             },
             "content": {
@@ -1310,7 +1435,7 @@
             }
           },
           "404": {
-            "description": "ResourceNotFoundException: No run has that id.",
+            "description": "ResourceNotFoundException: No run has that id, or it has no such attempt.",
             "content": {
               "application/json": {
                 "schema": {

@@ -28,6 +28,7 @@ What the server tells an agent when it connects:
 > - A run's log is read from a byte offset: get_run_log answers the bytes from offset, the log's size, and the run's state, so call it again from offset + the bytes read until the state has ended.
 > - Label runs to find them again (e.g. {"item": "28af81bc", "by": "agent-7"}); list_runs filters by label as key=value.
 > - Pending runs are taken highest priority first, then oldest; give priority when submitting, or move a run with update_run_priority.
+> - Give retry {limit, backoff} to try a failed run again: each attempt keeps its own log and exit, the run's attempts lists the earlier ones, and get_run_log reads any by attempt.
 > - cancel_run ends a pending or assigned run at once; a running one is stopped by its host shortly after.
 > - Every tool takes the submitters' token this server was connected with. The host protocol (register, heartbeat, claim, append, complete) is job-runner's, not tools.
 
@@ -60,6 +61,9 @@ Queues a run as `pending`, by `priority` then age, until a host that meets its r
 | `requirements.timeout` | integer or null |  | Timeout in seconds. Default: `jobs.toml`'s. |
 | `labels` | object |  | Labels to find it by, e.g. what it is for and who asked. |
 | `priority` | integer |  | Higher is placed first; equal ones oldest first. -1000 to 1000. Default: 0. |
+| `retry` | object |  | Retries a failed attempt (not a canceled one). |
+| `retry.limit` | integer |  | Retries after a failed attempt, 0 to 10. Default: 0. |
+| `retry.backoff` | integer |  | Seconds before the first retry, doubling for each after, at most 3600. Default: 10. |
 
 ### list_runs
 
@@ -82,12 +86,13 @@ Returns one run.
 
 ### get_run_log
 
-Returns the log from byte `offset`, at most 1 MiB, with the log's size so far and the run's state. Empty when `offset` is the log's size: call again later from there while the run is `pending` or `running`.
+Returns the latest attempt's log, or `attempt`'s, from byte `offset`, at most 1 MiB, with the log's size so far and the attempt's state. Empty when `offset` is the log's size: call again later from there while the run is `pending` or `running`.
 
 | Input | Type | Required | |
 | --- | --- | --- | --- |
 | `id` | string | yes | The run's id. |
 | `offset` | integer |  | The byte to read from; default 0. |
+| `attempt` | integer |  | Which attempt's log; default the latest. A run's `attempts` lists its earlier ones. |
 
 ### cancel_run
 

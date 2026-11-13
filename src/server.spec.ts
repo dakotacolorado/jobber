@@ -90,6 +90,9 @@ describe("the timers", () => {
       host: "22222222-2222-4222-8222-222222222222",
       assignedAt: null,
       attempt: 1,
+      attempts: [],
+      retryAt: null,
+      retry: { limit: 0, backoff: 10 },
       exit: null,
       duration: null,
       logSize: 0,
@@ -120,7 +123,7 @@ describe("the timers", () => {
 
   it("prune a run's log only once its last append is past LOG_DAYS, and then all of it", () => {
     const store = Store.open(":memory:");
-    const insert = store.db.prepare("INSERT INTO run_logs (run_id, start, data, written_at) VALUES (?, ?, ?, ?)");
+    const insert = store.db.prepare("INSERT INTO run_logs (run_id, attempt, start, data, written_at) VALUES (?, 1, ?, ?, ?)");
     const enc = new TextEncoder();
     insert.run("old-start", 0, enc.encode("AAAAA"), "2025-01-01T00:00:00.000Z");
     insert.run("old-start", 5, enc.encode("BBBBB"), "2026-01-01T00:00:00.000Z");

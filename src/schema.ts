@@ -1,5 +1,5 @@
 import { createRoute, z } from "@hono/zod-openapi";
-import { ARCHES, COMMIT_PATTERN, JOB_NAME_PATTERN, LABEL_PATTERN, OSES, PRIORITY_MAX, PRIORITY_MIN, REPO_PATTERN, STATES } from "./domain.ts";
+import { ARCHES, BACKOFF_MAX_SECONDS, COMMIT_PATTERN, NO_RETRY, RETRY_LIMIT_MAX, JOB_NAME_PATTERN, LABEL_PATTERN, OSES, PRIORITY_MAX, PRIORITY_MIN, REPO_PATTERN, STATES } from "./domain.ts";
 
 /** Validates every request and generates `openapi.json`, so neither can drift. */
 
@@ -45,6 +45,36 @@ export const RequirementsSchema = z
   .describe("What the run needs from its host.")
   .openapi("Requirements");
 
+export const RetrySchema = z
+  .object({
+    limit: z.int().min(0).max(RETRY_LIMIT_MAX).default(NO_RETRY.limit).describe(`Retries after a failed attempt, 0 to ${RETRY_LIMIT_MAX}. Default: 0.`),
+    backoff: z
+      .int()
+      .min(1)
+      .max(BACKOFF_MAX_SECONDS)
+      .default(NO_RETRY.backoff)
+      .describe(`Seconds before the first retry, doubling for each after, at most ${BACKOFF_MAX_SECONDS}. Default: ${NO_RETRY.backoff}.`),
+  })
+  .describe("Retries a failed attempt (not a canceled one).")
+  .openapi("Retry");
+
+const FinalState = z.enum(["succeeded", "failed", "canceled"]);
+
+export const AttemptSchema = z
+  .object({
+    attempt: z.int().min(1).describe("Which try, from 1."),
+    host: z.string().uuid().nullable().describe("Host it ran on."),
+    state: FinalState.describe("How it ended."),
+    exit: z.int().nullable().describe("Exit code."),
+    reason: z.string().nullable().describe("Why it ended, when not plain."),
+    duration: z.number().nullable().describe("Seconds it ran."),
+    logSize: z.int().describe("Its log's size in bytes: read it with `GetRunLog?attempt=`."),
+    startedAt: z.string().nullable().describe("Started at (ISO 8601)."),
+    endedAt: z.string().describe("Ended at (ISO 8601)."),
+  })
+  .describe("An earlier attempt of a run.")
+  .openapi("Attempt");
+
 export const SubmitSchema = z
   .object({
     repo: Repo,
@@ -54,6 +84,7 @@ export const SubmitSchema = z
     requirements: RequirementsSchema.default({ os: null, arch: null, memory: null, timeout: null }),
     labels: Labels.default({}).describe("Labels to find it by, e.g. what it is for and who asked."),
     priority: Priority.default(0).describe(`Higher is placed first; equal ones oldest first. ${PRIORITY_MIN} to ${PRIORITY_MAX}. Default: 0.`),
+    retry: RetrySchema.default(NO_RETRY),
   })
   .openapi("SubmitRunInput");
 
@@ -67,10 +98,13 @@ export const RunSchema = z
     requirements: RequirementsSchema,
     labels: Labels,
     priority: Priority,
+    retry: RetrySchema,
     state: State,
     reason: z.string().nullable().describe("Why it ended, when not plain (e.g. timed out)."),
     cancelRequested: z.boolean().describe("Cancel asked for; its host will stop it."),
-    attempt: z.int().min(1).describe("Which try this is, from 1."),
+    attempt: z.int().min(1).describe("Which try this is, from 1: the run's other fields are this attempt's."),
+    attempts: z.array(AttemptSchema).describe("Earlier attempts, oldest first."),
+    retryAt: z.string().nullable().describe("A retry waits in the queue until then (ISO 8601)."),
     host: z.string().uuid().nullable().describe("Host it is assigned to or ran on."),
     assignedAt: z.string().nullable().describe("Placed on `host` at (ISO 8601), while `assigned`."),
     exit: z.int().nullable().describe("Exit code."),
@@ -203,9 +237,11 @@ export const logRoute = createRoute({
   path: "/runs/{id}/log",
   operationId: "GetRunLog",
   summary: "Get a run's log",
-  description: "Reads up to 1 MiB from byte N (`Range: bytes=N-`). To follow a run, poll from the last `size` until `Run-State` has ended.",
+  description:
+    "Reads up to 1 MiB from byte N (`Range: bytes=N-`) of the latest attempt's log, or `attempt`'s. To follow a run, poll from the last `size` until `Run-State` has ended.",
   request: {
     params: IdParam,
+    query: z.object({ attempt: z.coerce.number().int().min(1).optional().describe("Which attempt's log. Default: the latest.") }),
     headers: z.object({ range: z.string().regex(/^bytes=\d+-$/).optional().describe("`bytes=N-`") }),
   },
   responses: {
@@ -214,12 +250,13 @@ export const logRoute = createRoute({
       description: "Log bytes from N, up to 1 MiB.",
       headers: z.object({
         "content-range": z.string().describe("`bytes N-M/size`; `size` is the log's length so far."),
-        "run-state": State.describe("The run's state: stop polling once it has ended."),
+        "run-state": State.describe("The attempt's state: stop polling once it has ended."),
+        "run-attempt": z.string().describe("Which attempt's log this is."),
       }),
     },
     416: fails(416, "N is past the end of the log."),
     ...FAILS,
-    ...MISSING,
+    404: fails(404, "No run has that id, or it has no such attempt."),
   },
 });
 

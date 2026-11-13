@@ -1,4 +1,4 @@
-import { expired, fresh, freeOn, now, RequestError, schedule, assigned, type Run } from "./domain.ts";
+import { due, expired, fresh, freeOn, now, RequestError, schedule, assigned, type Run } from "./domain.ts";
 import type { Store } from "./store.ts";
 
 /** The hosts job-service can reach now, and how it hands one a run. */
@@ -34,7 +34,10 @@ export function tick(store: Store, link: Link, at = now()): { expired: number; p
     .map((h) => ({ id: h.id, os: h.os, arch: h.arch, free: freeOn(h, active) }));
   let placed = 0;
   if (candidates.length) {
-    for (const { run, host } of schedule(store.pending(), candidates)) {
+    for (const { run, host } of schedule(
+      store.pending().filter((r) => due(r, at)),
+      candidates,
+    )) {
       const next = assigned(run, host, at);
       if (!write(store, next, run)) continue;
       link.assign(host, next);

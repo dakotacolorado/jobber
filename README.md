@@ -18,10 +18,10 @@ MCP server's is [`mcp.json`](./mcp.json), rendered in
 [`docs/MCP.md`](./docs/MCP.md) and served at `/docs/mcp`.
 
 ```
-POST /runs               {repo, commit, job, args?, requirements?: {os, arch, memory, timeout}, labels?, priority?}  → run, pending
+POST /runs               {repo, commit, job, args?, requirements?: {os, arch, memory, timeout}, labels?, priority?, retry?: {limit, backoff}}  → run, pending
 GET  /runs?state=…&repo=…&label=key=value
 GET  /runs/{id}
-GET  /runs/{id}/log      Range: bytes=N-     (Run-State says the run's state)
+GET  /runs/{id}/log?attempt=n  Range: bytes=N-     (the latest attempt's unless named; Run-State says its state)
 POST /runs/{id}/cancel
 POST /runs/{id}/priority {priority}   moves a run not yet ended in the queue
 GET  /hosts              each host with its capacity, free capacity and metrics
@@ -32,7 +32,11 @@ fits a host when its os and arch match and the host's free memory covers the
 run's (1024 MiB when none is given). Every second the scheduler takes the
 queue in order and places each run on the fitting connected host with the most
 room, passing over one no host fits; an assignment not taken in 30 s goes back
-to the queue. `labels` describe the run, free-form (what it
+to the queue. A run given `retry: {limit, backoff}` that fails (not one
+canceled) goes back to the queue as its next `attempt`, `backoff` seconds
+later, doubling each time (at most an hour), up to `limit` times; it keeps its
+id, each attempt keeps its own log and exit, and `attempts` lists the earlier
+ones. `labels` describe the run, free-form (what it
 is for, who asked), and `ListRuns` filters by them.
 
 Hosts run job-runner, which calls in (hosts are behind NAT) and is never called:

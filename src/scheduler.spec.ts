@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { accepted, ASSIGN_SECONDS, assigned, canceled, expired, FRESH_SECONDS, freeOn, schedule, submitted, unassigned, type Candidate, type Run } from "./domain.ts";
+import { NO_RETRY, accepted, ASSIGN_SECONDS, assigned, canceled, expired, FRESH_SECONDS, freeOn, schedule, submitted, unassigned, type Candidate, type Run } from "./domain.ts";
 import { tick, type Link } from "./scheduler.ts";
 import { Store, type StoredHost } from "./store.ts";
 
@@ -17,6 +17,7 @@ const run = (over: { priority?: number; memory?: number; os?: "linux" | "macos";
       requirements: { os: over.os ?? null, arch: null, memory: over.memory ?? null, timeout: null },
       labels: {},
       priority: over.priority ?? 0,
+      retry: NO_RETRY,
     },
     over.at ?? T0,
   );

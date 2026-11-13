@@ -172,7 +172,7 @@ async function runs(params) {
               "tr",
               {},
               h("td", {}, h("a", { class: "mono", href: `#/run/${run.id}` }, short(run.id))),
-              h("td", {}, state(run), run.exit !== null ? h("span", { class: "muted" }, ` exit ${run.exit}`) : ""),
+              h("td", {}, state(run), run.exit !== null ? h("span", { class: "muted" }, ` exit ${run.exit}`) : "", run.attempt > 1 ? h("span", { class: "muted" }, ` · attempt ${run.attempt}`) : ""),
               h("td", {}, repoAt(run)),
               h("td", { class: "mono" }, run.job, run.args.length ? h("span", { class: "muted" }, ` ${run.args.join(" ")}`) : ""),
               h("td", {}, String(run.priority)),
@@ -201,10 +201,14 @@ async function runs(params) {
   });
 }
 
-async function runPage(id) {
+async function runPage(id, params = new URLSearchParams()) {
   const live = current();
   let run = await api("GET", `/runs/${id}`);
   if (!live()) return;
+  /** The attempt whose log is shown: the latest unless the address names an earlier one. */
+  const chosen = Number(params.get("attempt")) || null;
+  const earlier = chosen !== null && chosen !== run.attempt ? run.attempts.find((a) => a.attempt === chosen) : null;
+  const logQuery = earlier ? `?attempt=${earlier.attempt}` : "";
   const box = errorBox();
   const head = h("div", { class: "panel" });
   /** A run not yet ended can move up or down the queue; an ended one shows where it stood. */
@@ -227,6 +231,33 @@ async function runPage(id) {
     );
     return h("span", { class: "row", style: "margin:0" }, input, set);
   };
+  /** Every attempt, oldest first, the latest the run's own fields; each links to its log. */
+  const attemptsTable = () => {
+    const latest = { attempt: run.attempt, host: run.host, state: run.state, exit: run.exit, reason: run.reason, duration: run.duration, startedAt: run.startedAt };
+    const shown = earlier ? earlier.attempt : run.attempt;
+    return h(
+      "table",
+      { class: "attempts" },
+      h("thead", {}, h("tr", {}, ["Attempt", "Host", "State", "Exit", "Started", "Took", "Reason"].map((name) => h("th", {}, name)))),
+      h(
+        "tbody",
+        {},
+        [...run.attempts, latest].map((a) =>
+          h(
+            "tr",
+            {},
+            h("td", {}, a.attempt === shown ? `#${a.attempt} (log below)` : h("a", { href: `#/run/${run.id}?attempt=${a.attempt}` }, `#${a.attempt}`)),
+            h("td", { class: "mono" }, a.host ? short(a.host) : ""),
+            h("td", {}, h("span", { class: `state ${a.state}` }, a.state)),
+            h("td", {}, a.exit ?? ""),
+            h("td", {}, when(a.startedAt)),
+            h("td", {}, a.duration !== null ? `${a.duration.toFixed(1)} s` : ""),
+            h("td", {}, a.reason ?? ""),
+          ),
+        ),
+      ),
+    );
+  };
   const drawHead = () => {
     const fields = [
       ["Repo", repoAt(run)],
@@ -234,6 +265,8 @@ async function runPage(id) {
       ["Job", h("span", { class: "mono" }, [run.job, ...run.args].join(" "))],
       ["Needs", needs(run.requirements)],
       ["Priority", priorityField()],
+      ["Retry", run.retry.limit ? `up to ${run.retry.limit} time${run.retry.limit === 1 ? "" : "s"}, ${run.retry.backoff} s apart, doubling` : "none"],
+      run.retryAt && run.state === "pending" && ["Retry at", when(run.retryAt)],
       ["Labels", run.labels && Object.keys(run.labels).length ? labelLinks(run.labels) : "none"],
       ["Host", run.host ? [h("a", { href: "#/hosts", class: "mono" }, short(run.host)), run.state === "assigned" ? h("span", { class: "muted" }, ` assigned ${when(run.assignedAt)}, not yet taken`) : ""] : "not yet placed"],
       ["Submitted", when(run.createdAt)],
@@ -263,6 +296,7 @@ async function runPage(id) {
       h("div", { class: "row" }, state(run), cancel),
       box,
       h("dl", { class: "fields" }, fields.flatMap(([name, value]) => [h("dt", {}, name), h("dd", {}, value)])),
+      run.attempts.length ? attemptsTable() : "",
     );
   };
   drawHead();
@@ -274,7 +308,7 @@ async function runPage(id) {
   let offset = 0;
   /** Reads the log on from `offset`, and says whether there may be more. */
   const more = async () => {
-    const res = await request("GET", `/runs/${run.id}/log`, { headers: { range: `bytes=${offset}-` } });
+    const res = await request("GET", `/runs/${run.id}/log` + logQuery, { headers: { range: `bytes=${offset}-` } });
     if (res.status !== 206) throw new ApiError(res.status, await res.json().catch(() => null));
     const bytes = new Uint8Array(await res.arrayBuffer());
     const size = Number(res.headers.get("content-range")?.split("/")[1] ?? offset);
@@ -292,10 +326,10 @@ async function runPage(id) {
 
   main.replaceChildren(
     head,
-    h("div", { class: "panel" }, h("h2", {}, "Log"), h("div", { class: "row", style: "margin:0 0 8px" }, status, h("label", { class: "muted", style: "margin:0;text-transform:none;letter-spacing:0;font-size:13px" }, follow, " keep at the end")), pre),
+    h("div", { class: "panel" }, h("h2", {}, run.attempts.length ? `Log of attempt ${earlier ? earlier.attempt : run.attempt}` : "Log"), h("div", { class: "row", style: "margin:0 0 8px" }, status, h("label", { class: "muted", style: "margin:0;text-transform:none;letter-spacing:0;font-size:13px" }, follow, " keep at the end")), pre),
   );
   let going = await more();
-  while (going && live() && offset < run.logSize) going = await more();
+  while (going && live() && offset < (earlier ? earlier.logSize : run.logSize)) going = await more();
   if (going) {
     every(FOLLOW_MS, live, async () => {
       if (!going) return;
@@ -303,6 +337,8 @@ async function runPage(id) {
       // The head follows the run too: it says when it is claimed, asked to cancel and ended.
       const next = await api("GET", `/runs/${run.id}`);
       if (live() && next.updatedAt !== run.updatedAt) {
+        // A retry starts a new log: show it from its start.
+        if (!earlier && next.attempt !== run.attempt) return route();
         run = next;
         drawHead();
       }
@@ -327,6 +363,8 @@ function newRun(params) {
   const memory = input("memory", { type: "number", min: 16, placeholder: "jobs.toml's" });
   const timeout = input("timeout", { type: "number", min: 1, placeholder: "jobs.toml's" });
   const priority = input("priority", { type: "number", min: -1000, max: 1000, step: 1, placeholder: "0" });
+  const retries = input("retries", { type: "number", min: 0, max: 10, step: 1, placeholder: "0" });
+  const backoff = input("backoff", { type: "number", min: 1, max: 3600, step: 1, placeholder: "10" });
   const box = errorBox();
   main.replaceChildren(
     h(
@@ -348,6 +386,7 @@ function newRun(params) {
               args: lines(args),
               labels: Object.fromEntries(given),
               priority: priority.value ? Number(priority.value) : 0,
+              retry: { limit: retries.value ? Number(retries.value) : 0, backoff: backoff.value ? Number(backoff.value) : 10 },
               requirements: {
                 os: os.value || null,
                 arch: arch.value || null,
@@ -374,7 +413,10 @@ function newRun(params) {
         h("div", {}, h("label", {}, "Memory, MiB"), memory),
         h("div", {}, h("label", {}, "Timeout, s"), timeout)),
       h("label", {}, "Labels"), labels,
-      h("label", {}, "Priority, higher first"), priority,
+      h("div", { class: "grid4" },
+        h("div", {}, h("label", {}, "Priority, higher first"), priority),
+        h("div", {}, h("label", {}, "Retries if it fails"), retries),
+        h("div", {}, h("label", {}, "First retry after, s"), backoff)),
       box,
       h("div", { class: "row" }, h("button", { class: "primary", type: "submit" }, "Submit")),
     ),
@@ -425,7 +467,7 @@ async function route() {
   const params = new URLSearchParams(search);
   try {
     const run = /^\/run\/([0-9a-f-]{36})$/.exec(path ?? "");
-    if (run) await runPage(run[1]);
+    if (run) await runPage(run[1], params);
     else if (path === "/new") newRun(params);
     else if (path === "/hosts") await hosts();
     else await runs(params);

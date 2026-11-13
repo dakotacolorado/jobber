@@ -1,5 +1,5 @@
 import { backup, DatabaseSync } from "node:sqlite";
-import { DEFAULT_MEMORY_MIB, LOG_DAYS, RequestError, type Host, type Run, type State } from "./domain.ts";
+import { DEFAULT_MEMORY_MIB, LOG_DAYS, NO_RETRY, RequestError, type Host, type Run, type State } from "./domain.ts";
 
 export interface StoredHost extends Host {
   /** sha256 of its secret, hex. */
@@ -28,10 +28,11 @@ CREATE INDEX IF NOT EXISTS runs_by_state ON runs (state, created_at, id);
 CREATE INDEX IF NOT EXISTS runs_by_created ON runs (created_at, id);
 CREATE TABLE IF NOT EXISTS run_logs (
   run_id TEXT NOT NULL,
+  attempt INTEGER NOT NULL,
   start INTEGER NOT NULL,
   data BLOB NOT NULL,
   written_at TEXT NOT NULL,
-  PRIMARY KEY (run_id, start)
+  PRIMARY KEY (run_id, attempt, start)
 );
 CREATE INDEX IF NOT EXISTS run_logs_by_written ON run_logs (written_at);
 CREATE TABLE IF NOT EXISTS hosts (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, record TEXT NOT NULL);
@@ -114,15 +115,17 @@ export class Store {
     if (changes !== 1) throw conflict(next);
   }
 
-  /** The log's bytes from `from`, at most `max`. */
-  log(run: Run, from: number, max: number): Uint8Array {
-    const want = Math.min(max, run.logSize - from);
+  /** The log of `attempt` (default: the latest), `size` bytes long, from `from`, at most `max` bytes. */
+  log(run: Pick<Run, "id" | "attempt" | "logSize">, from: number, max: number, attempt = run.attempt, size = run.logSize): Uint8Array {
+    const want = Math.min(max, size - from);
     if (want <= 0) return new Uint8Array();
     // The chunk holding `from` is the last one starting at or before it.
-    const first = this.db.prepare("SELECT max(start) AS start FROM run_logs WHERE run_id = ? AND start <= ?").get(run.id, from) as { start: number | null };
+    const first = this.db.prepare("SELECT max(start) AS start FROM run_logs WHERE run_id = ? AND attempt = ? AND start <= ?").get(run.id, attempt, from) as {
+      start: number | null;
+    };
     const rows = this.db
-      .prepare("SELECT data FROM run_logs WHERE run_id = ? AND start >= ? AND start < ? ORDER BY start")
-      .all(run.id, first.start ?? 0, from + want) as { data: Uint8Array }[];
+      .prepare("SELECT data FROM run_logs WHERE run_id = ? AND attempt = ? AND start >= ? AND start < ? ORDER BY start")
+      .all(run.id, attempt, first.start ?? 0, from + want) as { data: Uint8Array }[];
     return slice(
       rows.map((r) => r.data),
       first.start ?? 0,
@@ -160,8 +163,8 @@ export class Store {
   append(run: Run, start: number, bytes: Uint8Array, at: string): Run {
     return this.transaction(() => {
       const stored = this.run(run.id);
-      if (!stored || stored.state !== "running" || stored.host !== run.host || stored.logSize !== start) throw conflict(run);
-      if (bytes.length) this.db.prepare("INSERT INTO run_logs (run_id, start, data, written_at) VALUES (?, ?, ?, ?)").run(run.id, start, bytes, at);
+      if (!stored || stored.state !== "running" || stored.host !== run.host || stored.attempt !== run.attempt || stored.logSize !== start) throw conflict(run);
+      if (bytes.length) this.db.prepare("INSERT INTO run_logs (run_id, attempt, start, data, written_at) VALUES (?, ?, ?, ?, ?)").run(run.id, run.attempt, start, bytes, at);
       const next = { ...stored, logSize: start + bytes.length, updatedAt: at > stored.updatedAt ? at : stored.updatedAt };
       this.update(next, stored.updatedAt);
       return next;
@@ -253,8 +256,14 @@ export class Store {
   }
 }
 
-/** Gives each run stored before a field was added that field's default: `priority` 0, `assignedAt` null, `attempt` 1. */
+/**
+ * Gives each run stored before a field was added that field's default:
+ * `priority` 0, `assignedAt` null, `attempt` 1 with no earlier `attempts`,
+ * no `retry` and no `retryAt`.
+ */
 export function backfill(db: DatabaseSync): void {
+  db.exec(`UPDATE runs SET record = json_set(record, '$.retry', json('${JSON.stringify(NO_RETRY)}'), '$.attempts', json('[]'), '$.retryAt', json('null'))
+    WHERE json_type(record, '$.retry') IS NULL`);
   db.exec("UPDATE runs SET record = json_set(record, '$.attempt', 1) WHERE record ->> '$.attempt' IS NULL");
   db.exec("UPDATE runs SET record = json_set(record, '$.priority', 0) WHERE record ->> '$.priority' IS NULL");
   db.exec("UPDATE runs SET record = json_set(record, '$.assignedAt', json('null')) WHERE json_type(record, '$.assignedAt') IS NULL");
@@ -272,6 +281,7 @@ type Legacy = Record<string, unknown>;
 export function migrate(db: DatabaseSync): void {
   const tables = new Set((db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[]).map((t) => t.name));
   if (!tables.has("runs")) return;
+  logsByAttempt(db);
   const columns = new Set((db.prepare("PRAGMA table_info(runs)").all() as { name: string }[]).map((c) => c.name));
   if (!columns.has("for_key") && !tables.has("runners")) return;
   db.exec("BEGIN IMMEDIATE");
@@ -347,6 +357,26 @@ export function migrate(db: DatabaseSync): void {
     db.exec("ROLLBACK");
     throw err;
   }
+}
+
+/** Keys a log written before attempts, one per run, as attempt 1's. Does nothing to one already keyed so. */
+export function logsByAttempt(db: DatabaseSync): void {
+  const columns = (db.prepare("PRAGMA table_info(run_logs)").all() as { name: string }[]).map((c) => c.name);
+  if (!columns.length || columns.includes("attempt")) return;
+  db.exec(`BEGIN IMMEDIATE;
+    CREATE TABLE run_logs_by_attempt (
+      run_id TEXT NOT NULL,
+      attempt INTEGER NOT NULL,
+      start INTEGER NOT NULL,
+      data BLOB NOT NULL,
+      written_at TEXT NOT NULL,
+      PRIMARY KEY (run_id, attempt, start)
+    );
+    INSERT INTO run_logs_by_attempt (run_id, attempt, start, data, written_at) SELECT run_id, 1, start, data, written_at FROM run_logs;
+    DROP INDEX IF EXISTS run_logs_by_written;
+    DROP TABLE run_logs;
+    ALTER TABLE run_logs_by_attempt RENAME TO run_logs;
+    COMMIT;`);
 }
 
 /** `want` bytes from `from` of the chunks laid end to end, the first starting at `first`. */

@@ -1,6 +1,6 @@
 # jobber
 
-Runs jobs on a fleet of hosts: a job is a named script in a repo's
+Submit code to run on whatever computers you have. Runs jobs on a fleet of hosts: a job is a named script in a repo's
 `jobs.toml`, a run one execution of it at one commit, on a host the scheduler
 pushes it to, which keeps it alive with heartbeats. Keep the model this simple: a run's
 `requirements` and `labels`, hosts with capacity and metrics, nothing of any
@@ -29,7 +29,7 @@ the client: there is no other. The pre-commit hook regenerates all of them
 Name an operation VerbNoun as AWS does, keep summaries to a few words,
 describe every field, and answer errors as `{code, message}` with the
 status's exception name (`ERROR_CODES`): tests hold all of it. Paths and
-successful shapes are job-runner's contract: change them with it.
+successful shapes are jobber-host's contract: change them with it.
 
 The page is `ui/`, served as it is, with no build: it makes every element
 as text, never HTML.

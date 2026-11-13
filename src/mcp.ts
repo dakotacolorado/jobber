@@ -3,15 +3,15 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "@hono/zod-openapi";
 import * as routes from "./schema.ts";
 
-export const INSTRUCTIONS = `jobber runs jobs on a fleet of hosts: a job is a named script in a repo's jobs.toml, a run one execution of it at one commit, placed by its scheduler on a host that meets its requirements (os, arch) and has its cpu and memory free.
+export const INSTRUCTIONS = `jobber runs code on whatever computers you have, its hosts: a job is a named script in a repo's jobs.toml, a run one execution of it at one commit, placed by its scheduler on a host that meets its requirements (os, arch) and has its cpu and memory free.
 
 - A run is submitted pending, assigned to a host by the scheduler, running there, and ends succeeded, failed or canceled with its exit code.
 - A run's log is read from a byte offset: get_run_log answers the bytes from offset, the log's size, and the run's state, so call it again from offset + the bytes read until the state has ended.
 - Label runs to find them again (e.g. {"item": "28af81bc", "by": "agent-7"}); list_runs filters by label as key=value.
-- Pending runs are taken highest priority first, then oldest; give priority when submitting, or move a run with update_run_priority.
+- Pending runs are taken highest priority first, then oldest: list_queue lists them in that order, next first. Give priority when submitting, or move a run with update_run_priority.
 - Give retry {limit, backoff} to try a failed run again: each attempt keeps its own log and exit, the run's attempts lists the earlier ones, and get_run_log reads any by attempt.
 - cancel_run ends a pending or assigned run at once; a running one is stopped by its host shortly after.
-- Every tool takes the submitters' token this server was connected with. The host protocol (register, connect, heartbeat, append, complete) is job-runner's, not tools.`;
+- Every tool takes the submitters' token this server was connected with. The host protocol (register, connect, heartbeat, append, complete) is jobber-host's, not tools.`;
 
 /** The address the MCP docs give, prod's, HTTPS as every deployed address is; served, the address they were reached at replaces it. */
 export const DOCS_URL = "https://dakotajp-lenovo-laptop.tail90863a.ts.net:8445";
@@ -87,6 +87,15 @@ export function mcpServer(version: string, call: Call): McpServer {
     "Returns runs matching every filter given, newest first.",
     routes.ListQuery.shape,
     async (input) => answer(await call("GET", `/runs${query(input)}`)),
+    { readOnly: true },
+  );
+
+  tool(
+    "list_queue",
+    "List the queue",
+    routes.queueRoute.description!,
+    routes.QueueQuery.shape,
+    async (input) => answer(await call("GET", `/queue${query(input)}`)),
     { readOnly: true },
   );
 

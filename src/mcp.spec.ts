@@ -86,6 +86,8 @@ describe("the MCP server", () => {
 
     expect((await use<{ runs: Run[] }>("list_runs", { state: "running" })).json.runs.map((each) => each.id)).toEqual([run.id]);
     expect((await use<{ runs: Run[] }>("list_runs", { label: "by=agent-7" })).json.runs.map((each) => each.id)).toEqual([run.id]);
+    const next = await use<Run>("submit_run", { repo: "dakotacolorado/python-template", commit: COMMIT, job: "hello", priority: 5 });
+    expect((await use<{ runs: Run[] }>("list_queue", {})).json.runs.map((each) => each.id)).toEqual([next.json.id]);
     expect((await use<{ hosts: Host[] }>("list_hosts", {})).json.hosts).toHaveLength(1);
     expect((await use<Run>("cancel_run", { id: run.id })).json).toMatchObject({ id: run.id, cancelRequested: true });
     expect((await use<Run>("get_run", { id: run.id })).json.cancelRequested).toBe(true);

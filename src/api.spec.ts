@@ -236,3 +236,22 @@ describe("POST /runs/{id}/priority", () => {
     expect((await call("POST", "/runs/00000000-0000-4000-8000-000000000000/priority", { priority: 1 })).status).toBe(404);
   });
 });
+
+describe("GET /queue", () => {
+  it("lists only pending runs, highest priority first, then oldest, and as far as limit", async () => {
+    const { submit, call } = setup();
+    const low = await submit({ priority: -1 });
+    const first = await submit();
+    const urgent = await submit({ priority: 10 });
+    const second = await submit();
+    const gone = await submit({ priority: 100 });
+    await call("POST", `/runs/${gone.id}/cancel`);
+    const res = await call("GET", "/queue");
+    expect(res.status).toBe(200);
+    const ids = ((await res.json()) as { runs: Run[] }).runs.map((run) => run.id);
+    expect(ids).toEqual([urgent.id, first.id, second.id, low.id]);
+    await call("POST", `/runs/${low.id}/priority`, { priority: 20 });
+    expect(((await (await call("GET", "/queue?limit=2")).json()) as { runs: Run[] }).runs.map((run) => run.id)).toEqual([low.id, urgent.id]);
+    expect((await call("GET", "/queue?limit=0")).status).toBe(400);
+  });
+});

@@ -1,6 +1,6 @@
 # Host connection
 
-How jobber pushes work to the hosts of its fleet. job-runner on each host
+How jobber pushes work to the hosts of its fleet. jobber-host on each computer
 holds one WebSocket open to jobber; jobber's scheduler places each
 queued run on a host that fits and sends it over that host's connection. Hosts
 sit behind NAT, so the host dials out; nothing dials in.

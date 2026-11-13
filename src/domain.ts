@@ -18,10 +18,12 @@ export const JOB_NAME_PATTERN = /^[a-z0-9][a-z0-9_-]{0,62}$/;
 export const LABEL_PATTERN = /^[A-Za-z0-9]([A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?$/;
 
 /**
- * `pending` until a host claims it, `running` on that host, then how it
- * ended. A run never leaves an ended state; running the job again is a new run.
+ * `pending` in the queue, `assigned` once the scheduler places it on a host,
+ * `running` once that host takes it (or claims it), then how it ended. An
+ * assignment the host does not take in time goes back to `pending`. A run
+ * never leaves an ended state; running the job again is a new run.
  */
-export const STATES = ["pending", "running", "succeeded", "failed", "canceled"] as const;
+export const STATES = ["pending", "assigned", "running", "succeeded", "failed", "canceled"] as const;
 
 export type State = (typeof STATES)[number];
 
@@ -80,8 +82,10 @@ export interface Run extends RunDraft {
   reason: string | null;
   /** Set by `CancelRun` on a running run, for its host to stop it. */
   cancelRequested: boolean;
-  /** The host that claimed it. */
+  /** The host it is assigned to or ran on. */
   host: string | null;
+  /** When the scheduler placed it on `host`: it goes back to the queue unless taken within `ASSIGN_SECONDS`. */
+  assignedAt: string | null;
   exit: number | null;
   /** Seconds it ran, as its host reported. */
   duration: number | null;
@@ -140,6 +144,7 @@ export function submitted(draft: RunDraft, at = now()): Run {
     reason: null,
     cancelRequested: false,
     host: null,
+    assignedAt: null,
     exit: null,
     duration: null,
     logSize: 0,
@@ -151,11 +156,11 @@ export function submitted(draft: RunDraft, at = now()): Run {
   };
 }
 
-/** A pending run ends `canceled` at once; a running one is marked for its host to stop. */
+/** A run not yet started (pending or assigned) ends `canceled` at once; a running one is marked for its host to stop. */
 export function canceled(run: Run, when = now()): Run {
   const at = stamp(run, when);
   if (ENDED.includes(run.state)) throw new RequestError(`run ${run.id} already ended ${run.state}`, 409);
-  if (run.state === "pending") {
+  if (run.state === "pending" || run.state === "assigned") {
     return { ...run, state: "canceled", reason: "canceled before it started", cancelRequested: true, updatedAt: at, endedAt: at };
   }
   return { ...run, cancelRequested: true, updatedAt: at };
@@ -225,6 +230,88 @@ export function claimed(run: Run, host: string, when = now()): Run {
   if (run.state !== "pending") throw new RequestError(`run ${run.id} is ${run.state}, not pending`, 409);
   const at = stamp(run, when);
   return { ...run, state: "running", host, startedAt: at, updatedAt: at, leaseExpiresAt: leaseFrom(at) };
+}
+
+/** Seconds an assigned run waits for its host to take it before it goes back to the queue. */
+export const ASSIGN_SECONDS = 30;
+
+/** Seconds since a host's last heartbeat past which the scheduler places nothing on it. */
+export const FRESH_SECONDS = 30;
+
+/** The scheduler places a pending run on `host`. */
+export function assigned(run: Run, host: string, when = now()): Run {
+  if (run.state !== "pending") throw new RequestError(`run ${run.id} is ${run.state}, not pending`, 409);
+  const at = stamp(run, when);
+  return { ...run, state: "assigned", host, assignedAt: at, updatedAt: at };
+}
+
+/**
+ * The host takes the run assigned to it: `running` there from now. Taking a
+ * run already running there is answered as it is, so a host repeating itself
+ * after a lost answer starts nothing twice; anything else is refused with 409.
+ */
+export function accepted(run: Run, host: string, when = now()): Run {
+  if (run.state === "running" && run.host === host) return run;
+  if (run.state !== "assigned" || run.host !== host) throw new RequestError(`run ${run.id} is ${run.state}${run.host === host ? "" : " and not this host's"}, not assigned here`, 409);
+  const at = stamp(run, when);
+  return { ...run, state: "running", startedAt: at, updatedAt: at, leaseExpiresAt: leaseFrom(at) };
+}
+
+/** An assigned run back in the queue, as it was before it was placed: its host declined it, or did not take it in time. */
+export function unassigned(run: Run, when = now()): Run {
+  if (run.state !== "assigned") throw new RequestError(`run ${run.id} is ${run.state}, not assigned`, 409);
+  return { ...run, state: "pending", host: null, assignedAt: null, updatedAt: stamp(run, when) };
+}
+
+/** An assignment not taken within `ASSIGN_SECONDS`, back in the queue; null for any other run. */
+export function expired(run: Run, when = now()): Run | null {
+  if (run.state !== "assigned" || !run.assignedAt || Date.parse(run.assignedAt) + ASSIGN_SECONDS * 1000 > Date.parse(when)) return null;
+  return unassigned(run, when);
+}
+
+/** A host the scheduler may place runs on: what it is, and what it has free for them now. */
+export interface Candidate {
+  id: string;
+  os: Os;
+  arch: Arch;
+  free: Free;
+}
+
+/**
+ * What `host` has free for new runs: the least of what it last reported and
+ * its capacity less the runs assigned or running there, since a report can
+ * predate the scheduler's last assignment and the scheduler cannot see what
+ * else the host holds.
+ */
+export function freeOn(host: Pick<Host, "id" | "slots" | "memory" | "free">, runs: Run[]): Free {
+  const mine = runs.filter((r) => r.host === host.id && (r.state === "assigned" || r.state === "running"));
+  const slots = host.slots - mine.length;
+  const memory = host.memory - mine.reduce((sum, r) => sum + admittedMemory(r), 0);
+  const reported = host.free ?? { slots, memory };
+  return { slots: Math.max(0, Math.min(slots, reported.slots)), memory: Math.max(0, Math.min(memory, reported.memory)) };
+}
+
+/** A host fit to be given work: it heartbeated within `FRESH_SECONDS`. */
+export const fresh = (host: Pick<Host, "lastSeenAt">, when = now()) => Date.parse(when) - Date.parse(host.lastSeenAt) <= FRESH_SECONDS * 1000;
+
+/**
+ * Places queued runs on hosts: each run, highest priority first and then
+ * oldest, on the fitting host with the most slots free (then memory, then
+ * id), whose free capacity it then takes. A run no host fits is passed over,
+ * not waited for, so one large run does not hold up the small ones behind it.
+ */
+export function schedule(queue: Run[], hosts: Candidate[]): { run: Run; host: string }[] {
+  const left = hosts.map((h) => ({ ...h, free: { ...h.free } }));
+  const placed: { run: Run; host: string }[] = [];
+  for (const run of [...queue].sort(queueOrder)) {
+    const fitting = left.filter((h) => fits(run, h));
+    if (!fitting.length) continue;
+    const best = fitting.reduce((a, b) => (b.free.slots > a.free.slots || (b.free.slots === a.free.slots && (b.free.memory > a.free.memory || (b.free.memory === a.free.memory && b.id < a.id))) ? b : a));
+    best.free.slots -= 1;
+    best.free.memory -= admittedMemory(run);
+    placed.push({ run, host: best.id });
+  }
+  return placed;
 }
 
 /** Only the run's own host writes to it, and only while it runs. */

@@ -2,7 +2,7 @@
 // Every element is made with `h`, which sets text, never HTML, so nothing a run or its log says is run.
 
 const TOKEN_KEY = "job-service.token";
-const STATES = ["pending", "running", "succeeded", "failed", "canceled"];
+const STATES = ["pending", "assigned", "running", "succeeded", "failed", "canceled"];
 const ENDED = ["succeeded", "failed", "canceled"];
 /** How often a run's page asks for more of its log, and the runs list for changes. */
 const FOLLOW_MS = 1000;
@@ -235,7 +235,7 @@ async function runPage(id) {
       ["Needs", needs(run.requirements)],
       ["Priority", priorityField()],
       ["Labels", run.labels && Object.keys(run.labels).length ? labelLinks(run.labels) : "none"],
-      ["Host", run.host ? h("a", { href: "#/hosts", class: "mono" }, short(run.host)) : "not yet claimed"],
+      ["Host", run.host ? [h("a", { href: "#/hosts", class: "mono" }, short(run.host)), run.state === "assigned" ? h("span", { class: "muted" }, ` assigned ${when(run.assignedAt)}, not yet taken`) : ""] : "not yet placed"],
       ["Submitted", when(run.createdAt)],
       run.startedAt && ["Started", when(run.startedAt)],
       run.endedAt && ["Ended", `${when(run.endedAt)}${run.duration !== null ? `, after ${run.duration.toFixed(1)} s` : ""}`],

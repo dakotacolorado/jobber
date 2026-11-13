@@ -6,14 +6,15 @@ import { Store } from "./store.ts";
 const COMMIT = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 const draft = { repo: "o/r", commit: COMMIT, job: "hello", args: [], requirements: { os: null, arch: null, memory: null, timeout: null }, labels: {} };
 
-describe("a database written before priority", () => {
-  it("opens with each run at priority 0, queued oldest first", () => {
+describe("a database written before priority and assignments", () => {
+  it("opens with each run at priority 0 and assigned nowhere, queued oldest first", () => {
     const db = new DatabaseSync(":memory:");
     new Store(db);
     const older = { ...submitted({ ...draft, priority: 0 }, "2026-11-01T00:00:00.000Z") } as Partial<Run>;
     const newer = { ...submitted({ ...draft, priority: 0 }, "2026-11-02T00:00:00.000Z") } as Partial<Run>;
     for (const run of [newer, older]) {
       delete run.priority;
+      delete run.assignedAt;
       db.prepare("INSERT INTO runs (id, state, repo, created_at, updated_at, record) VALUES (?, ?, ?, ?, ?, ?)").run(
         run.id!,
         run.state!,
@@ -24,7 +25,7 @@ describe("a database written before priority", () => {
       );
     }
     const store = new Store(db);
-    expect(store.run(older.id!)!.priority).toBe(0);
+    expect(store.run(older.id!)).toMatchObject({ priority: 0, assignedAt: null });
     expect(store.pending().map((r) => r.id)).toEqual([older.id, newer.id]);
   });
 });

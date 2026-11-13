@@ -16,7 +16,7 @@ const JobName = z
   .openapi({ example: "hello" });
 const State = z
   .enum(STATES)
-  .describe("`pending` → `running` → `succeeded`, `failed` or `canceled`.")
+  .describe("`pending` → `assigned` → `running` → `succeeded`, `failed` or `canceled`. An assignment not taken goes back to `pending`.")
   .openapi({ example: "pending" });
 const Os = z.enum(OSES).describe("Operating system.");
 const Arch = z.enum(ARCHES).describe("CPU architecture.");
@@ -70,7 +70,8 @@ export const RunSchema = z
     state: State,
     reason: z.string().nullable().describe("Why it ended, when not plain (e.g. timed out)."),
     cancelRequested: z.boolean().describe("Cancel asked for; its host will stop it."),
-    host: z.string().uuid().nullable().describe("Host that claimed it."),
+    host: z.string().uuid().nullable().describe("Host it is assigned to or ran on."),
+    assignedAt: z.string().nullable().describe("Placed on `host` at (ISO 8601), while `assigned`."),
     exit: z.int().nullable().describe("Exit code."),
     duration: z.number().nullable().describe("Seconds it ran."),
     logSize: z.int().describe("Log size in bytes."),
@@ -226,7 +227,7 @@ export const cancelRoute = createRoute({
   path: "/runs/{id}/cancel",
   operationId: "CancelRun",
   summary: "Cancel a run",
-  description: "Ends a pending run now. A running one is stopped by its host within seconds.",
+  description: "Ends a run not yet started (pending or assigned) now. A running one is stopped by its host within seconds.",
   request: { params: IdParam },
   responses: { 200: json(RunSchema, "The run, canceled or marked."), 409: fails(409, "It has already ended."), ...FAILS, ...MISSING },
 });

@@ -3,7 +3,7 @@
   "info": {
     "version": "2026-11-12",
     "title": "job-service",
-    "description": "Runs jobs on a fleet of hosts. A **job** is a named script in a repo's `jobs.toml`; a **run** is one execution of it at a commit.\n\n- **Submit** a run, with a `priority` if it should jump the queue, then follow it: `pending` → `running` → `succeeded`, `failed` or `canceled`.\n- **Read its log** with `GetRunLog`, from any byte offset, while it runs and after.\n- **Hosts** run job-runner, which registers, sends heartbeats and claims runs through the *Host protocol* calls. You don't call those.\n\n**Auth:** `Authorization: Bearer <token>` with the submitters' token, on everything but `GetHealth`.\n\n**Errors:** `{code, message}`, where `code` is an AWS-style exception name such as `ValidationException` or `ResourceNotFoundException`."
+    "description": "Runs jobs on a fleet of hosts. A **job** is a named script in a repo's `jobs.toml`; a **run** is one execution of it at a commit.\n\n- **Submit** a run, with a `priority` if it should jump the queue, then follow it: `pending` → `assigned` → `running` → `succeeded`, `failed` or `canceled`.\n- **Read its log** with `GetRunLog`, from any byte offset, while it runs and after.\n- **Hosts** run job-runner, which registers, sends heartbeats and claims runs through the *Host protocol* calls. You don't call those.\n\n**Auth:** `Authorization: Bearer <token>` with the submitters' token, on everything but `GetHealth`.\n\n**Errors:** `{code, message}`, where `code` is an AWS-style exception name such as `ValidationException` or `ResourceNotFoundException`."
   },
   "tags": [
     {
@@ -121,12 +121,13 @@
             "type": "string",
             "enum": [
               "pending",
+              "assigned",
               "running",
               "succeeded",
               "failed",
               "canceled"
             ],
-            "description": "`pending` → `running` → `succeeded`, `failed` or `canceled`.",
+            "description": "`pending` → `assigned` → `running` → `succeeded`, `failed` or `canceled`. An assignment not taken goes back to `pending`.",
             "example": "pending"
           },
           "reason": {
@@ -142,7 +143,12 @@
             "type": "string",
             "nullable": true,
             "format": "uuid",
-            "description": "Host that claimed it."
+            "description": "Host it is assigned to or ran on."
+          },
+          "assignedAt": {
+            "type": "string",
+            "nullable": true,
+            "description": "Placed on `host` at (ISO 8601), while `assigned`."
           },
           "exit": {
             "type": "integer",
@@ -195,6 +201,7 @@
           "reason",
           "cancelRequested",
           "host",
+          "assignedAt",
           "exit",
           "duration",
           "logSize",
@@ -901,16 +908,17 @@
               "type": "string",
               "enum": [
                 "pending",
+                "assigned",
                 "running",
                 "succeeded",
                 "failed",
                 "canceled"
               ],
-              "description": "`pending` → `running` → `succeeded`, `failed` or `canceled`.",
+              "description": "`pending` → `assigned` → `running` → `succeeded`, `failed` or `canceled`. An assignment not taken goes back to `pending`.",
               "example": "pending"
             },
             "required": false,
-            "description": "`pending` → `running` → `succeeded`, `failed` or `canceled`.",
+            "description": "`pending` → `assigned` → `running` → `succeeded`, `failed` or `canceled`. An assignment not taken goes back to `pending`.",
             "name": "state",
             "in": "query"
           },
@@ -1237,6 +1245,7 @@
                   "type": "string",
                   "enum": [
                     "pending",
+                    "assigned",
                     "running",
                     "succeeded",
                     "failed",
@@ -1452,7 +1461,7 @@
         ],
         "operationId": "CancelRun",
         "summary": "Cancel a run",
-        "description": "Ends a pending run now. A running one is stopped by its host within seconds.",
+        "description": "Ends a run not yet started (pending or assigned) now. A running one is stopped by its host within seconds.",
         "parameters": [
           {
             "schema": {

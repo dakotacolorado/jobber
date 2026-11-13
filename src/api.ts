@@ -35,14 +35,14 @@ import type { Store, StoredHost } from "./store.ts";
 export const SPEC_PATH = "/openapi.json";
 
 /** The API's version, dated as AWS dates theirs: changed only when the contract is. */
-export const API_VERSION = "2026-11-12";
+export const API_VERSION = "2026-11-13";
 
 /** The API's overview, at the top of its reference. Markdown. */
-export const OVERVIEW = `Runs jobs on a fleet of hosts. A **job** is a named script in a repo's \`jobs.toml\`; a **run** is one execution of it at a commit.
+export const OVERVIEW = `Submit code to run on whatever computers you have. A **job** is a named script in a repo's \`jobs.toml\`; a **run** is one execution of it at a commit.
 
-- **Submit** a run, with a \`priority\` if it should jump the queue, then follow it: \`pending\` → \`assigned\` → \`running\` → \`succeeded\`, \`failed\` or \`canceled\`.
+- **Submit** a run, with a \`priority\` if it should jump the queue, see where it waits with \`ListQueue\`, then follow it: \`pending\` → \`assigned\` → \`running\` → \`succeeded\`, \`failed\` or \`canceled\`.
 - **Read its log** with \`GetRunLog\`, from any byte offset, while it runs and after.
-- **Hosts** run job-runner, which registers, holds a connection over which it is sent its runs, and reports their logs and ends through the *Host protocol* calls. You don't call those.
+- **Hosts** are the computers that run jobber-host, which registers, holds a connection over which it is sent its runs, and reports their logs and ends through the *Host protocol* calls. You don't call those.
 
 **Auth:** \`Authorization: Bearer <token>\` with the submitters' token, on everything but \`GetHealth\`.
 
@@ -161,6 +161,8 @@ export class JobApi {
       const labels = (label === undefined ? [] : [label].flat()).map(parseLabel);
       return c.json({ runs: this.store.runs({ state, repo, labels, limit }) }, 200);
     });
+
+    app.openapi(routes.queueRoute, (c) => c.json({ runs: this.store.pending().slice(0, c.req.valid("query").limit) }, 200));
 
     app.openapi(routes.getRoute, (c) => c.json(this.found(c.req.valid("param").id), 200));
 
@@ -358,7 +360,7 @@ export class JobApi {
       tags: [
         { name: "Runs", description: "Submit, follow and cancel runs." },
         { name: "Hosts", description: "See the fleet." },
-        { name: "Host protocol", description: "Called by job-runner on each host, not by you." },
+        { name: "Host protocol", description: "Called by jobber-host on each computer, not by you." },
         { name: "Platform", description: "Health." },
       ],
     });

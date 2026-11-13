@@ -1,9 +1,9 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "version": "2026-11-12",
+    "version": "2026-11-13",
     "title": "jobber",
-    "description": "Runs jobs on a fleet of hosts. A **job** is a named script in a repo's `jobs.toml`; a **run** is one execution of it at a commit.\n\n- **Submit** a run, with a `priority` if it should jump the queue, then follow it: `pending` → `assigned` → `running` → `succeeded`, `failed` or `canceled`.\n- **Read its log** with `GetRunLog`, from any byte offset, while it runs and after.\n- **Hosts** run job-runner, which registers, holds a connection over which it is sent its runs, and reports their logs and ends through the *Host protocol* calls. You don't call those.\n\n**Auth:** `Authorization: Bearer <token>` with the submitters' token, on everything but `GetHealth`.\n\n**Errors:** `{code, message}`, where `code` is an AWS-style exception name such as `ValidationException` or `ResourceNotFoundException`."
+    "description": "Submit code to run on whatever computers you have. A **job** is a named script in a repo's `jobs.toml`; a **run** is one execution of it at a commit.\n\n- **Submit** a run, with a `priority` if it should jump the queue, see where it waits with `ListQueue`, then follow it: `pending` → `assigned` → `running` → `succeeded`, `failed` or `canceled`.\n- **Read its log** with `GetRunLog`, from any byte offset, while it runs and after.\n- **Hosts** are the computers that run jobber-host, which registers, holds a connection over which it is sent its runs, and reports their logs and ends through the *Host protocol* calls. You don't call those.\n\n**Auth:** `Authorization: Bearer <token>` with the submitters' token, on everything but `GetHealth`.\n\n**Errors:** `{code, message}`, where `code` is an AWS-style exception name such as `ValidationException` or `ResourceNotFoundException`."
   },
   "tags": [
     {
@@ -16,7 +16,7 @@
     },
     {
       "name": "Host protocol",
-      "description": "Called by job-runner on each host, not by you."
+      "description": "Called by jobber-host on each computer, not by you."
     },
     {
       "name": "Platform",
@@ -195,7 +195,7 @@
           "startedAt": {
             "type": "string",
             "nullable": true,
-            "description": "Claimed at (ISO 8601)."
+            "description": "Started on its host at (ISO 8601)."
           },
           "endedAt": {
             "type": "string",
@@ -485,6 +485,21 @@
           "runs"
         ]
       },
+      "ListQueueResponse": {
+        "type": "object",
+        "properties": {
+          "runs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Run"
+            },
+            "description": "Pending runs, next first."
+          }
+        },
+        "required": [
+          "runs"
+        ]
+      },
       "UpdateRunPriorityInput": {
         "type": "object",
         "properties": {
@@ -563,7 +578,7 @@
           "version": {
             "type": "string",
             "nullable": true,
-            "description": "job-runner version, as it last registered."
+            "description": "jobber-host version, as it last registered."
           },
           "free": {
             "$ref": "#/components/schemas/Free"
@@ -732,7 +747,7 @@
             "nullable": true,
             "maxLength": 100,
             "default": null,
-            "description": "job-runner version."
+            "description": "jobber-host version."
           }
         },
         "required": [
@@ -1072,6 +1087,78 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ListRunsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "ValidationException: The request failed validation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "UnauthorizedException: The bearer token is missing or is not the submitters'.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "ServiceUnavailableException: The service has no submitters' token configured.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/queue": {
+      "get": {
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "Runs"
+        ],
+        "operationId": "ListQueue",
+        "summary": "List the queue",
+        "description": "The `pending` runs in the order the scheduler places them: highest `priority` first, then oldest. The first is next to go to a host that fits it; one no host fits is passed over, not waited for, and one waiting out a retry's backoff is listed with its `retryAt`. Move a run with `UpdateRunPriority`.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500,
+              "default": 100,
+              "description": "Max results. Default: 100."
+            },
+            "required": false,
+            "description": "Max results. Default: 100.",
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The queue.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListQueueResponse"
                 }
               }
             }

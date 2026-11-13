@@ -1,12 +1,12 @@
 # jobber API reference
 
-API version 2026-11-12
+API version 2026-11-13
 
-Runs jobs on a fleet of hosts. A **job** is a named script in a repo's `jobs.toml`; a **run** is one execution of it at a commit.
+Submit code to run on whatever computers you have. A **job** is a named script in a repo's `jobs.toml`; a **run** is one execution of it at a commit.
 
-- **Submit** a run, with a `priority` if it should jump the queue, then follow it: `pending` → `assigned` → `running` → `succeeded`, `failed` or `canceled`.
+- **Submit** a run, with a `priority` if it should jump the queue, see where it waits with `ListQueue`, then follow it: `pending` → `assigned` → `running` → `succeeded`, `failed` or `canceled`.
 - **Read its log** with `GetRunLog`, from any byte offset, while it runs and after.
-- **Hosts** run job-runner, which registers, holds a connection over which it is sent its runs, and reports their logs and ends through the *Host protocol* calls. You don't call those.
+- **Hosts** are the computers that run jobber-host, which registers, holds a connection over which it is sent its runs, and reports their logs and ends through the *Host protocol* calls. You don't call those.
 
 **Auth:** `Authorization: Bearer <token>` with the submitters' token, on everything but `GetHealth`.
 
@@ -22,6 +22,7 @@ Runs jobs on a fleet of hosts. A **job** is a named script in a repo's `jobs.tom
 - [GetRun](#getrun): Get a run
 - [GetRunLog](#getrunlog): Get a run's log
 - [ListHosts](#listhosts): List hosts
+- [ListQueue](#listqueue): List the queue
 - [ListRuns](#listruns): List runs
 - [RegisterHost](#registerhost): Register a host
 - [SendHeartbeat](#sendheartbeat): Send a heartbeat
@@ -292,7 +293,7 @@ Last changed at (ISO 8601).
 Type: String.
 
 **startedAt**  
-Claimed at (ISO 8601).  
+Started on its host at (ISO 8601).  
 Type: String. Nullable: Yes.
 
 **endedAt**  
@@ -521,7 +522,7 @@ Last changed at (ISO 8601).
 Type: String.
 
 **startedAt**  
-Claimed at (ISO 8601).  
+Started on its host at (ISO 8601).  
 Type: String. Nullable: Yes.
 
 **endedAt**  
@@ -806,7 +807,7 @@ Last changed at (ISO 8601).
 Type: String.
 
 **startedAt**  
-Claimed at (ISO 8601).  
+Started on its host at (ISO 8601).  
 Type: String. Nullable: Yes.
 
 **endedAt**  
@@ -990,6 +991,101 @@ HTTP status: 503
 
 ---
 
+## ListQueue
+
+The `pending` runs in the order the scheduler places them: highest `priority` first, then oldest. The first is next to go to a host that fits it; one no host fits is passed over, not waited for, and one waiting out a retry's backoff is listed with its `retryAt`. Move a run with `UpdateRunPriority`.
+
+### Request syntax
+
+```http
+GET /queue?limit=limit HTTP/1.1
+Authorization: Bearer token
+```
+
+### Query parameters
+
+**limit**  
+Max results. Default: 100.  
+Type: Integer. Range: 1 to 500. Required: No.
+
+### Response syntax
+
+```http
+HTTP/1.1 200
+Content-type: application/json
+
+{
+   "runs": [ {
+      "id": "string",
+      "repo": "string",
+      "commit": "string",
+      "job": "string",
+      "args": [ "string" ],
+      "requirements": {
+         "os": "linux | macos | windows | ",
+         "arch": "x86_64 | aarch64 | ",
+         "cpu": number,
+         "memory": number,
+         "timeout": number
+      },
+      "labels": { },
+      "priority": number,
+      "retry": {
+         "limit": number,
+         "backoff": number
+      },
+      "state": "pending | assigned | running | succeeded | failed | canceled",
+      "reason": "string",
+      "cancelRequested": boolean,
+      "attempt": number,
+      "attempts": [ {
+         "attempt": number,
+         "host": "string",
+         "state": "succeeded | failed | canceled",
+         "exit": number,
+         "reason": "string",
+         "duration": number,
+         "logSize": number,
+         "startedAt": "string",
+         "endedAt": "string"
+      } ],
+      "retryAt": "string",
+      "host": "string",
+      "assignedAt": "string",
+      "exit": number,
+      "duration": number,
+      "logSize": number,
+      "createdAt": "string",
+      "updatedAt": "string",
+      "startedAt": "string",
+      "endedAt": "string",
+      "leaseExpiresAt": "string"
+   } ]
+}
+```
+
+### Response elements
+
+**runs**  
+Pending runs, next first.  
+Type: Array of [Run](#run) objects.
+
+### Errors
+
+**ValidationException**  
+The request failed validation.  
+HTTP status: 400
+
+**UnauthorizedException**  
+The bearer token is missing or is not the submitters'.  
+HTTP status: 401
+
+**ServiceUnavailableException**  
+The service has no submitters' token configured.  
+HTTP status: 503
+
+---
+
 ## ListRuns
 
 List runs.
@@ -1144,7 +1240,7 @@ Free-form key-value labels.
 Type: Object. Required: No.
 
 **version**  
-job-runner version.  
+jobber-host version.  
 Type: String. Length: 0 to 100. Nullable: Yes. Required: No.
 
 ### Response syntax
@@ -1511,7 +1607,7 @@ Last changed at (ISO 8601).
 Type: String.
 
 **startedAt**  
-Claimed at (ISO 8601).  
+Started on its host at (ISO 8601).  
 Type: String. Nullable: Yes.
 
 **endedAt**  
@@ -1711,7 +1807,7 @@ Last changed at (ISO 8601).
 Type: String.
 
 **startedAt**  
-Claimed at (ISO 8601).  
+Started on its host at (ISO 8601).  
 Type: String. Nullable: Yes.
 
 **endedAt**  
@@ -1879,7 +1975,7 @@ Free-form key-value labels.
 Type: Object. Required: Yes.
 
 **version**  
-job-runner version, as it last registered.  
+jobber-host version, as it last registered.  
 Type: String. Nullable: Yes. Required: Yes.
 
 **free**  
@@ -2067,7 +2163,7 @@ Last changed at (ISO 8601).
 Type: String. Required: Yes.
 
 **startedAt**  
-Claimed at (ISO 8601).  
+Started on its host at (ISO 8601).  
 Type: String. Nullable: Yes. Required: Yes.
 
 **endedAt**  

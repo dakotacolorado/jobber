@@ -116,7 +116,7 @@ export const RunSchema = z
     logSize: z.int().describe("Log size in bytes."),
     createdAt: z.string().describe("Submitted at (ISO 8601)."),
     updatedAt: z.string().describe("Last changed at (ISO 8601)."),
-    startedAt: z.string().nullable().describe("Claimed at (ISO 8601)."),
+    startedAt: z.string().nullable().describe("Started on its host at (ISO 8601)."),
     endedAt: z.string().nullable().describe("Ended at (ISO 8601)."),
     leaseExpiresAt: z.string().nullable().describe("Fails at this time unless its host's heartbeat renews it."),
   })
@@ -218,6 +218,26 @@ export const listRoute = createRoute({
   request: { query: ListQuery },
   responses: {
     200: json(z.object({ runs: z.array(RunSchema).describe("Runs, newest first.") }).openapi("ListRunsResponse"), "The runs."),
+    ...FAILS,
+  },
+});
+
+/** `ListQueue`'s query, which `list_queue` takes too. */
+export const QueueQuery = z.object({
+  limit: z.coerce.number().int().min(1).max(500).default(100).describe("Max results. Default: 100."),
+});
+
+export const queueRoute = createRoute({
+  ...secured,
+  method: "get",
+  path: "/queue",
+  operationId: "ListQueue",
+  summary: "List the queue",
+  description:
+    "The `pending` runs in the order the scheduler places them: highest `priority` first, then oldest. The first is next to go to a host that fits it; one no host fits is passed over, not waited for, and one waiting out a retry's backoff is listed with its `retryAt`. Move a run with `UpdateRunPriority`.",
+  request: { query: QueueQuery },
+  responses: {
+    200: json(z.object({ runs: z.array(RunSchema).describe("Pending runs, next first.") }).openapi("ListQueueResponse"), "The queue."),
     ...FAILS,
   },
 });
@@ -325,7 +345,7 @@ export const HostSchema = z
     arch: Arch,
     capacity: CapacitySchema,
     labels: Labels,
-    version: z.string().nullable().describe("job-runner version, as it last registered."),
+    version: z.string().nullable().describe("jobber-host version, as it last registered."),
     free: FreeSchema.nullable().describe("Free capacity, as last reported."),
     metrics: MetricsSchema.nullable().describe("Health, as last reported."),
     createdAt: z.string().describe("First registered at (ISO 8601)."),
@@ -341,7 +361,7 @@ export const RegisterSchema = z
     arch: Arch,
     capacity: CapacitySchema,
     labels: Labels.default({}),
-    version: z.string().max(100).nullable().default(null).describe("job-runner version."),
+    version: z.string().max(100).nullable().default(null).describe("jobber-host version."),
   })
   .openapi("RegisterHostInput");
 

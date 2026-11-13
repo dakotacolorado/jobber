@@ -63,7 +63,7 @@ capacity and health.
   takes it and it is `running`. It ends `succeeded`, `failed` or `canceled`,
   with its exit code. An assignment not taken in 30 s goes back to the queue.
 - Hosts and runs fit as in Kubernetes. A host offers its **capacity**: what
-  its runner measured of the machine (CPUs, memory) less what its config
+  jobber-host measured of the machine (CPUs, memory) less what its config
   keeps back for everything else there, registered each time it starts. A run
   **requests** `cpu` (a decimal number of CPUs, 0.5 when none is given) and
   `memory` (MiB, 1024 when none is given), and fits a host whose os and arch
@@ -94,6 +94,7 @@ capacity and health.
 | Operation | |
 |---|---|
 | `SubmitRun`, `ListRuns` | `POST`, `GET /runs` |
+| `ListQueue` | `GET /queue`: pending runs, next first |
 | `GetRun`, `CompleteRun` | `GET`, `PUT /runs/{id}` |
 | `GetRunLog`, `AppendRunLog` | `GET`, `PATCH /runs/{id}/log` |
 | `CancelRun` | `POST /runs/{id}/cancel` |
@@ -120,7 +121,7 @@ curl -s -H "authorization: Bearer $AUTH_TOKEN" "$JOBBER/runs?state=running"
 
 ## MCP
 
-`/mcp` serves the submitters' operations as tools (`submit_run`, `list_runs`,
+`/mcp` serves the submitters' operations as tools (`submit_run`, `list_runs`, `list_queue`,
 `get_run`, `get_run_log`, `cancel_run`, `update_run_priority`, `list_hosts`),
 each one API request under `AUTH_TOKEN`. With Claude Code:
 

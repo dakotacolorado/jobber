@@ -37,7 +37,7 @@ export const API_VERSION = "2026-11-12";
 /** The API's overview, at the top of its reference. Markdown. */
 export const OVERVIEW = `Runs jobs on a fleet of hosts. A **job** is a named script in a repo's \`jobs.toml\`; a **run** is one execution of it at a commit.
 
-- **Submit** a run, with a \`priority\` if it should jump the queue, then follow it: \`pending\` → \`running\` → \`succeeded\`, \`failed\` or \`canceled\`.
+- **Submit** a run, with a \`priority\` if it should jump the queue, then follow it: \`pending\` → \`assigned\` → \`running\` → \`succeeded\`, \`failed\` or \`canceled\`.
 - **Read its log** with \`GetRunLog\`, from any byte offset, while it runs and after.
 - **Hosts** run job-runner, which registers, sends heartbeats and claims runs through the *Host protocol* calls. You don't call those.
 
@@ -167,7 +167,7 @@ export class JobApi {
       const run = this.found(c.req.valid("param").id);
       const next = canceled(run);
       // A running run that ends meanwhile is answered as it ended.
-      if (run.state === "pending") this.store.update(next, run.updatedAt);
+      if (run.state === "pending" || run.state === "assigned") this.store.update(next, run.updatedAt);
       else this.store.requestCancel(run.id, next.updatedAt);
       return c.json(this.found(run.id), 200);
     });

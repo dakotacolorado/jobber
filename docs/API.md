@@ -4,7 +4,7 @@ API version 2026-11-12
 
 Runs jobs on a fleet of hosts. A **job** is a named script in a repo's `jobs.toml`; a **run** is one execution of it at a commit.
 
-- **Submit** a run, with a `priority` if it should jump the queue, then follow it: `pending` → `running` → `succeeded`, `failed` or `canceled`.
+- **Submit** a run, with a `priority` if it should jump the queue, then follow it: `pending` → `assigned` → `running` → `succeeded`, `failed` or `canceled`.
 - **Read its log** with `GetRunLog`, from any byte offset, while it runs and after.
 - **Hosts** run job-runner, which registers, sends heartbeats and claims runs through the *Host protocol* calls. You don't call those.
 
@@ -123,7 +123,7 @@ HTTP status: 416
 
 ## CancelRun
 
-Ends a pending run now. A running one is stopped by its host within seconds.
+Ends a run not yet started (pending or assigned) now. A running one is stopped by its host within seconds.
 
 ### Request syntax
 
@@ -158,10 +158,11 @@ Content-type: application/json
    },
    "labels": { },
    "priority": number,
-   "state": "pending | running | succeeded | failed | canceled",
+   "state": "pending | assigned | running | succeeded | failed | canceled",
    "reason": "string",
    "cancelRequested": boolean,
    "host": "string",
+   "assignedAt": "string",
    "exit": number,
    "duration": number,
    "logSize": number,
@@ -208,8 +209,8 @@ Higher is placed first; equal ones oldest first. -1000 to 1000.
 Type: Integer. Range: -1000 to 1000.
 
 **state**  
-`pending` → `running` → `succeeded`, `failed` or `canceled`.  
-Type: String. Valid values: `pending` | `running` | `succeeded` | `failed` | `canceled`.
+`pending` → `assigned` → `running` → `succeeded`, `failed` or `canceled`. An assignment not taken goes back to `pending`.  
+Type: String. Valid values: `pending` | `assigned` | `running` | `succeeded` | `failed` | `canceled`.
 
 **reason**  
 Why it ended, when not plain (e.g. timed out).  
@@ -220,7 +221,11 @@ Cancel asked for; its host will stop it.
 Type: Boolean.
 
 **host**  
-Host that claimed it.  
+Host it is assigned to or ran on.  
+Type: String. Nullable: Yes.
+
+**assignedAt**  
+Placed on `host` at (ISO 8601), while `assigned`.  
 Type: String. Nullable: Yes.
 
 **exit**  
@@ -331,10 +336,11 @@ Content-type: application/json
       },
       "labels": { },
       "priority": number,
-      "state": "pending | running | succeeded | failed | canceled",
+      "state": "pending | assigned | running | succeeded | failed | canceled",
       "reason": "string",
       "cancelRequested": boolean,
       "host": "string",
+      "assignedAt": "string",
       "exit": number,
       "duration": number,
       "logSize": number,
@@ -442,10 +448,11 @@ Content-type: application/json
    },
    "labels": { },
    "priority": number,
-   "state": "pending | running | succeeded | failed | canceled",
+   "state": "pending | assigned | running | succeeded | failed | canceled",
    "reason": "string",
    "cancelRequested": boolean,
    "host": "string",
+   "assignedAt": "string",
    "exit": number,
    "duration": number,
    "logSize": number,
@@ -492,8 +499,8 @@ Higher is placed first; equal ones oldest first. -1000 to 1000.
 Type: Integer. Range: -1000 to 1000.
 
 **state**  
-`pending` → `running` → `succeeded`, `failed` or `canceled`.  
-Type: String. Valid values: `pending` | `running` | `succeeded` | `failed` | `canceled`.
+`pending` → `assigned` → `running` → `succeeded`, `failed` or `canceled`. An assignment not taken goes back to `pending`.  
+Type: String. Valid values: `pending` | `assigned` | `running` | `succeeded` | `failed` | `canceled`.
 
 **reason**  
 Why it ended, when not plain (e.g. timed out).  
@@ -504,7 +511,11 @@ Cancel asked for; its host will stop it.
 Type: Boolean.
 
 **host**  
-Host that claimed it.  
+Host it is assigned to or ran on.  
+Type: String. Nullable: Yes.
+
+**assignedAt**  
+Placed on `host` at (ISO 8601), while `assigned`.  
 Type: String. Nullable: Yes.
 
 **exit**  
@@ -639,10 +650,11 @@ Content-type: application/json
    },
    "labels": { },
    "priority": number,
-   "state": "pending | running | succeeded | failed | canceled",
+   "state": "pending | assigned | running | succeeded | failed | canceled",
    "reason": "string",
    "cancelRequested": boolean,
    "host": "string",
+   "assignedAt": "string",
    "exit": number,
    "duration": number,
    "logSize": number,
@@ -689,8 +701,8 @@ Higher is placed first; equal ones oldest first. -1000 to 1000.
 Type: Integer. Range: -1000 to 1000.
 
 **state**  
-`pending` → `running` → `succeeded`, `failed` or `canceled`.  
-Type: String. Valid values: `pending` | `running` | `succeeded` | `failed` | `canceled`.
+`pending` → `assigned` → `running` → `succeeded`, `failed` or `canceled`. An assignment not taken goes back to `pending`.  
+Type: String. Valid values: `pending` | `assigned` | `running` | `succeeded` | `failed` | `canceled`.
 
 **reason**  
 Why it ended, when not plain (e.g. timed out).  
@@ -701,7 +713,11 @@ Cancel asked for; its host will stop it.
 Type: Boolean.
 
 **host**  
-Host that claimed it.  
+Host it is assigned to or ran on.  
+Type: String. Nullable: Yes.
+
+**assignedAt**  
+Placed on `host` at (ISO 8601), while `assigned`.  
 Type: String. Nullable: Yes.
 
 **exit**  
@@ -803,7 +819,7 @@ Type: String.
 
 **run-state**  
 The run's state: stop polling once it has ended.  
-Type: String. Valid values: `pending` | `running` | `succeeded` | `failed` | `canceled`.
+Type: String. Valid values: `pending` | `assigned` | `running` | `succeeded` | `failed` | `canceled`.
 
 ### Errors
 
@@ -908,8 +924,8 @@ Authorization: Bearer token
 ### Query parameters
 
 **state**  
-`pending` → `running` → `succeeded`, `failed` or `canceled`.  
-Type: String. Valid values: `pending` | `running` | `succeeded` | `failed` | `canceled`. Required: No.
+`pending` → `assigned` → `running` → `succeeded`, `failed` or `canceled`. An assignment not taken goes back to `pending`.  
+Type: String. Valid values: `pending` | `assigned` | `running` | `succeeded` | `failed` | `canceled`. Required: No.
 
 **repo**  
 GitHub repo, `owner/name`.  
@@ -944,10 +960,11 @@ Content-type: application/json
       },
       "labels": { },
       "priority": number,
-      "state": "pending | running | succeeded | failed | canceled",
+      "state": "pending | assigned | running | succeeded | failed | canceled",
       "reason": "string",
       "cancelRequested": boolean,
       "host": "string",
+      "assignedAt": "string",
       "exit": number,
       "duration": number,
       "logSize": number,
@@ -1259,10 +1276,11 @@ Content-type: application/json
    },
    "labels": { },
    "priority": number,
-   "state": "pending | running | succeeded | failed | canceled",
+   "state": "pending | assigned | running | succeeded | failed | canceled",
    "reason": "string",
    "cancelRequested": boolean,
    "host": "string",
+   "assignedAt": "string",
    "exit": number,
    "duration": number,
    "logSize": number,
@@ -1309,8 +1327,8 @@ Higher is placed first; equal ones oldest first. -1000 to 1000.
 Type: Integer. Range: -1000 to 1000.
 
 **state**  
-`pending` → `running` → `succeeded`, `failed` or `canceled`.  
-Type: String. Valid values: `pending` | `running` | `succeeded` | `failed` | `canceled`.
+`pending` → `assigned` → `running` → `succeeded`, `failed` or `canceled`. An assignment not taken goes back to `pending`.  
+Type: String. Valid values: `pending` | `assigned` | `running` | `succeeded` | `failed` | `canceled`.
 
 **reason**  
 Why it ended, when not plain (e.g. timed out).  
@@ -1321,7 +1339,11 @@ Cancel asked for; its host will stop it.
 Type: Boolean.
 
 **host**  
-Host that claimed it.  
+Host it is assigned to or ran on.  
+Type: String. Nullable: Yes.
+
+**assignedAt**  
+Placed on `host` at (ISO 8601), while `assigned`.  
 Type: String. Nullable: Yes.
 
 **exit**  
@@ -1420,10 +1442,11 @@ Content-type: application/json
    },
    "labels": { },
    "priority": number,
-   "state": "pending | running | succeeded | failed | canceled",
+   "state": "pending | assigned | running | succeeded | failed | canceled",
    "reason": "string",
    "cancelRequested": boolean,
    "host": "string",
+   "assignedAt": "string",
    "exit": number,
    "duration": number,
    "logSize": number,
@@ -1470,8 +1493,8 @@ Higher is placed first; equal ones oldest first. -1000 to 1000.
 Type: Integer. Range: -1000 to 1000.
 
 **state**  
-`pending` → `running` → `succeeded`, `failed` or `canceled`.  
-Type: String. Valid values: `pending` | `running` | `succeeded` | `failed` | `canceled`.
+`pending` → `assigned` → `running` → `succeeded`, `failed` or `canceled`. An assignment not taken goes back to `pending`.  
+Type: String. Valid values: `pending` | `assigned` | `running` | `succeeded` | `failed` | `canceled`.
 
 **reason**  
 Why it ended, when not plain (e.g. timed out).  
@@ -1482,7 +1505,11 @@ Cancel asked for; its host will stop it.
 Type: Boolean.
 
 **host**  
-Host that claimed it.  
+Host it is assigned to or ran on.  
+Type: String. Nullable: Yes.
+
+**assignedAt**  
+Placed on `host` at (ISO 8601), while `assigned`.  
 Type: String. Nullable: Yes.
 
 **exit**  
@@ -1728,8 +1755,8 @@ Higher is placed first; equal ones oldest first. -1000 to 1000.
 Type: Integer. Range: -1000 to 1000. Required: Yes.
 
 **state**  
-`pending` → `running` → `succeeded`, `failed` or `canceled`.  
-Type: String. Valid values: `pending` | `running` | `succeeded` | `failed` | `canceled`. Required: Yes.
+`pending` → `assigned` → `running` → `succeeded`, `failed` or `canceled`. An assignment not taken goes back to `pending`.  
+Type: String. Valid values: `pending` | `assigned` | `running` | `succeeded` | `failed` | `canceled`. Required: Yes.
 
 **reason**  
 Why it ended, when not plain (e.g. timed out).  
@@ -1740,7 +1767,11 @@ Cancel asked for; its host will stop it.
 Type: Boolean. Required: Yes.
 
 **host**  
-Host that claimed it.  
+Host it is assigned to or ran on.  
+Type: String. Nullable: Yes. Required: Yes.
+
+**assignedAt**  
+Placed on `host` at (ISO 8601), while `assigned`.  
 Type: String. Nullable: Yes. Required: Yes.
 
 **exit**  

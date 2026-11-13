@@ -24,11 +24,11 @@ What the server tells an agent when it connects:
 
 > job-service runs jobs on a fleet of hosts: a job is a named script in a repo's jobs.toml, a run one execution of it at one commit, claimed by a host that meets its requirements (os, arch, memory).
 >
-> - A run is submitted pending, claimed and running, and ends succeeded, failed or canceled with its exit code.
+> - A run is submitted pending, assigned to a host by the scheduler, running there, and ends succeeded, failed or canceled with its exit code.
 > - A run's log is read from a byte offset: get_run_log answers the bytes from offset, the log's size, and the run's state, so call it again from offset + the bytes read until the state has ended.
 > - Label runs to find them again (e.g. {"item": "28af81bc", "by": "agent-7"}); list_runs filters by label as key=value.
 > - Pending runs are taken highest priority first, then oldest; give priority when submitting, or move a run with update_run_priority.
-> - cancel_run ends a pending run at once; a running one is stopped by its host shortly after.
+> - cancel_run ends a pending or assigned run at once; a running one is stopped by its host shortly after.
 > - Every tool takes the submitters' token this server was connected with. The host protocol (register, heartbeat, claim, append, complete) is job-runner's, not tools.
 
 ## Tools
@@ -67,7 +67,7 @@ Returns runs matching every filter given, newest first.
 
 | Input | Type | Required | |
 | --- | --- | --- | --- |
-| `state` | `pending`, `running`, `succeeded`, `failed`, `canceled` |  | `pending` → `running` → `succeeded`, `failed` or `canceled`. |
+| `state` | `pending`, `assigned`, `running`, `succeeded`, `failed`, `canceled` |  | `pending` → `assigned` → `running` → `succeeded`, `failed` or `canceled`. An assignment not taken goes back to `pending`. |
 | `repo` | string |  | GitHub repo, `owner/name`. |
 | `label` | string or string[] |  | Only runs with this label, as `key=value`. Repeat to require several. |
 | `limit` | integer |  | Max results. Default: 100. |
@@ -91,7 +91,7 @@ Returns the log from byte `offset`, at most 1 MiB, with the log's size so far an
 
 ### cancel_run
 
-Ends a pending run now. A running one is stopped by its host within seconds.
+Ends a run not yet started (pending or assigned) now. A running one is stopped by its host within seconds.
 
 | Input | Type | Required | |
 | --- | --- | --- | --- |

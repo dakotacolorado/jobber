@@ -141,9 +141,14 @@ export class Store {
 
   /** Running runs, in no order. */
   running(): Run[] {
+    return this.inState("running");
+  }
+
+  /** Runs in any of `states`, in no order. */
+  inState(...states: State[]): Run[] {
     return this.db
-      .prepare("SELECT record FROM runs WHERE state = 'running'")
-      .all()
+      .prepare(`SELECT record FROM runs WHERE state IN (${states.map(() => "?").join(", ")})`)
+      .all(...states)
       .map((row) => fromRow(row)!);
   }
 
@@ -247,9 +252,10 @@ export class Store {
   }
 }
 
-/** Gives each run stored before a field was added that field's default: `priority` 0. */
+/** Gives each run stored before a field was added that field's default: `priority` 0, `assignedAt` null. */
 export function backfill(db: DatabaseSync): void {
   db.exec("UPDATE runs SET record = json_set(record, '$.priority', 0) WHERE record ->> '$.priority' IS NULL");
+  db.exec("UPDATE runs SET record = json_set(record, '$.assignedAt', json('null')) WHERE json_type(record, '$.assignedAt') IS NULL");
 }
 
 type Legacy = Record<string, unknown>;

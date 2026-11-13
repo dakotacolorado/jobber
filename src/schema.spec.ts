@@ -61,7 +61,7 @@ describe("docs/API.md and docs/index.html", () => {
   });
 
   it.each([["/docs/api", API_PAGE]])("serves %s without a token", async (path, file) => {
-    const api = new JobApi(Store.open(":memory:"), { submitter: "t", registration: null }, () => ({ key: "jobs", version: 0, commit: "x", files: [] }), {
+    const api = new JobApi(Store.open(":memory:"), { submitter: "t", registration: null }, {
       version: "0",
       commit: "x",
     });

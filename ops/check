@@ -10,13 +10,30 @@ here=$(cd "$(dirname "$0")" && pwd)
 repo=${1:-dakotacolorado/python-template}
 commit=${2:-$(git ls-remote "https://github.com/$repo.git" refs/heads/main | cut -f1)}
 job=${3:-hello}
-export JS_URL=$url JS_TOKEN
-JS_TOKEN=$(token AUTH_TOKEN)
-jobs=$here/../skill/bin/jobs
-id=$(JS_CLAIMED_BY=job-service-check sh "$jobs" submit --for worker:job-service-check "$repo" "$commit" "$job" | "$node" -p 'JSON.parse(require("fs").readFileSync(0,"utf8")).id')
-echo "check: run $id of $repo $job at $commit, on $url"
-code=0
-sh "$jobs" log "$id" -f || code=$?
-sh "$jobs" show "$id" | "$node" -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const r=JSON.parse(s);console.log(`check: run ${r.id} ${r.state}, exit ${r.exit}, ${r.logSize} bytes of log, on runner ${r.runner}`)})'
-sh "$jobs" call GET /runners | "$node" -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{for(const r of JSON.parse(s).runners)console.log(`check: runner ${r.id} ${r.name} on ${r.hostId}, version ${r.version}, last seen ${r.lastSeenAt}`)})'
-exit $code
+# The token goes to node by its environment, never on a command line.
+JS_TOKEN=$(token AUTH_TOKEN) exec "$node" --input-type=module - "$url" "$repo" "$commit" "$job" <<'JS'
+const [url, repo, commit, job] = process.argv.slice(2);
+const headers = { authorization: `Bearer ${process.env.JS_TOKEN}`, "claimed-by": "job-service-check" };
+const call = async (method, path, body, extra = {}) => {
+  const res = await fetch(url + path, { method, headers: { ...headers, ...extra, ...(body && { "content-type": "application/json" }) }, body: body && JSON.stringify(body) });
+  if (!res.ok && res.status !== 206) throw new Error(`${method} ${path}: ${res.status} ${await res.text()}`);
+  return res;
+};
+const run = await (await call("POST", "/runs", { repo, commit, job, for: { kind: "worker", id: "job-service-check" } })).json();
+console.log(`check: run ${run.id} of ${repo} ${job} at ${commit}, on ${url}`);
+const ended = ["succeeded", "failed", "canceled"];
+let offset = 0;
+for (;;) {
+  const res = await call("GET", `/runs/${run.id}/log`, undefined, { range: `bytes=${offset}-` });
+  const bytes = new Uint8Array(await res.arrayBuffer());
+  process.stdout.write(bytes);
+  offset += bytes.length;
+  const size = Number(res.headers.get("content-range")?.split("/")[1] ?? offset);
+  if (ended.includes(res.headers.get("run-state")) && offset >= size) break;
+  if (!bytes.length) await new Promise((ok) => setTimeout(ok, 1000));
+}
+const end = await (await call("GET", `/runs/${run.id}`)).json();
+console.log(`check: run ${end.id} ${end.state}, exit ${end.exit}, ${end.logSize} bytes of log, on runner ${end.runner}`);
+for (const r of (await (await call("GET", "/runners")).json()).runners) console.log(`check: runner ${r.id} ${r.name} on ${r.hostId}, version ${r.version}, last seen ${r.lastSeenAt}`);
+process.exit(end.state === "succeeded" ? 0 : (end.exit || 1));
+JS

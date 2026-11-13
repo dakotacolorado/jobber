@@ -1,6 +1,5 @@
 import { JobApi, type Tokens } from "./api.ts";
 import { buildOf, PACKAGE_VERSION } from "./build.ts";
-import { readSkill, SKILL_DIR } from "./skill.ts";
 import { Store } from "./store.ts";
 import { startTimers } from "./sweep.ts";
 
@@ -21,7 +20,7 @@ export interface Running {
 export function start(config: Config): Running {
   const store = Store.open(config.db);
   const build = buildOf();
-  const api = new JobApi(store, config.tokens, () => readSkill(SKILL_DIR, build.version, build.commit), {
+  const api = new JobApi(store, config.tokens, {
     version: PACKAGE_VERSION,
     commit: build.commit,
   });

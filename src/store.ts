@@ -57,6 +57,7 @@ export class Store {
     db.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON;");
     migrate(db);
     db.exec(SCHEMA);
+    backfill(db);
   }
 
   /** The database at `path`, made if absent; `:memory:` for one that lasts as long as the process. */
@@ -130,10 +131,10 @@ export class Store {
     );
   }
 
-  /** Pending runs, oldest first. */
+  /** Pending runs in queue order: highest priority first, then oldest (`queueOrder`). */
   pending(): Run[] {
     return this.db
-      .prepare("SELECT record FROM runs WHERE state = 'pending' ORDER BY created_at, id")
+      .prepare("SELECT record FROM runs WHERE state = 'pending' ORDER BY record ->> '$.priority' DESC, created_at, id")
       .all()
       .map((row) => fromRow(row)!);
   }
@@ -244,6 +245,11 @@ export class Store {
       throw err;
     }
   }
+}
+
+/** Gives each run stored before a field was added that field's default: `priority` 0. */
+export function backfill(db: DatabaseSync): void {
+  db.exec("UPDATE runs SET record = json_set(record, '$.priority', 0) WHERE record ->> '$.priority' IS NULL");
 }
 
 type Legacy = Record<string, unknown>;

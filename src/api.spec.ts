@@ -50,7 +50,8 @@ describe("POST /runs", () => {
       logSize: 0,
     });
     expect(await (await call("GET", `/runs/${run.id}`)).json()).toEqual(run);
-    expect(await submit()).toMatchObject({ args: [], requirements: { os: null, arch: null, memory: null, timeout: null }, labels: {} });
+    expect(await submit()).toMatchObject({ args: [], requirements: { os: null, arch: null, memory: null, timeout: null }, labels: {}, priority: 0 });
+    expect(await submit({ priority: -5 })).toMatchObject({ priority: -5 });
   });
 
   it.each([
@@ -64,6 +65,8 @@ describe("POST /runs", () => {
     ["a negative timeout", { requirements: { timeout: -1 } }],
     ["a label with a space", { labels: { "a b": "c" } }],
     ["args that are not strings", { args: [1] }],
+    ["a priority that is not whole", { priority: 1.5 }],
+    ["a priority past 1000", { priority: 1001 }],
   ])("refuses %s with 400", async (_, over) => {
     const { call } = setup();
     const res = await call("POST", "/runs", { repo: "dakotacolorado/python-template", commit: COMMIT, job: "hello", ...over });
@@ -212,5 +215,22 @@ describe("POST /runs/{id}/cancel", () => {
   it("is 404 for an unknown job", async () => {
     const { call } = setup();
     expect((await call("POST", "/runs/00000000-0000-4000-8000-000000000000/cancel")).status).toBe(404);
+  });
+});
+
+describe("POST /runs/{id}/priority", () => {
+  it("moves a run not yet ended, and refuses an ended one with 409", async () => {
+    const { submit, call } = setup();
+    const run = await submit();
+    const res = await call("POST", `/runs/${run.id}/priority`, { priority: 50 });
+    expect(res.status).toBe(200);
+    const moved = (await res.json()) as Run;
+    expect(moved).toMatchObject({ id: run.id, state: "pending", priority: 50 });
+    expect(moved.updatedAt > run.updatedAt).toBe(true);
+    expect(await (await call("GET", `/runs/${run.id}`)).json()).toEqual(moved);
+    expect((await call("POST", `/runs/${run.id}/priority`, { priority: 2000 })).status).toBe(400);
+    await call("POST", `/runs/${run.id}/cancel`);
+    expect((await call("POST", `/runs/${run.id}/priority`, { priority: 1 })).status).toBe(409);
+    expect((await call("POST", "/runs/00000000-0000-4000-8000-000000000000/priority", { priority: 1 })).status).toBe(404);
   });
 });

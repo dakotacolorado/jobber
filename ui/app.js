@@ -175,12 +175,13 @@ async function runs(params) {
               h("td", {}, state(run), run.exit !== null ? h("span", { class: "muted" }, ` exit ${run.exit}`) : ""),
               h("td", {}, repoAt(run)),
               h("td", { class: "mono" }, run.job, run.args.length ? h("span", { class: "muted" }, ` ${run.args.join(" ")}`) : ""),
+              h("td", {}, String(run.priority)),
               h("td", {}, labelLinks(run.labels)),
               h("td", {}, when(run.createdAt)),
               h("td", {}, took(run)),
             ),
           )
-        : [h("tr", {}, h("td", { colspan: 7, class: "muted" }, "No runs."))]),
+        : [h("tr", {}, h("td", { colspan: 8, class: "muted" }, "No runs."))]),
     );
   };
   draw(list);
@@ -190,7 +191,7 @@ async function runs(params) {
     h(
       "table",
       {},
-      h("thead", {}, h("tr", {}, ["Run", "State", "Repo", "Job", "Labels", "Submitted", "Took"].map((name) => h("th", {}, name)))),
+      h("thead", {}, h("tr", {}, ["Run", "State", "Repo", "Job", "Priority", "Labels", "Submitted", "Took"].map((name) => h("th", {}, name)))),
       body,
     ),
   );
@@ -206,12 +207,33 @@ async function runPage(id) {
   if (!live()) return;
   const box = errorBox();
   const head = h("div", { class: "panel" });
+  /** A run not yet ended can move up or down the queue; an ended one shows where it stood. */
+  const priorityField = () => {
+    if (ENDED.includes(run.state)) return String(run.priority);
+    const input = h("input", { type: "number", min: -1000, max: 1000, step: 1, value: run.priority, style: "width:6em" });
+    const set = h(
+      "button",
+      {
+        onclick: async () => {
+          try {
+            run = await api("POST", `/runs/${run.id}/priority`, { priority: Number(input.value) });
+            drawHead();
+          } catch (err) {
+            show(box, err);
+          }
+        },
+      },
+      "Set",
+    );
+    return h("span", { class: "row", style: "margin:0" }, input, set);
+  };
   const drawHead = () => {
     const fields = [
       ["Repo", repoAt(run)],
       ["Commit", h("span", { class: "mono" }, run.commit)],
       ["Job", h("span", { class: "mono" }, [run.job, ...run.args].join(" "))],
       ["Needs", needs(run.requirements)],
+      ["Priority", priorityField()],
       ["Labels", run.labels && Object.keys(run.labels).length ? labelLinks(run.labels) : "none"],
       ["Host", run.host ? h("a", { href: "#/hosts", class: "mono" }, short(run.host)) : "not yet claimed"],
       ["Submitted", when(run.createdAt)],
@@ -304,6 +326,7 @@ function newRun(params) {
   const arch = choose(["x86_64", "aarch64"]);
   const memory = input("memory", { type: "number", min: 16, placeholder: "jobs.toml's" });
   const timeout = input("timeout", { type: "number", min: 1, placeholder: "jobs.toml's" });
+  const priority = input("priority", { type: "number", min: -1000, max: 1000, step: 1, placeholder: "0" });
   const box = errorBox();
   main.replaceChildren(
     h(
@@ -324,6 +347,7 @@ function newRun(params) {
               job: job.value.trim(),
               args: lines(args),
               labels: Object.fromEntries(given),
+              priority: priority.value ? Number(priority.value) : 0,
               requirements: {
                 os: os.value || null,
                 arch: arch.value || null,
@@ -338,7 +362,7 @@ function newRun(params) {
         },
       },
       h("h1", {}, "Submit a run"),
-      h("p", { class: "muted" }, "Stored pending until a host that meets its requirements claims it. Nothing is checked against the repo here: a job missing from jobs.toml fails on its host, saying so in its log."),
+      h("p", { class: "muted" }, "Queued pending, by priority then age, until a host that meets its requirements takes it. Nothing is checked against the repo here: a job missing from jobs.toml fails on its host, saying so in its log."),
       h("label", {}, "Repo"), repo,
       h("label", {}, "Commit"), commit,
       h("label", {}, "Job"), job,
@@ -350,6 +374,7 @@ function newRun(params) {
         h("div", {}, h("label", {}, "Memory, MiB"), memory),
         h("div", {}, h("label", {}, "Timeout, s"), timeout)),
       h("label", {}, "Labels"), labels,
+      h("label", {}, "Priority, higher first"), priority,
       box,
       h("div", { class: "row" }, h("button", { class: "primary", type: "submit" }, "Submit")),
     ),

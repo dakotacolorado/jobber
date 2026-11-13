@@ -1,5 +1,5 @@
 import { createRoute, z } from "@hono/zod-openapi";
-import { ARCHES, COMMIT_PATTERN, JOB_NAME_PATTERN, LABEL_PATTERN, OSES, REPO_PATTERN, STATES } from "./domain.ts";
+import { ARCHES, COMMIT_PATTERN, JOB_NAME_PATTERN, LABEL_PATTERN, OSES, PRIORITY_MAX, PRIORITY_MIN, REPO_PATTERN, STATES } from "./domain.ts";
 
 /** Validates every request and generates `openapi.json`, so neither can drift. */
 
@@ -20,6 +20,13 @@ const State = z
   .openapi({ example: "pending" });
 const Os = z.enum(OSES).describe("Operating system.");
 const Arch = z.enum(ARCHES).describe("CPU architecture.");
+
+export const Priority = z
+  .int()
+  .min(PRIORITY_MIN)
+  .max(PRIORITY_MAX)
+  .describe(`Higher is placed first; equal ones oldest first. ${PRIORITY_MIN} to ${PRIORITY_MAX}.`)
+  .openapi({ example: 10 });
 
 const Label = z.string().regex(LABEL_PATTERN);
 export const Labels = z
@@ -46,6 +53,7 @@ export const SubmitSchema = z
     args: z.array(z.string().max(4000)).max(50).default([]).describe("Arguments appended to the job's command."),
     requirements: RequirementsSchema.default({ os: null, arch: null, memory: null, timeout: null }),
     labels: Labels.default({}).describe("Labels to find it by, e.g. what it is for and who asked."),
+    priority: Priority.default(0).describe(`Higher is placed first; equal ones oldest first. ${PRIORITY_MIN} to ${PRIORITY_MAX}. Default: 0.`),
   })
   .openapi("SubmitRunInput");
 
@@ -58,6 +66,7 @@ export const RunSchema = z
     args: z.array(z.string()).describe("Arguments appended to the job's command."),
     requirements: RequirementsSchema,
     labels: Labels,
+    priority: Priority,
     state: State,
     reason: z.string().nullable().describe("Why it ended, when not plain (e.g. timed out)."),
     cancelRequested: z.boolean().describe("Cancel asked for; its host will stop it."),
@@ -142,7 +151,7 @@ export const submitRoute = createRoute({
   path: "/runs",
   operationId: "SubmitRun",
   summary: "Submit a run",
-  description: "Queues a run as `pending` until a host that meets its requirements claims it. The repo isn't checked here: a missing job fails on its host.",
+  description: "Queues a run as `pending`, by `priority` then age, until a host that meets its requirements takes it. The repo isn't checked here: a missing job fails on its host.",
   request: { body: json(SubmitSchema, "What to run, what it needs, and its labels.") },
   responses: { 201: json(RunSchema, "Stored, `pending`."), ...FAILS },
 });
@@ -220,6 +229,19 @@ export const cancelRoute = createRoute({
   description: "Ends a pending run now. A running one is stopped by its host within seconds.",
   request: { params: IdParam },
   responses: { 200: json(RunSchema, "The run, canceled or marked."), 409: fails(409, "It has already ended."), ...FAILS, ...MISSING },
+});
+
+export const PrioritySchema = z.object({ priority: Priority }).openapi("UpdateRunPriorityInput");
+
+export const priorityRoute = createRoute({
+  ...secured,
+  method: "post",
+  path: "/runs/{id}/priority",
+  operationId: "UpdateRunPriority",
+  summary: "Update run priority",
+  description: "Moves a run not yet ended up or down the queue. A running one keeps its host.",
+  request: { params: IdParam, body: json(PrioritySchema, "Its new priority.") },
+  responses: { 200: json(RunSchema, "The run, at its new priority."), 409: fails(409, "It has already ended."), ...FAILS, ...MISSING },
 });
 
 // --- hosts ------------------------------------------------------------------
@@ -367,7 +389,7 @@ export const claimRoute = createRoute({
   path: "/hosts/{id}/claim",
   operationId: "ClaimRun",
   summary: "Claim a run",
-  description: "Takes the oldest pending run whose requirements this host meets and marks it `running`. 204 if none fits.",
+  description: "Takes the first queued run (highest priority, then oldest) whose requirements this host meets and marks it `running`. 204 if none fits.",
   request: { params: HostIdParam, body: json(ClaimRequestSchema, "Capacity free now.") },
   responses: { 200: json(ClaimSchema, "A run, now running here."), 204: { description: "No pending run fits." }, ...HOST_FAILS },
 });

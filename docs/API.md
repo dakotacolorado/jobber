@@ -4,7 +4,7 @@ API version 2026-11-12
 
 Runs jobs on a fleet of hosts. A **job** is a named script in a repo's `jobs.toml`; a **run** is one execution of it at a commit.
 
-- **Submit** a run, then follow it: `pending` → `running` → `succeeded`, `failed` or `canceled`.
+- **Submit** a run, with a `priority` if it should jump the queue, then follow it: `pending` → `running` → `succeeded`, `failed` or `canceled`.
 - **Read its log** with `GetRunLog`, from any byte offset, while it runs and after.
 - **Hosts** run job-runner, which registers, sends heartbeats and claims runs through the *Host protocol* calls. You don't call those.
 
@@ -26,6 +26,7 @@ Runs jobs on a fleet of hosts. A **job** is a named script in a repo's `jobs.tom
 - [RegisterHost](#registerhost): Register a host
 - [SendHeartbeat](#sendheartbeat): Send a heartbeat
 - [SubmitRun](#submitrun): Submit a run
+- [UpdateRunPriority](#updaterunpriority): Update run priority
 
 ## Data types
 
@@ -156,6 +157,7 @@ Content-type: application/json
       "timeout": number
    },
    "labels": { },
+   "priority": number,
    "state": "pending | running | succeeded | failed | canceled",
    "reason": "string",
    "cancelRequested": boolean,
@@ -200,6 +202,10 @@ Type: [Requirements](#requirements) object.
 **labels**  
 Free-form key-value labels.  
 Type: Object.
+
+**priority**  
+Higher is placed first; equal ones oldest first. -1000 to 1000.  
+Type: Integer. Range: -1000 to 1000.
 
 **state**  
 `pending` → `running` → `succeeded`, `failed` or `canceled`.  
@@ -275,7 +281,7 @@ HTTP status: 503
 
 ## ClaimRun
 
-Takes the oldest pending run whose requirements this host meets and marks it `running`. 204 if none fits.
+Takes the first queued run (highest priority, then oldest) whose requirements this host meets and marks it `running`. 204 if none fits.
 
 ### Request syntax
 
@@ -324,6 +330,7 @@ Content-type: application/json
          "timeout": number
       },
       "labels": { },
+      "priority": number,
       "state": "pending | running | succeeded | failed | canceled",
       "reason": "string",
       "cancelRequested": boolean,
@@ -434,6 +441,7 @@ Content-type: application/json
       "timeout": number
    },
    "labels": { },
+   "priority": number,
    "state": "pending | running | succeeded | failed | canceled",
    "reason": "string",
    "cancelRequested": boolean,
@@ -478,6 +486,10 @@ Type: [Requirements](#requirements) object.
 **labels**  
 Free-form key-value labels.  
 Type: Object.
+
+**priority**  
+Higher is placed first; equal ones oldest first. -1000 to 1000.  
+Type: Integer. Range: -1000 to 1000.
 
 **state**  
 `pending` → `running` → `succeeded`, `failed` or `canceled`.  
@@ -626,6 +638,7 @@ Content-type: application/json
       "timeout": number
    },
    "labels": { },
+   "priority": number,
    "state": "pending | running | succeeded | failed | canceled",
    "reason": "string",
    "cancelRequested": boolean,
@@ -670,6 +683,10 @@ Type: [Requirements](#requirements) object.
 **labels**  
 Free-form key-value labels.  
 Type: Object.
+
+**priority**  
+Higher is placed first; equal ones oldest first. -1000 to 1000.  
+Type: Integer. Range: -1000 to 1000.
 
 **state**  
 `pending` → `running` → `succeeded`, `failed` or `canceled`.  
@@ -926,6 +943,7 @@ Content-type: application/json
          "timeout": number
       },
       "labels": { },
+      "priority": number,
       "state": "pending | running | succeeded | failed | canceled",
       "reason": "string",
       "cancelRequested": boolean,
@@ -1166,7 +1184,7 @@ HTTP status: 403
 
 ## SubmitRun
 
-Queues a run as `pending` until a host that meets its requirements claims it. The repo isn't checked here: a missing job fails on its host.
+Queues a run as `pending`, by `priority` then age, until a host that meets its requirements takes it. The repo isn't checked here: a missing job fails on its host.
 
 ### Request syntax
 
@@ -1186,7 +1204,8 @@ Content-type: application/json
       "memory": number,
       "timeout": number
    },
-   "labels": { }
+   "labels": { },
+   "priority": number
 }
 ```
 
@@ -1216,6 +1235,10 @@ Type: [Requirements](#requirements) object. Required: No.
 Labels to find it by, e.g. what it is for and who asked.  
 Type: Object. Required: No.
 
+**priority**  
+Higher is placed first; equal ones oldest first. -1000 to 1000. Default: 0.  
+Type: Integer. Range: -1000 to 1000. Required: No.
+
 ### Response syntax
 
 ```http
@@ -1235,6 +1258,7 @@ Content-type: application/json
       "timeout": number
    },
    "labels": { },
+   "priority": number,
    "state": "pending | running | succeeded | failed | canceled",
    "reason": "string",
    "cancelRequested": boolean,
@@ -1279,6 +1303,10 @@ Type: [Requirements](#requirements) object.
 **labels**  
 Free-form key-value labels.  
 Type: Object.
+
+**priority**  
+Higher is placed first; equal ones oldest first. -1000 to 1000.  
+Type: Integer. Range: -1000 to 1000.
 
 **state**  
 `pending` → `running` → `succeeded`, `failed` or `canceled`.  
@@ -1337,6 +1365,175 @@ HTTP status: 400
 **UnauthorizedException**  
 The bearer token is missing or is not the submitters'.  
 HTTP status: 401
+
+**ServiceUnavailableException**  
+The service has no submitters' token configured.  
+HTTP status: 503
+
+---
+
+## UpdateRunPriority
+
+Moves a run not yet ended up or down the queue. A running one keeps its host.
+
+### Request syntax
+
+```http
+POST /runs/{id}/priority HTTP/1.1
+Authorization: Bearer token
+Content-type: application/json
+
+{
+   "priority": number
+}
+```
+
+### URI request parameters
+
+**id**  
+The run's id.  
+Type: String. Required: Yes.
+
+### Request body
+
+**priority**  
+Higher is placed first; equal ones oldest first. -1000 to 1000.  
+Type: Integer. Range: -1000 to 1000. Required: Yes.
+
+### Response syntax
+
+```http
+HTTP/1.1 200
+Content-type: application/json
+
+{
+   "id": "string",
+   "repo": "string",
+   "commit": "string",
+   "job": "string",
+   "args": [ "string" ],
+   "requirements": {
+      "os": "linux | macos | windows | ",
+      "arch": "x86_64 | aarch64 | ",
+      "memory": number,
+      "timeout": number
+   },
+   "labels": { },
+   "priority": number,
+   "state": "pending | running | succeeded | failed | canceled",
+   "reason": "string",
+   "cancelRequested": boolean,
+   "host": "string",
+   "exit": number,
+   "duration": number,
+   "logSize": number,
+   "createdAt": "string",
+   "updatedAt": "string",
+   "startedAt": "string",
+   "endedAt": "string",
+   "leaseExpiresAt": "string"
+}
+```
+
+### Response elements
+
+**id**  
+The run's id.  
+Type: String.
+
+**repo**  
+GitHub repo, `owner/name`.  
+Type: String. Length: 0 to 200. Pattern: `^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$`.
+
+**commit**  
+Full commit sha to check out.  
+Type: String. Pattern: `^[0-9a-f]{40}$`.
+
+**job**  
+A `[jobs.<name>]` in the repo's `jobs.toml`.  
+Type: String. Pattern: `^[a-z0-9][a-z0-9_-]{0,62}$`.
+
+**args**  
+Arguments appended to the job's command.  
+Type: Array of strings.
+
+**requirements**  
+What the run needs from its host.  
+Type: [Requirements](#requirements) object.
+
+**labels**  
+Free-form key-value labels.  
+Type: Object.
+
+**priority**  
+Higher is placed first; equal ones oldest first. -1000 to 1000.  
+Type: Integer. Range: -1000 to 1000.
+
+**state**  
+`pending` → `running` → `succeeded`, `failed` or `canceled`.  
+Type: String. Valid values: `pending` | `running` | `succeeded` | `failed` | `canceled`.
+
+**reason**  
+Why it ended, when not plain (e.g. timed out).  
+Type: String. Nullable: Yes.
+
+**cancelRequested**  
+Cancel asked for; its host will stop it.  
+Type: Boolean.
+
+**host**  
+Host that claimed it.  
+Type: String. Nullable: Yes.
+
+**exit**  
+Exit code.  
+Type: Integer. Nullable: Yes.
+
+**duration**  
+Seconds it ran.  
+Type: Number. Nullable: Yes.
+
+**logSize**  
+Log size in bytes.  
+Type: Integer.
+
+**createdAt**  
+Submitted at (ISO 8601).  
+Type: String.
+
+**updatedAt**  
+Last changed at (ISO 8601).  
+Type: String.
+
+**startedAt**  
+Claimed at (ISO 8601).  
+Type: String. Nullable: Yes.
+
+**endedAt**  
+Ended at (ISO 8601).  
+Type: String. Nullable: Yes.
+
+**leaseExpiresAt**  
+Fails at this time unless its host's heartbeat renews it.  
+Type: String. Nullable: Yes.
+
+### Errors
+
+**ValidationException**  
+The request failed validation.  
+HTTP status: 400
+
+**UnauthorizedException**  
+The bearer token is missing or is not the submitters'.  
+HTTP status: 401
+
+**ResourceNotFoundException**  
+No run has that id.  
+HTTP status: 404
+
+**ConflictException**  
+It has already ended.  
+HTTP status: 409
 
 **ServiceUnavailableException**  
 The service has no submitters' token configured.  
@@ -1525,6 +1722,10 @@ Type: [Requirements](#requirements) object. Required: Yes.
 **labels**  
 Free-form key-value labels.  
 Type: Object. Required: Yes.
+
+**priority**  
+Higher is placed first; equal ones oldest first. -1000 to 1000.  
+Type: Integer. Range: -1000 to 1000. Required: Yes.
 
 **state**  
 `pending` → `running` → `succeeded`, `failed` or `canceled`.  

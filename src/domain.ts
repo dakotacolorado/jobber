@@ -69,6 +69,8 @@ export interface RunDraft {
   requirements: Requirements;
   /** What the run is, for finding it again: who asked, what for. */
   labels: Labels;
+  /** Higher is placed first; runs of one priority go oldest first. */
+  priority: number;
 }
 
 export interface Run extends RunDraft {
@@ -112,6 +114,20 @@ export const stamp = (run: Pick<Run, "updatedAt">, at = now()) =>
   at > run.updatedAt ? at : new Date(Date.parse(run.updatedAt) + 1).toISOString();
 
 export const newId = () => randomUUID();
+
+/** A run's priority is a whole number from `PRIORITY_MIN` to `PRIORITY_MAX`, 0 unless given. */
+export const PRIORITY_MIN = -1000;
+export const PRIORITY_MAX = 1000;
+
+/** The order runs leave the queue: higher priority first, then older, then by id so the order is total. */
+export const queueOrder = (a: Run, b: Run) =>
+  b.priority - a.priority || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id);
+
+/** A run not yet ended takes a new priority; an ended one has left the queue for good. */
+export function reprioritized(run: Run, priority: number, when = now()): Run {
+  if (ENDED.includes(run.state)) throw new RequestError(`run ${run.id} already ended ${run.state}`, 409);
+  return { ...run, priority, updatedAt: stamp(run, when) };
+}
 
 /** The memory a host reserves for the run when it claims it. */
 export const admittedMemory = (run: Pick<Run, "requirements">) => run.requirements.memory ?? DEFAULT_MEMORY_MIB;

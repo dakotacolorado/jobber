@@ -151,6 +151,26 @@ describe("ClaimRun", () => {
     expect(((await (await claim(m1)).json()) as Claim).run.id).toBe(arm.id);
   });
 
+  it("answers the highest priority pending run first, and of one priority the oldest", async () => {
+    const { register, submit, claim, call } = setup();
+    const h = await register();
+    const tick = () => new Promise((res) => setTimeout(res, 3));
+    const low = await submit({ priority: -1 });
+    await tick();
+    const oldZero = await submit();
+    await tick();
+    const high = await submit({ priority: 5 });
+    await tick();
+    const newZero = await submit();
+    await tick();
+    const late = await submit();
+    // Moved to the front after it was submitted.
+    await call("POST", `/runs/${late.id}/priority`, TOKEN, { priority: 9 });
+    const order = [];
+    for (let i = 0; i < 5; i++) order.push(((await (await claim(h)).json()) as Claim).run.id);
+    expect(order).toEqual([late.id, high.id, oldZero.id, newZero.id, low.id]);
+  });
+
   it("records what the host has free", async () => {
     const { register, claim, hosts } = setup();
     const h = await register();

@@ -1,5 +1,5 @@
 import { JobApi } from "./api.ts";
-import { INSTRUCTIONS, LOCAL_URL } from "./mcp.ts";
+import { INSTRUCTIONS, DOCS_URL } from "./mcp.ts";
 import { Store } from "./store.ts";
 
 interface JsonSchema {
@@ -48,7 +48,7 @@ export async function mcpDocument(): Promise<McpDocument> {
   return { instructions: INSTRUCTIONS, tools: result.tools };
 }
 
-const CONFIG = { mcpServers: { "jobber": { type: "http", url: `${LOCAL_URL}/mcp`, headers: { Authorization: "Bearer <AUTH_TOKEN>" } } } };
+const CONFIG = { mcpServers: { "jobber": { type: "http", url: `${DOCS_URL}/mcp`, headers: { Authorization: "Bearer <AUTH_TOKEN>" } } } };
 const ABOUT =
   "Streamable HTTP at `/mcp`, stateless, answering JSON. Every request takes the submitters' bearer token (`AUTH_TOKEN`), as the API does: each tool is one API request made with it, so it is refused, recorded and answered as that request would be. " +
   "A refusal comes back as the tool's error, in the API's words.";

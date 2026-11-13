@@ -106,10 +106,16 @@ capacity and health.
 The reference is [`docs/API.md`](./docs/API.md), served by Redoc at
 `/docs/api`. The contract is [`openapi.json`](./openapi.json).
 
+Every address is HTTPS: beta and prod serve the page, the API and the MCP
+server only at `https://<host>.tail90863a.ts.net:8445` (`tailscale serve`, see
+[On the hosts](#on-the-hosts)), and jobber itself listens only on 127.0.0.1.
+Below, `JOBBER` is one of them:
+
 ```sh
-curl -s -H "authorization: Bearer $AUTH_TOKEN" -H 'content-type: application/json' http://127.0.0.1:4500/runs \
+JOBBER=https://dakotajp-lenovo-laptop.tail90863a.ts.net:8445   # prod; beta is dakotajp-hp-laptop
+curl -s -H "authorization: Bearer $AUTH_TOKEN" -H 'content-type: application/json' "$JOBBER/runs" \
   -d '{"repo": "dakotacolorado/python-template", "commit": "<sha>", "job": "hello", "labels": {"by": "me"}}'
-curl -s -H "authorization: Bearer $AUTH_TOKEN" 'http://127.0.0.1:4500/runs?state=running'
+curl -s -H "authorization: Bearer $AUTH_TOKEN" "$JOBBER/runs?state=running"
 ```
 
 ## MCP
@@ -119,8 +125,11 @@ curl -s -H "authorization: Bearer $AUTH_TOKEN" 'http://127.0.0.1:4500/runs?state
 each one API request under `AUTH_TOKEN`. With Claude Code:
 
 ```sh
-claude mcp add --transport http jobber http://127.0.0.1:4500/mcp --header "Authorization: Bearer $AUTH_TOKEN"
+claude mcp add --transport http jobber "$JOBBER/mcp" --header "Authorization: Bearer $AUTH_TOKEN"
 ```
+
+(`--transport http` names MCP's Streamable HTTP transport; the address is
+HTTPS.) The docs served at `/docs/mcp` give the address they are served from.
 
 The tools are listed in [`docs/MCP.md`](./docs/MCP.md), served at `/docs/mcp`.
 There is no separate client: agents use the MCP server, scripts the API.

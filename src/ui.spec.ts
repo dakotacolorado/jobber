@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { JobApi } from "./api.ts";
-import { MARK_ICON, MARK_SVG, SUMMARY, TAGLINE } from "./banner.ts";
+import { LETTERS_ONLY, MARK_ICON, MARK_PIXELS, MARK_SVG, SUMMARY, TAGLINE } from "./banner.ts";
 import { Store } from "./store.ts";
 
 const TOKEN = "submitter-secret";
@@ -48,7 +48,9 @@ describe("the page", () => {
     const body = await res.text();
     expect(body).toContain(`export const TAGLINE = ${JSON.stringify(TAGLINE)};`);
     expect(body).toContain(`export const SUMMARY = ${JSON.stringify(SUMMARY)};`);
-    expect(file("ui/app.js")).toContain('import { SUMMARY, TAGLINE } from "./banner.js";');
+    expect(body).toContain(`export const LETTERS = ${JSON.stringify(LETTERS_ONLY)};`);
+    expect(body).toContain(`export const MARK_PIXELS = ${JSON.stringify(MARK_PIXELS)};`);
+    expect(file("ui/app.js")).toContain('import { LETTERS, MARK_PIXELS, SUMMARY, TAGLINE } from "./banner.js";');
   });
 
   it("makes every element from text, so nothing a run or its log says is run as HTML", () => {

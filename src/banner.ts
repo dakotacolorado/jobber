@@ -67,12 +67,16 @@ const smoothMark = (ink: string, ground: string, style = "") => {
 /** The smooth mark in the page's colors, for its header. */
 export const MARK_SVG = smoothMark("currentColor", "var(--panel)");
 
-/** The smooth mark on its own, as the page's favicon: violet, its containers filled the tab's light or dark. */
-export const MARK_ICON = smoothMark(
-  "var(--ink)",
-  "var(--ground)",
-  "<style>svg{--ink:#6a4fc4;--ground:#fff}@media (prefers-color-scheme:dark){svg{--ink:#a994f2;--ground:#161615}}</style>",
-);
+/**
+ * The mark as the page's favicon: square, and solid so it reads at 16 pixels,
+ * each container violet with its ribs cut out in the tab's light or dark.
+ */
+export const MARK_ICON = (() => {
+  const box = (x: number, y: number, w: number, h: number, ribs: number) =>
+    `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="2" fill="var(--ink)"/>` +
+    Array.from({ length: ribs }, (_, i) => `<rect x="${x + ((i + 1) * w) / (ribs + 1) - 1}" y="${y + 3}" width="2" height="${h - 6}" fill="var(--ground)"/>`).join("");
+  return `<svg xmlns="http://www.w3.org/2000/svg" aria-hidden="true" viewBox="0 0 40 40"><style>svg{--ink:#6a4fc4;--ground:#fff}@media (prefers-color-scheme:dark){svg{--ink:#a994f2;--ground:#161615}}</style>${box(8, 3, 24, 16, 3)}${box(0, 21, 19, 16, 2)}${box(21, 21, 19, 16, 2)}</svg>`;
+})();
 
 /** Colors only for a terminal that wants them (https://no-color.org). jobber's is violet, beside honed's teal and waypoint's terracotta. */
 export function palette(enabled: boolean) {

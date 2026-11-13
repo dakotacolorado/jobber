@@ -32,7 +32,7 @@ describe("the page", () => {
     expect(res.headers.get("content-type")).toContain("image/svg+xml");
     expect(await res.text()).toBe(MARK_ICON);
     expect(MARK_ICON).toContain("prefers-color-scheme:dark");
-    expect(file("ui/index.html")).toContain('<link rel="icon" type="image/svg+xml" href="./ui/mark.svg">');
+    expect(file("ui/index.html")).toContain('<link rel="icon" type="image/svg+xml" href="./ui/mark.svg?v=containers">');
   });
 
   it("wears jobber's mark and name in its header and tab, and nowhere says its old name", () => {

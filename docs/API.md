@@ -2,29 +2,31 @@
 
 API version 2026-11-12
 
-Runs of jobs. A **job** is a named script in a repo's `jobs.toml`; a **run** is one execution of it, to completion at one commit, by a **runner** that claims it.
+Runs jobs on self-hosted runners. A **job** is a named script in a repo's `jobs.toml`; a **run** is one execution of it at a commit.
 
-- A run is submitted `pending`, claimed and `running`, and ends `succeeded`, `failed` or `canceled` with its exit code. It says what it was for when its submitter said.
-- A run's log is read from any byte offset, while it runs and after: `GetRunLog` from where the last read ended, until `Run-State` says the run has ended.
-- Runners call in and are never called: one registers with the registration token, then claims runs, appends to their logs and completes them with its own token, `<runner id>.<secret>`.
+- **Submit** a run, then follow it: `pending` → `running` → `succeeded`, `failed` or `canceled`.
+- **Read its log** with `GetRunLog`, from any byte offset, while it runs and after.
+- **Runners** (job-runner) pull work through the *Runner protocol* calls. You don't call those.
 
-Submitters send `Authorization: Bearer <token>` with the submitters' token, and may send `claimed-by`, recorded on a run they submit. `GetHealth` takes no token. Errors are `{code, message}`, the code an exception name for the HTTP status: `ValidationException` (400), `UnauthorizedException` (401), `AccessDeniedException` (403), `ResourceNotFoundException` (404), `ConflictException` (409), `PayloadTooLargeException` (413), `InvalidRangeException` (416), `InternalServerException` (500) and `ServiceUnavailableException` (503).
+**Auth:** `Authorization: Bearer <token>` with the submitters' token, on everything but `GetHealth`.
+
+**Errors:** `{code, message}`, where `code` is an AWS-style exception name such as `ValidationException` or `ResourceNotFoundException`.
 
 ## Operations
 
-- [AppendRunLog](#appendrunlog): Append to the log of a run in progress, and renew its lease
+- [AppendRunLog](#appendrunlog): Append to a log
 - [CancelRun](#cancelrun): Cancel a run
-- [ClaimRun](#claimrun): Claim the oldest pending run that fits
-- [CompleteRun](#completerun): Complete a run in progress, saying how it ended
-- [GetHealth](#gethealth): Get the service's health and version
+- [ClaimRun](#claimrun): Claim a run
+- [CompleteRun](#completerun): Complete a run
+- [GetHealth](#gethealth): Get health
 - [GetRun](#getrun): Get a run
-- [GetRunLog](#getrunlog): Get a run's log from a byte offset
-- [GetSkill](#getskill): Get the client workers call this deployment with
-- [ListRunners](#listrunners): List runners, most recently seen first
-- [ListRuns](#listruns): List runs, newest first
-- [PutRunsWith](#putrunswith): Put what a run in progress runs with
+- [GetRunLog](#getrunlog): Get a run's log
+- [GetSkill](#getskill): Get the jobs skill
+- [ListRunners](#listrunners): List runners
+- [ListRuns](#listruns): List runs
+- [PutRunsWith](#putrunswith): Put run limits
 - [RegisterRunner](#registerrunner): Register a runner
-- [SubmitRun](#submitrun): Submit a run of a job: a named script in a repo at a commit
+- [SubmitRun](#submitrun): Submit a run
 
 ## Data types
 
@@ -44,7 +46,7 @@ Submitters send `Authorization: Bearer <token>` with the submitters' token, and 
 
 ## AppendRunLog
 
-The body is the bytes, `Content-Range: bytes S-E/*` where S is the log's current size and E = S + length - 1. An empty body without `Content-Range` only renews the lease. 416 for any other S, with the size to resend from. At most 256 KiB per append and 64 MiB per run (413). The reply says whether a cancel was asked for.
+Appends bytes at the log's end (`Content-Range: bytes S-E/*`) and renews the lease; an empty body only renews. Max 256 KiB per call, 64 MiB per run.
 
 ### Request syntax
 
@@ -89,15 +91,15 @@ Content-type: application/json
 ### Response elements
 
 **size**  
-Bytes of log stored: the offset the next append starts at.  
+Log size: where the next append starts.  
 Type: Integer.
 
 **canceled**  
-A cancel was asked for: stop the run and report it `canceled`.  
+Cancel asked for: stop and complete as `canceled`.  
 Type: Boolean.
 
 **leaseExpiresAt**  
-When the run fails unless another append renews it, as an ISO 8601 timestamp.  
+Lease end (ISO 8601).  
 Type: String.
 
 ### Errors
@@ -134,7 +136,7 @@ HTTP status: 416
 
 ## CancelRun
 
-A pending run ends `canceled` at once. A running one is marked `cancelRequested`: its runner is told on its next log append, stops it, and reports it `canceled`.
+Ends a pending run now. A running one is stopped by its runner within seconds.
 
 ### Request syntax
 
@@ -204,94 +206,94 @@ The run's id.
 Type: String.
 
 **repo**  
-`owner/name` on GitHub: checked out at `/work`; with a routine, its target.  
+GitHub repo, `owner/name`.  
 Type: String. Length: 0 to 200. Pattern: `^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$`.
 
 **commit**  
-The commit to run, as a full lowercase sha: the runner checks out exactly this.  
+Full commit sha to check out.  
 Type: String. Pattern: `^[0-9a-f]{40}$`.
 
 **job**  
-A `[jobs.<name>]` in the repo's `jobs.toml` at that commit, or in the routine directory's when it has a routine.  
+A `[jobs.<name>]` in the repo's `jobs.toml`.  
 Type: String. Pattern: `^[a-z0-9][a-z0-9_-]{0,62}$`.
 
 **routine**  
-Where its steps live, when not in `repo`'s own `jobs.toml`; null when they are.  
+The routine it runs, if any.  
 Type: [Routine](#routine) object.
 
 **host**  
-The machine it must run on, on the host itself; null: any runner that fits.  
+The host it must run on, if any.  
 Type: String. Nullable: Yes.
 
 **args**  
-Appended to the job's `run` command from `jobs.toml`.  
+Arguments appended to the job's command.  
 Type: Array of strings.
 
 **limits**  
 Type: [Limits](#limits) object.
 
 **labels**  
-Labels as Kubernetes writes them. On a run, what a runner must have, every key with that value; on a runner, what it has.  
+Key-value labels. On a run, what its runner must have.  
 Type: Object.
 
 **for**  
-What it was for; null when its submitter did not say.  
+What it is for, if given.  
 Type: [For](#for) object.
 
 **state**  
-`pending` until a runner claims it, `running` on that runner, then `succeeded`, `failed` or `canceled`, which it never leaves.  
+`pending` → `running` → `succeeded`, `failed` or `canceled`.  
 Type: String. Valid values: `pending` | `running` | `succeeded` | `failed` | `canceled`.
 
 **reason**  
-Why it is in its state, when that is not plain: a cancel, a lapsed lease, a timeout.  
+Why it ended, when not plain (e.g. timed out).  
 Type: String. Nullable: Yes.
 
 **cancelRequested**  
-A cancel was asked for: the runner of a run in progress is told to stop it on its next log append.  
+Cancel asked for; its runner will stop it.  
 Type: Boolean.
 
 **runner**  
-The runner that claimed it; null while pending.  
+Runner that claimed it.  
 Type: String. Nullable: Yes.
 
 **runsWith**  
-What its runner runs it with: `limits`, else `jobs.toml`'s for the job, else its `[defaults]`. Null until its runner has read `jobs.toml`, and on a runner that does not say.  
+Limits it actually runs with, once its runner says.  
 Type: [RunsWith](#runswith) object.
 
 **exit**  
-The run's exit code, once its runner reports one.  
+Exit code.  
 Type: Integer. Nullable: Yes.
 
 **duration**  
-Seconds it ran, as its runner reported.  
+Seconds it ran.  
 Type: Number. Nullable: Yes.
 
 **logSize**  
-Bytes of log stored so far.  
+Log size in bytes.  
 Type: Integer.
 
 **submittedBy**  
-The `claimed-by` it was submitted with.  
+Who submitted it (`claimed-by`).  
 Type: String. Nullable: Yes.
 
 **createdAt**  
-When it was submitted, as an ISO 8601 timestamp.  
+Submitted at (ISO 8601).  
 Type: String.
 
 **updatedAt**  
-When it last changed, as an ISO 8601 timestamp.  
+Last changed at (ISO 8601).  
 Type: String.
 
 **startedAt**  
-When a runner claimed it; null while pending.  
+Claimed at (ISO 8601).  
 Type: String. Nullable: Yes.
 
 **endedAt**  
-When it ended; null until it does.  
+Ended at (ISO 8601).  
 Type: String. Nullable: Yes.
 
 **leaseExpiresAt**  
-While running: if no log append renews it by then, the run fails.  
+Fails at this time unless its runner checks in.  
 Type: String. Nullable: Yes.
 
 ### Errors
@@ -320,7 +322,7 @@ HTTP status: 503
 
 ## ClaimRun
 
-The oldest pending run whose labels the runner has, whose memory fits `free`, whose routine or host, if any, it `can` run, and whose `host`, if any, is the runner's own `hostId`, moved to `running` on this runner. Two claims never get the same run. 204 when none fits.
+Takes the oldest pending run that fits this runner and marks it `running`. 204 if none fits.
 
 ### Request syntax
 
@@ -349,19 +351,19 @@ Type: String. Required: Yes.
 ### Request body
 
 **labels**  
-What it has now; its registered labels when absent.  
+Labels now. Default: as registered.  
 Type: Object. Required: No.
 
 **can**  
-What it can run beyond a job in its repo's own `jobs.toml`: `routine`, a run with a routine; `host`, a run naming its host, run on the host itself. A run needing one it does not say is left for another.  
+Extra kinds of run it takes: `routine`, `host`.  
 Type: Array of strings. At most 10 items. Required: No.
 
 **hostId**  
-The machine it runs on now, recorded on the runner, so one registered before it said keeps its id.  
+Host it runs on now.  
 Type: String. Length: 1 to 200. Required: No.
 
 **free**  
-What it can take on now.  
+Free capacity now.  
 Type: Object. Required: Yes.
 
 ### Response syntax
@@ -419,15 +421,15 @@ Content-type: application/json
 ### Response elements
 
 **run**  
-The run, now running on this runner.  
+The claimed run.  
 Type: [Run](#run) object.
 
 **memory**  
-MiB the run was admitted with: reserve this, and run it with no more.  
+Memory to reserve, in MiB.  
 Type: Integer.
 
 **lease**  
-Seconds the run lives without a log append. Append, or renew with an empty one, well within it.  
+Seconds between check-ins before the run fails.  
 Type: Integer.
 
 ### Errors
@@ -448,7 +450,7 @@ HTTP status: 403
 
 ## CompleteRun
 
-From the run's own runner. Sending the same end again answers it unchanged, so a lost reply can be retried.
+Records how a run ended. Retrying with the same result is safe.
 
 ### Request syntax
 
@@ -474,11 +476,11 @@ Type: String. Required: Yes.
 ### Request body
 
 **state**  
-`canceled` when stopped for a cancel; `failed` for a non-zero exit, a timeout, or an image that would not build.  
+How it ended.  
 Type: String. Valid values: `succeeded` | `failed` | `canceled`. Required: Yes.
 
 **exit**  
-The run's exit code; null when it never ran or was killed.  
+Exit code, if it ran.  
 Type: Integer. Nullable: Yes. Required: Yes.
 
 **duration**  
@@ -486,7 +488,7 @@ Seconds from claim to end.
 Type: Number. Range: 0 to any. Required: Yes.
 
 **reason**  
-Why, when the state does not say: `timed out after 600s`, `image build failed`.  
+Why, if not plain (e.g. `timed out after 600s`).  
 Type: String. Length: 1 to 2000. Nullable: Yes. Required: No.
 
 ### Response syntax
@@ -544,94 +546,94 @@ The run's id.
 Type: String.
 
 **repo**  
-`owner/name` on GitHub: checked out at `/work`; with a routine, its target.  
+GitHub repo, `owner/name`.  
 Type: String. Length: 0 to 200. Pattern: `^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$`.
 
 **commit**  
-The commit to run, as a full lowercase sha: the runner checks out exactly this.  
+Full commit sha to check out.  
 Type: String. Pattern: `^[0-9a-f]{40}$`.
 
 **job**  
-A `[jobs.<name>]` in the repo's `jobs.toml` at that commit, or in the routine directory's when it has a routine.  
+A `[jobs.<name>]` in the repo's `jobs.toml`.  
 Type: String. Pattern: `^[a-z0-9][a-z0-9_-]{0,62}$`.
 
 **routine**  
-Where its steps live, when not in `repo`'s own `jobs.toml`; null when they are.  
+The routine it runs, if any.  
 Type: [Routine](#routine) object.
 
 **host**  
-The machine it must run on, on the host itself; null: any runner that fits.  
+The host it must run on, if any.  
 Type: String. Nullable: Yes.
 
 **args**  
-Appended to the job's `run` command from `jobs.toml`.  
+Arguments appended to the job's command.  
 Type: Array of strings.
 
 **limits**  
 Type: [Limits](#limits) object.
 
 **labels**  
-Labels as Kubernetes writes them. On a run, what a runner must have, every key with that value; on a runner, what it has.  
+Key-value labels. On a run, what its runner must have.  
 Type: Object.
 
 **for**  
-What it was for; null when its submitter did not say.  
+What it is for, if given.  
 Type: [For](#for) object.
 
 **state**  
-`pending` until a runner claims it, `running` on that runner, then `succeeded`, `failed` or `canceled`, which it never leaves.  
+`pending` → `running` → `succeeded`, `failed` or `canceled`.  
 Type: String. Valid values: `pending` | `running` | `succeeded` | `failed` | `canceled`.
 
 **reason**  
-Why it is in its state, when that is not plain: a cancel, a lapsed lease, a timeout.  
+Why it ended, when not plain (e.g. timed out).  
 Type: String. Nullable: Yes.
 
 **cancelRequested**  
-A cancel was asked for: the runner of a run in progress is told to stop it on its next log append.  
+Cancel asked for; its runner will stop it.  
 Type: Boolean.
 
 **runner**  
-The runner that claimed it; null while pending.  
+Runner that claimed it.  
 Type: String. Nullable: Yes.
 
 **runsWith**  
-What its runner runs it with: `limits`, else `jobs.toml`'s for the job, else its `[defaults]`. Null until its runner has read `jobs.toml`, and on a runner that does not say.  
+Limits it actually runs with, once its runner says.  
 Type: [RunsWith](#runswith) object.
 
 **exit**  
-The run's exit code, once its runner reports one.  
+Exit code.  
 Type: Integer. Nullable: Yes.
 
 **duration**  
-Seconds it ran, as its runner reported.  
+Seconds it ran.  
 Type: Number. Nullable: Yes.
 
 **logSize**  
-Bytes of log stored so far.  
+Log size in bytes.  
 Type: Integer.
 
 **submittedBy**  
-The `claimed-by` it was submitted with.  
+Who submitted it (`claimed-by`).  
 Type: String. Nullable: Yes.
 
 **createdAt**  
-When it was submitted, as an ISO 8601 timestamp.  
+Submitted at (ISO 8601).  
 Type: String.
 
 **updatedAt**  
-When it last changed, as an ISO 8601 timestamp.  
+Last changed at (ISO 8601).  
 Type: String.
 
 **startedAt**  
-When a runner claimed it; null while pending.  
+Claimed at (ISO 8601).  
 Type: String. Nullable: Yes.
 
 **endedAt**  
-When it ended; null until it does.  
+Ended at (ISO 8601).  
 Type: String. Nullable: Yes.
 
 **leaseExpiresAt**  
-While running: if no log append renews it by then, the run fails.  
+Fails at this time unless its runner checks in.  
 Type: String. Nullable: Yes.
 
 ### Errors
@@ -660,7 +662,7 @@ HTTP status: 409
 
 ## GetHealth
 
-Get the service's health and version.
+Get health.
 
 ### Request syntax
 
@@ -684,15 +686,15 @@ Content-type: application/json
 ### Response elements
 
 **ok**  
-Always true: an answer at all means it is up.  
+Always true.  
 Type: Boolean.
 
 **version**  
-The package's version.  
+Package version.  
 Type: String.
 
 **commit**  
-The commit it was built from, ending `-dirty` when built with uncommitted changes.  
+Commit it was built from.  
 Type: String.
 
 ---
@@ -769,94 +771,94 @@ The run's id.
 Type: String.
 
 **repo**  
-`owner/name` on GitHub: checked out at `/work`; with a routine, its target.  
+GitHub repo, `owner/name`.  
 Type: String. Length: 0 to 200. Pattern: `^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$`.
 
 **commit**  
-The commit to run, as a full lowercase sha: the runner checks out exactly this.  
+Full commit sha to check out.  
 Type: String. Pattern: `^[0-9a-f]{40}$`.
 
 **job**  
-A `[jobs.<name>]` in the repo's `jobs.toml` at that commit, or in the routine directory's when it has a routine.  
+A `[jobs.<name>]` in the repo's `jobs.toml`.  
 Type: String. Pattern: `^[a-z0-9][a-z0-9_-]{0,62}$`.
 
 **routine**  
-Where its steps live, when not in `repo`'s own `jobs.toml`; null when they are.  
+The routine it runs, if any.  
 Type: [Routine](#routine) object.
 
 **host**  
-The machine it must run on, on the host itself; null: any runner that fits.  
+The host it must run on, if any.  
 Type: String. Nullable: Yes.
 
 **args**  
-Appended to the job's `run` command from `jobs.toml`.  
+Arguments appended to the job's command.  
 Type: Array of strings.
 
 **limits**  
 Type: [Limits](#limits) object.
 
 **labels**  
-Labels as Kubernetes writes them. On a run, what a runner must have, every key with that value; on a runner, what it has.  
+Key-value labels. On a run, what its runner must have.  
 Type: Object.
 
 **for**  
-What it was for; null when its submitter did not say.  
+What it is for, if given.  
 Type: [For](#for) object.
 
 **state**  
-`pending` until a runner claims it, `running` on that runner, then `succeeded`, `failed` or `canceled`, which it never leaves.  
+`pending` → `running` → `succeeded`, `failed` or `canceled`.  
 Type: String. Valid values: `pending` | `running` | `succeeded` | `failed` | `canceled`.
 
 **reason**  
-Why it is in its state, when that is not plain: a cancel, a lapsed lease, a timeout.  
+Why it ended, when not plain (e.g. timed out).  
 Type: String. Nullable: Yes.
 
 **cancelRequested**  
-A cancel was asked for: the runner of a run in progress is told to stop it on its next log append.  
+Cancel asked for; its runner will stop it.  
 Type: Boolean.
 
 **runner**  
-The runner that claimed it; null while pending.  
+Runner that claimed it.  
 Type: String. Nullable: Yes.
 
 **runsWith**  
-What its runner runs it with: `limits`, else `jobs.toml`'s for the job, else its `[defaults]`. Null until its runner has read `jobs.toml`, and on a runner that does not say.  
+Limits it actually runs with, once its runner says.  
 Type: [RunsWith](#runswith) object.
 
 **exit**  
-The run's exit code, once its runner reports one.  
+Exit code.  
 Type: Integer. Nullable: Yes.
 
 **duration**  
-Seconds it ran, as its runner reported.  
+Seconds it ran.  
 Type: Number. Nullable: Yes.
 
 **logSize**  
-Bytes of log stored so far.  
+Log size in bytes.  
 Type: Integer.
 
 **submittedBy**  
-The `claimed-by` it was submitted with.  
+Who submitted it (`claimed-by`).  
 Type: String. Nullable: Yes.
 
 **createdAt**  
-When it was submitted, as an ISO 8601 timestamp.  
+Submitted at (ISO 8601).  
 Type: String.
 
 **updatedAt**  
-When it last changed, as an ISO 8601 timestamp.  
+Last changed at (ISO 8601).  
 Type: String.
 
 **startedAt**  
-When a runner claimed it; null while pending.  
+Claimed at (ISO 8601).  
 Type: String. Nullable: Yes.
 
 **endedAt**  
-When it ended; null until it does.  
+Ended at (ISO 8601).  
 Type: String. Nullable: Yes.
 
 **leaseExpiresAt**  
-While running: if no log append renews it by then, the run fails.  
+Fails at this time unless its runner checks in.  
 Type: String. Nullable: Yes.
 
 ### Errors
@@ -881,7 +883,7 @@ HTTP status: 503
 
 ## GetRunLog
 
-Send `Range: bytes=N-` to read from offset N; without it, from 0. Answers 206 with `Content-Range: bytes N-M/size` and at most 1 MiB, or an empty body when N is the log's size, so a follower polls from where it got to. `Run-State` says the run's state, so it knows when to stop.
+Reads up to 1 MiB from byte N (`Range: bytes=N-`). To follow a run, poll from the last `size` until `Run-State` has ended.
 
 ### Request syntax
 
@@ -911,21 +913,21 @@ content-range: string
 run-state: string
 Content-type: text/plain
 
-The log from N, up to 1 MiB.
+Log bytes from N, up to 1 MiB.
 ```
 
 ### Response elements
 
-The log from N, up to 1 MiB. As `text/plain`.
+Log bytes from N, up to 1 MiB. As `text/plain`.
 
 ### Response headers
 
 **content-range**  
-`bytes N-M/size` for the bytes sent, or `bytes */size` when there are none: `size` is the log's length so far.  
+`bytes N-M/size`; `size` is the log's length so far.  
 Type: String.
 
 **run-state**  
-The run's state: once it has ended and the log is read to `size`, there is no more.  
+The run's state: stop polling once it has ended.  
 Type: String. Valid values: `pending` | `running` | `succeeded` | `failed` | `canceled`.
 
 ### Errors
@@ -954,7 +956,7 @@ HTTP status: 503
 
 ## GetSkill
 
-The jobs skill's `bin/` and `reference/`, as this deployment was built with them, so a worker calls the API that is deployed.
+For worker-service: the `jobs` client it installs in every worker session.
 
 ### Request syntax
 
@@ -984,19 +986,19 @@ Content-type: application/json
 ### Response elements
 
 **key**  
-The skill's name, which its files are under.  
+Skill name.  
 Type: String.
 
 **version**  
-The deployed tree's commit count, 0 when deployed from outside git.  
+Commit count of the deployed tree.  
 Type: Integer.
 
 **commit**  
-The deployed commit, ending `-dirty` when deployed with uncommitted changes.  
+Deployed commit.  
 Type: String.
 
 **files**  
-Every file of the skill, as a worker installs it.  
+The skill's files.  
 Type: Array of [SkillFile](#skillfile) objects.
 
 ### Errors
@@ -1013,7 +1015,7 @@ HTTP status: 503
 
 ## ListRunners
 
-List runners, most recently seen first.
+List runners.
 
 ### Request syntax
 
@@ -1046,7 +1048,7 @@ Content-type: application/json
 ### Response elements
 
 **runners**  
-Every registered runner, most recently seen first.  
+Runners, most recently seen first.  
 Type: Array of [Runner](#runner) objects.
 
 ### Errors
@@ -1067,7 +1069,7 @@ HTTP status: 503
 
 ## ListRuns
 
-List runs, newest first.
+List runs.
 
 ### Request syntax
 
@@ -1079,23 +1081,23 @@ Authorization: Bearer token
 ### Query parameters
 
 **state**  
-`pending` until a runner claims it, `running` on that runner, then `succeeded`, `failed` or `canceled`, which it never leaves.  
+`pending` → `running` → `succeeded`, `failed` or `canceled`.  
 Type: String. Valid values: `pending` | `running` | `succeeded` | `failed` | `canceled`. Required: No.
 
 **repo**  
-`owner/name` on GitHub.  
+GitHub repo, `owner/name`.  
 Type: String. Length: 0 to 200. Pattern: `^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$`. Required: No.
 
 **submittedBy**  
-Only the runs submitted with this `claimed-by`, as `submittedBy` records it.  
+Only runs with this `submittedBy`.  
 Type: String. Length: 1 to 200. Required: No.
 
 **for**  
-`<kind>:<id>`, e.g. `item:28af81bc-…`: only the runs submitted with that `for`.  
+Only runs for this `<kind>:<id>`.  
 Type: String. Required: No.
 
 **limit**  
-At most this many, newest first.  
+Max results. Default: 100.  
 Type: Integer. Range: 1 to 500. Required: No.
 
 ### Response syntax
@@ -1151,7 +1153,7 @@ Content-type: application/json
 ### Response elements
 
 **runs**  
-The runs, newest first.  
+Runs, newest first.  
 Type: Array of [Run](#run) objects.
 
 ### Errors
@@ -1172,7 +1174,7 @@ HTTP status: 503
 
 ## PutRunsWith
 
-From the run's own runner, once it has read `jobs.toml` and before it starts the run's container. Sending it again replaces it.
+Records the memory, timeout and stall limit a run actually got, once its runner has read `jobs.toml`.
 
 ### Request syntax
 
@@ -1197,15 +1199,15 @@ Type: String. Required: Yes.
 ### Request body
 
 **memory**  
-MiB the container may use.  
+Memory in MiB.  
 Type: Integer. Range: 1 to 1048576. Required: Yes.
 
 **timeout**  
-Seconds before the runner stops it and it fails.  
+Timeout in seconds.  
 Type: Integer. Range: 1 to 86400. Required: Yes.
 
 **stall**  
-Seconds without progress (output, CPU or network) before the runner ends it, failed as stalled; null when it never does.  
+Seconds without progress before it fails as stalled; null for never.  
 Type: Integer. Range: 1 to 86400. Nullable: Yes. Required: Yes.
 
 ### Response syntax
@@ -1263,94 +1265,94 @@ The run's id.
 Type: String.
 
 **repo**  
-`owner/name` on GitHub: checked out at `/work`; with a routine, its target.  
+GitHub repo, `owner/name`.  
 Type: String. Length: 0 to 200. Pattern: `^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$`.
 
 **commit**  
-The commit to run, as a full lowercase sha: the runner checks out exactly this.  
+Full commit sha to check out.  
 Type: String. Pattern: `^[0-9a-f]{40}$`.
 
 **job**  
-A `[jobs.<name>]` in the repo's `jobs.toml` at that commit, or in the routine directory's when it has a routine.  
+A `[jobs.<name>]` in the repo's `jobs.toml`.  
 Type: String. Pattern: `^[a-z0-9][a-z0-9_-]{0,62}$`.
 
 **routine**  
-Where its steps live, when not in `repo`'s own `jobs.toml`; null when they are.  
+The routine it runs, if any.  
 Type: [Routine](#routine) object.
 
 **host**  
-The machine it must run on, on the host itself; null: any runner that fits.  
+The host it must run on, if any.  
 Type: String. Nullable: Yes.
 
 **args**  
-Appended to the job's `run` command from `jobs.toml`.  
+Arguments appended to the job's command.  
 Type: Array of strings.
 
 **limits**  
 Type: [Limits](#limits) object.
 
 **labels**  
-Labels as Kubernetes writes them. On a run, what a runner must have, every key with that value; on a runner, what it has.  
+Key-value labels. On a run, what its runner must have.  
 Type: Object.
 
 **for**  
-What it was for; null when its submitter did not say.  
+What it is for, if given.  
 Type: [For](#for) object.
 
 **state**  
-`pending` until a runner claims it, `running` on that runner, then `succeeded`, `failed` or `canceled`, which it never leaves.  
+`pending` → `running` → `succeeded`, `failed` or `canceled`.  
 Type: String. Valid values: `pending` | `running` | `succeeded` | `failed` | `canceled`.
 
 **reason**  
-Why it is in its state, when that is not plain: a cancel, a lapsed lease, a timeout.  
+Why it ended, when not plain (e.g. timed out).  
 Type: String. Nullable: Yes.
 
 **cancelRequested**  
-A cancel was asked for: the runner of a run in progress is told to stop it on its next log append.  
+Cancel asked for; its runner will stop it.  
 Type: Boolean.
 
 **runner**  
-The runner that claimed it; null while pending.  
+Runner that claimed it.  
 Type: String. Nullable: Yes.
 
 **runsWith**  
-What its runner runs it with: `limits`, else `jobs.toml`'s for the job, else its `[defaults]`. Null until its runner has read `jobs.toml`, and on a runner that does not say.  
+Limits it actually runs with, once its runner says.  
 Type: [RunsWith](#runswith) object.
 
 **exit**  
-The run's exit code, once its runner reports one.  
+Exit code.  
 Type: Integer. Nullable: Yes.
 
 **duration**  
-Seconds it ran, as its runner reported.  
+Seconds it ran.  
 Type: Number. Nullable: Yes.
 
 **logSize**  
-Bytes of log stored so far.  
+Log size in bytes.  
 Type: Integer.
 
 **submittedBy**  
-The `claimed-by` it was submitted with.  
+Who submitted it (`claimed-by`).  
 Type: String. Nullable: Yes.
 
 **createdAt**  
-When it was submitted, as an ISO 8601 timestamp.  
+Submitted at (ISO 8601).  
 Type: String.
 
 **updatedAt**  
-When it last changed, as an ISO 8601 timestamp.  
+Last changed at (ISO 8601).  
 Type: String.
 
 **startedAt**  
-When a runner claimed it; null while pending.  
+Claimed at (ISO 8601).  
 Type: String. Nullable: Yes.
 
 **endedAt**  
-When it ended; null until it does.  
+Ended at (ISO 8601).  
 Type: String. Nullable: Yes.
 
 **leaseExpiresAt**  
-While running: if no log append renews it by then, the run fails.  
+Fails at this time unless its runner checks in.  
 Type: String. Nullable: Yes.
 
 ### Errors
@@ -1379,7 +1381,7 @@ HTTP status: 409
 
 ## RegisterRunner
 
-With the registration token, not the submitters'. Answers the runner's own token once.
+Takes the registration token. Returns the runner's own token, once.
 
 ### Request syntax
 
@@ -1401,27 +1403,27 @@ Content-type: application/json
 ### Request body
 
 **name**  
-What it calls itself, e.g. its host's name: not unique.  
+Display name; not unique.  
 Type: String. Length: 1 to 200. Required: Yes.
 
 **labels**  
-Labels as Kubernetes writes them. On a run, what a runner must have, every key with that value; on a runner, what it has.  
+Key-value labels. On a run, what its runner must have.  
 Type: Object. Required: No.
 
 **slots**  
-Runs it runs at once.  
+Runs at once.  
 Type: Integer. Range: 1 to 64. Required: Yes.
 
 **memory**  
-MiB it has for runs and their image builds.  
+Memory for runs, in MiB.  
 Type: Integer. Range: 16 to 1048576. Required: Yes.
 
 **version**  
-job-runner's version.  
+job-runner version.  
 Type: String. Length: 0 to 100. Nullable: Yes. Required: No.
 
 **hostId**  
-The machine it runs on: its worker-host's `host_id`, by default the hostname.  
+Host name, as worker-host knows it.  
 Type: String. Length: 1 to 200. Nullable: Yes. Required: No.
 
 ### Response syntax
@@ -1449,11 +1451,11 @@ Content-type: application/json
 ### Response elements
 
 **runner**  
-The runner, registered.  
+The new runner.  
 Type: [Runner](#runner) object.
 
 **token**  
-Its own bearer token, `<runner id>.<secret>`, shown only here: keep it where only the runner's user can read it.  
+Its own token, `<id>.<secret>`. Shown only once.  
 Type: String.
 
 ### Errors
@@ -1474,7 +1476,7 @@ HTTP status: 503
 
 ## SubmitRun
 
-One run, stored `pending` until a runner whose labels and free memory fit claims it, with what it was for when `for` says. Nothing is checked against the repo here: a run of a job missing from `jobs.toml` at that commit fails on its runner, saying so in its log.
+Queues a run as `pending` until a runner claims it. The repo isn't checked here: a missing job fails on its runner.
 
 ### Request syntax
 
@@ -1510,44 +1512,44 @@ Content-type: application/json
 ### Request headers
 
 **claimed-by**  
-Who is submitting: recorded on the run as `submittedBy`.  
+Who is submitting; saved as `submittedBy`.  
 Type: String. Length: 1 to 200. Required: No.
 
 ### Request body
 
 **repo**  
-`owner/name` on GitHub.  
+GitHub repo, `owner/name`.  
 Type: String. Length: 0 to 200. Pattern: `^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$`. Required: Yes.
 
 **commit**  
-The commit to run, as a full lowercase sha: the runner checks out exactly this.  
+Full commit sha to check out.  
 Type: String. Pattern: `^[0-9a-f]{40}$`. Required: Yes.
 
 **job**  
-A `[jobs.<name>]` in the repo's `jobs.toml` at that commit, or in the routine directory's when it has a routine.  
+A `[jobs.<name>]` in the repo's `jobs.toml`.  
 Type: String. Pattern: `^[a-z0-9][a-z0-9_-]{0,62}$`. Required: Yes.
 
 **args**  
-Appended to the job's `run` command from `jobs.toml`.  
+Arguments appended to the job's command.  
 Type: Array of strings. At most 50 items. Required: No.
 
 **limits**  
 Type: [Limits](#limits) object. Required: No.
 
 **labels**  
-Labels as Kubernetes writes them. On a run, what a runner must have, every key with that value; on a runner, what it has.  
+Key-value labels. On a run, what its runner must have.  
 Type: Object. Required: No.
 
 **for**  
-What the run was for, as `GET /runs?for=<kind>:<id>` lists it.  
+What the run is for: filter with `ListRuns?for=<kind>:<id>`.  
 Type: [For](#for) object. Required: No.
 
 **routine**  
-Where the job's steps live, when not in its own repo: `job` is read from `<dir>/jobs.toml` in `repo` at `commit`, and the run's own `repo` and `commit` are its target, the package checked out at `/work` beside the routine. Only a runner that says it `can` run a `routine` claims it.  
+Run a job from another repo's `jobs.toml` against this repo (used by release routines).  
 Type: [Routine](#routine) object. Required: No.
 
 **host**  
-The machine it must run on, as a runner's `hostId`: claimed only by that machine's runner, and only one that says it `can` run `host` runs, which runs it on the host itself, with the host's user services, if that host's config lets it. Null: any runner that fits.  
+Run on this host itself, outside a container. Default: any runner, in a container.  
 Type: String. Length: 1 to 200. Nullable: Yes. Required: No.
 
 ### Response syntax
@@ -1605,94 +1607,94 @@ The run's id.
 Type: String.
 
 **repo**  
-`owner/name` on GitHub: checked out at `/work`; with a routine, its target.  
+GitHub repo, `owner/name`.  
 Type: String. Length: 0 to 200. Pattern: `^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$`.
 
 **commit**  
-The commit to run, as a full lowercase sha: the runner checks out exactly this.  
+Full commit sha to check out.  
 Type: String. Pattern: `^[0-9a-f]{40}$`.
 
 **job**  
-A `[jobs.<name>]` in the repo's `jobs.toml` at that commit, or in the routine directory's when it has a routine.  
+A `[jobs.<name>]` in the repo's `jobs.toml`.  
 Type: String. Pattern: `^[a-z0-9][a-z0-9_-]{0,62}$`.
 
 **routine**  
-Where its steps live, when not in `repo`'s own `jobs.toml`; null when they are.  
+The routine it runs, if any.  
 Type: [Routine](#routine) object.
 
 **host**  
-The machine it must run on, on the host itself; null: any runner that fits.  
+The host it must run on, if any.  
 Type: String. Nullable: Yes.
 
 **args**  
-Appended to the job's `run` command from `jobs.toml`.  
+Arguments appended to the job's command.  
 Type: Array of strings.
 
 **limits**  
 Type: [Limits](#limits) object.
 
 **labels**  
-Labels as Kubernetes writes them. On a run, what a runner must have, every key with that value; on a runner, what it has.  
+Key-value labels. On a run, what its runner must have.  
 Type: Object.
 
 **for**  
-What it was for; null when its submitter did not say.  
+What it is for, if given.  
 Type: [For](#for) object.
 
 **state**  
-`pending` until a runner claims it, `running` on that runner, then `succeeded`, `failed` or `canceled`, which it never leaves.  
+`pending` → `running` → `succeeded`, `failed` or `canceled`.  
 Type: String. Valid values: `pending` | `running` | `succeeded` | `failed` | `canceled`.
 
 **reason**  
-Why it is in its state, when that is not plain: a cancel, a lapsed lease, a timeout.  
+Why it ended, when not plain (e.g. timed out).  
 Type: String. Nullable: Yes.
 
 **cancelRequested**  
-A cancel was asked for: the runner of a run in progress is told to stop it on its next log append.  
+Cancel asked for; its runner will stop it.  
 Type: Boolean.
 
 **runner**  
-The runner that claimed it; null while pending.  
+Runner that claimed it.  
 Type: String. Nullable: Yes.
 
 **runsWith**  
-What its runner runs it with: `limits`, else `jobs.toml`'s for the job, else its `[defaults]`. Null until its runner has read `jobs.toml`, and on a runner that does not say.  
+Limits it actually runs with, once its runner says.  
 Type: [RunsWith](#runswith) object.
 
 **exit**  
-The run's exit code, once its runner reports one.  
+Exit code.  
 Type: Integer. Nullable: Yes.
 
 **duration**  
-Seconds it ran, as its runner reported.  
+Seconds it ran.  
 Type: Number. Nullable: Yes.
 
 **logSize**  
-Bytes of log stored so far.  
+Log size in bytes.  
 Type: Integer.
 
 **submittedBy**  
-The `claimed-by` it was submitted with.  
+Who submitted it (`claimed-by`).  
 Type: String. Nullable: Yes.
 
 **createdAt**  
-When it was submitted, as an ISO 8601 timestamp.  
+Submitted at (ISO 8601).  
 Type: String.
 
 **updatedAt**  
-When it last changed, as an ISO 8601 timestamp.  
+Last changed at (ISO 8601).  
 Type: String.
 
 **startedAt**  
-When a runner claimed it; null while pending.  
+Claimed at (ISO 8601).  
 Type: String. Nullable: Yes.
 
 **endedAt**  
-When it ended; null until it does.  
+Ended at (ISO 8601).  
 Type: String. Nullable: Yes.
 
 **leaseExpiresAt**  
-While running: if no log append renews it by then, the run fails.  
+Fails at this time unless its runner checks in.  
 Type: String. Nullable: Yes.
 
 ### Errors
@@ -1720,25 +1722,25 @@ Every error's body.
 ### Contents
 
 **code**  
-What went wrong, as an exception name: one per HTTP status.  
+Exception name.  
 Type: String. Valid values: `ValidationException` | `UnauthorizedException` | `AccessDeniedException` | `ResourceNotFoundException` | `ConflictException` | `PayloadTooLargeException` | `InvalidRangeException` | `InternalServerException` | `ServiceUnavailableException`. Required: Yes.
 
 **message**  
-What went wrong, in words.  
+What went wrong.  
 Type: String. Required: Yes.
 
 ## For
 
-What it was for; null when its submitter did not say.
+What it is for, if given.
 
 ### Contents
 
 **kind**  
-What asked for the run: an approval-service batch or change, a work-tracker item, or a worker.  
+What kind of thing asked for it.  
 Type: String. Valid values: `batch` | `change` | `item` | `worker`. Required: Yes.
 
 **id**  
-Its id there, without spaces.  
+Its id.  
 Type: String. Pattern: `^\S{1,200}$`. Required: Yes.
 
 ## Health
@@ -1746,15 +1748,15 @@ Type: String. Pattern: `^\S{1,200}$`. Required: Yes.
 ### Contents
 
 **ok**  
-Always true: an answer at all means it is up.  
+Always true.  
 Type: Boolean. Required: Yes.
 
 **version**  
-The package's version.  
+Package version.  
 Type: String. Required: Yes.
 
 **commit**  
-The commit it was built from, ending `-dirty` when built with uncommitted changes.  
+Commit it was built from.  
 Type: String. Required: Yes.
 
 ## InvalidRangeError
@@ -1768,29 +1770,29 @@ Every error's body.
 ### Contents
 
 **memory**  
-MiB the container may use, and the runner reserves for it. Null: `jobs.toml`'s, within the 1024 MiB a run without one is admitted with.  
+Memory in MiB. Default: `jobs.toml`'s, else 1024.  
 Type: Integer. Range: 16 to 1048576. Nullable: Yes. Required: No.
 
 **timeout**  
-Seconds before the runner stops it and it fails. Null: `jobs.toml`'s.  
+Timeout in seconds. Default: `jobs.toml`'s.  
 Type: Integer. Range: 1 to 86400. Nullable: Yes. Required: No.
 
 ## Routine
 
-Where its steps live, when not in `repo`'s own `jobs.toml`; null when they are.
+The routine it runs, if any.
 
 ### Contents
 
 **repo**  
-`owner/name` on GitHub: the repo the routine is in.  
+Repo holding the routine.  
 Type: String. Length: 0 to 200. Pattern: `^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$`. Required: Yes.
 
 **commit**  
-The routine repo's commit, as a full lowercase sha: the runner checks out exactly this.  
+Full commit sha of that repo.  
 Type: String. Pattern: `^[0-9a-f]{40}$`. Required: Yes.
 
 **dir**  
-The routine's directory in that repo, holding the `jobs.toml` that names `job`: `/`-separated, no `.` or `..`.  
+Directory holding the routine's `jobs.toml`.  
 Type: String. Length: 0 to 200. Pattern: `^(?!\.{1,2}(\/|$))[A-Za-z0-9_.-]+(\/(?!\.{1,2}(\/|$))[A-Za-z0-9_.-]+)*$`. Required: Yes.
 
 ## Run
@@ -1802,99 +1804,99 @@ The run's id.
 Type: String. Required: Yes.
 
 **repo**  
-`owner/name` on GitHub: checked out at `/work`; with a routine, its target.  
+GitHub repo, `owner/name`.  
 Type: String. Length: 0 to 200. Pattern: `^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$`. Required: Yes.
 
 **commit**  
-The commit to run, as a full lowercase sha: the runner checks out exactly this.  
+Full commit sha to check out.  
 Type: String. Pattern: `^[0-9a-f]{40}$`. Required: Yes.
 
 **job**  
-A `[jobs.<name>]` in the repo's `jobs.toml` at that commit, or in the routine directory's when it has a routine.  
+A `[jobs.<name>]` in the repo's `jobs.toml`.  
 Type: String. Pattern: `^[a-z0-9][a-z0-9_-]{0,62}$`. Required: Yes.
 
 **routine**  
-Where its steps live, when not in `repo`'s own `jobs.toml`; null when they are.  
+The routine it runs, if any.  
 Type: [Routine](#routine) object. Required: Yes.
 
 **host**  
-The machine it must run on, on the host itself; null: any runner that fits.  
+The host it must run on, if any.  
 Type: String. Nullable: Yes. Required: Yes.
 
 **args**  
-Appended to the job's `run` command from `jobs.toml`.  
+Arguments appended to the job's command.  
 Type: Array of strings. Required: Yes.
 
 **limits**  
 Type: [Limits](#limits) object. Required: Yes.
 
 **labels**  
-Labels as Kubernetes writes them. On a run, what a runner must have, every key with that value; on a runner, what it has.  
+Key-value labels. On a run, what its runner must have.  
 Type: Object. Required: Yes.
 
 **for**  
-What it was for; null when its submitter did not say.  
+What it is for, if given.  
 Type: [For](#for) object. Required: Yes.
 
 **state**  
-`pending` until a runner claims it, `running` on that runner, then `succeeded`, `failed` or `canceled`, which it never leaves.  
+`pending` → `running` → `succeeded`, `failed` or `canceled`.  
 Type: String. Valid values: `pending` | `running` | `succeeded` | `failed` | `canceled`. Required: Yes.
 
 **reason**  
-Why it is in its state, when that is not plain: a cancel, a lapsed lease, a timeout.  
+Why it ended, when not plain (e.g. timed out).  
 Type: String. Nullable: Yes. Required: Yes.
 
 **cancelRequested**  
-A cancel was asked for: the runner of a run in progress is told to stop it on its next log append.  
+Cancel asked for; its runner will stop it.  
 Type: Boolean. Required: Yes.
 
 **runner**  
-The runner that claimed it; null while pending.  
+Runner that claimed it.  
 Type: String. Nullable: Yes. Required: Yes.
 
 **runsWith**  
-What its runner runs it with: `limits`, else `jobs.toml`'s for the job, else its `[defaults]`. Null until its runner has read `jobs.toml`, and on a runner that does not say.  
+Limits it actually runs with, once its runner says.  
 Type: [RunsWith](#runswith) object. Required: Yes.
 
 **exit**  
-The run's exit code, once its runner reports one.  
+Exit code.  
 Type: Integer. Nullable: Yes. Required: Yes.
 
 **duration**  
-Seconds it ran, as its runner reported.  
+Seconds it ran.  
 Type: Number. Nullable: Yes. Required: Yes.
 
 **logSize**  
-Bytes of log stored so far.  
+Log size in bytes.  
 Type: Integer. Required: Yes.
 
 **submittedBy**  
-The `claimed-by` it was submitted with.  
+Who submitted it (`claimed-by`).  
 Type: String. Nullable: Yes. Required: Yes.
 
 **createdAt**  
-When it was submitted, as an ISO 8601 timestamp.  
+Submitted at (ISO 8601).  
 Type: String. Required: Yes.
 
 **updatedAt**  
-When it last changed, as an ISO 8601 timestamp.  
+Last changed at (ISO 8601).  
 Type: String. Required: Yes.
 
 **startedAt**  
-When a runner claimed it; null while pending.  
+Claimed at (ISO 8601).  
 Type: String. Nullable: Yes. Required: Yes.
 
 **endedAt**  
-When it ended; null until it does.  
+Ended at (ISO 8601).  
 Type: String. Nullable: Yes. Required: Yes.
 
 **leaseExpiresAt**  
-While running: if no log append renews it by then, the run fails.  
+Fails at this time unless its runner checks in.  
 Type: String. Nullable: Yes. Required: Yes.
 
 ## Runner
 
-The runner, registered.
+The new runner.
 
 ### Contents
 
@@ -1903,53 +1905,53 @@ The runner's id.
 Type: String. Required: Yes.
 
 **name**  
-What it calls itself, e.g. its host's name: not unique.  
+Display name; not unique.  
 Type: String. Required: Yes.
 
 **labels**  
-Labels as Kubernetes writes them. On a run, what a runner must have, every key with that value; on a runner, what it has.  
+Key-value labels. On a run, what its runner must have.  
 Type: Object. Required: Yes.
 
 **slots**  
-Runs it runs at once.  
+Runs at once.  
 Type: Integer. Required: Yes.
 
 **memory**  
-MiB it has for runs and their image builds.  
+Memory for runs, in MiB.  
 Type: Integer. Required: Yes.
 
 **version**  
-job-runner's version, as it said.  
+job-runner version.  
 Type: String. Nullable: Yes. Required: Yes.
 
 **hostId**  
-The machine it runs on, the same as that machine's worker-host's `host_id` (by default its hostname); null until it says.  
+Host it runs on.  
 Type: String. Nullable: Yes. Required: Yes.
 
 **createdAt**  
-When it registered, as an ISO 8601 timestamp.  
+Registered at (ISO 8601).  
 Type: String. Required: Yes.
 
 **lastSeenAt**  
-When it last asked for a run, as an ISO 8601 timestamp.  
+Last claim at (ISO 8601).  
 Type: String. Required: Yes.
 
 ## RunsWith
 
-What its runner runs it with: `limits`, else `jobs.toml`'s for the job, else its `[defaults]`. Null until its runner has read `jobs.toml`, and on a runner that does not say.
+Limits it actually runs with, once its runner says.
 
 ### Contents
 
 **memory**  
-MiB the container may use.  
+Memory in MiB.  
 Type: Integer. Range: 1 to 1048576. Required: Yes.
 
 **timeout**  
-Seconds before the runner stops it and it fails.  
+Timeout in seconds.  
 Type: Integer. Range: 1 to 86400. Required: Yes.
 
 **stall**  
-Seconds without progress (output, CPU or network) before the runner ends it, failed as stalled; null when it never does.  
+Seconds without progress before it fails as stalled; null for never.  
 Type: Integer. Range: 1 to 86400. Nullable: Yes. Required: Yes.
 
 ## Skill
@@ -1957,19 +1959,19 @@ Type: Integer. Range: 1 to 86400. Nullable: Yes. Required: Yes.
 ### Contents
 
 **key**  
-The skill's name, which its files are under.  
+Skill name.  
 Type: String. Required: Yes.
 
 **version**  
-The deployed tree's commit count, 0 when deployed from outside git.  
+Commit count of the deployed tree.  
 Type: Integer. Required: Yes.
 
 **commit**  
-The deployed commit, ending `-dirty` when deployed with uncommitted changes.  
+Deployed commit.  
 Type: String. Required: Yes.
 
 **files**  
-Every file of the skill, as a worker installs it.  
+The skill's files.  
 Type: Array of [SkillFile](#skillfile) objects. Required: Yes.
 
 ## SkillFile
@@ -1977,14 +1979,14 @@ Type: Array of [SkillFile](#skillfile) objects. Required: Yes.
 ### Contents
 
 **path**  
-Under the worker's Claude Code folder: `skills/jobs/bin/…` or `skills/jobs/reference/…`.  
+Path in the worker's Claude folder.  
 Type: String. Required: Yes.
 
 **content**  
-The file's text.  
+File contents.  
 Type: String. Required: Yes.
 
 **executable**  
-Whether to install it executable: true for everything under `bin/`.  
+Install as executable.  
 Type: Boolean. Required: Yes.
 

@@ -3,20 +3,24 @@
   "info": {
     "version": "2026-11-12",
     "title": "job-service",
-    "description": "Runs of jobs. A **job** is a named script in a repo's `jobs.toml`; a **run** is one execution of it, to completion at one commit, by a **runner** that claims it.\n\n- A run is submitted `pending`, claimed and `running`, and ends `succeeded`, `failed` or `canceled` with its exit code. It says what it was for when its submitter said.\n- A run's log is read from any byte offset, while it runs and after: `GetRunLog` from where the last read ended, until `Run-State` says the run has ended.\n- Runners call in and are never called: one registers with the registration token, then claims runs, appends to their logs and completes them with its own token, `<runner id>.<secret>`.\n\nSubmitters send `Authorization: Bearer <token>` with the submitters' token, and may send `claimed-by`, recorded on a run they submit. `GetHealth` takes no token. Errors are `{code, message}`, the code an exception name for the HTTP status: `ValidationException` (400), `UnauthorizedException` (401), `AccessDeniedException` (403), `ResourceNotFoundException` (404), `ConflictException` (409), `PayloadTooLargeException` (413), `InvalidRangeException` (416), `InternalServerException` (500) and `ServiceUnavailableException` (503)."
+    "description": "Runs jobs on self-hosted runners. A **job** is a named script in a repo's `jobs.toml`; a **run** is one execution of it at a commit.\n\n- **Submit** a run, then follow it: `pending` → `running` → `succeeded`, `failed` or `canceled`.\n- **Read its log** with `GetRunLog`, from any byte offset, while it runs and after.\n- **Runners** (job-runner) pull work through the *Runner protocol* calls. You don't call those.\n\n**Auth:** `Authorization: Bearer <token>` with the submitters' token, on everything but `GetHealth`.\n\n**Errors:** `{code, message}`, where `code` is an AWS-style exception name such as `ValidationException` or `ResourceNotFoundException`."
   },
   "tags": [
     {
       "name": "Runs",
-      "description": "What submitters call, with the submitters' token."
+      "description": "Submit, follow and cancel runs."
     },
     {
       "name": "Runners",
-      "description": "What job-runner calls: registering with the registration token, then the rest with its own."
+      "description": "See the runners."
     },
     {
-      "name": "Service",
-      "description": "Its health, and the client workers call it with."
+      "name": "Runner protocol",
+      "description": "Called by job-runner, not by you."
+    },
+    {
+      "name": "Platform",
+      "description": "Health, and the client worker-service installs."
     }
   ],
   "components": {
@@ -40,15 +44,15 @@
             "enum": [
               true
             ],
-            "description": "Always true: an answer at all means it is up."
+            "description": "Always true."
           },
           "version": {
             "type": "string",
-            "description": "The package's version."
+            "description": "Package version."
           },
           "commit": {
             "type": "string",
-            "description": "The commit it was built from, ending `-dirty` when built with uncommitted changes."
+            "description": "Commit it was built from."
           }
         },
         "required": [
@@ -62,22 +66,22 @@
         "properties": {
           "key": {
             "type": "string",
-            "description": "The skill's name, which its files are under."
+            "description": "Skill name."
           },
           "version": {
             "type": "integer",
-            "description": "The deployed tree's commit count, 0 when deployed from outside git."
+            "description": "Commit count of the deployed tree."
           },
           "commit": {
             "type": "string",
-            "description": "The deployed commit, ending `-dirty` when deployed with uncommitted changes."
+            "description": "Deployed commit."
           },
           "files": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/SkillFile"
             },
-            "description": "Every file of the skill, as a worker installs it."
+            "description": "The skill's files."
           }
         },
         "required": [
@@ -92,15 +96,15 @@
         "properties": {
           "path": {
             "type": "string",
-            "description": "Under the worker's Claude Code folder: `skills/jobs/bin/…` or `skills/jobs/reference/…`."
+            "description": "Path in the worker's Claude folder."
           },
           "content": {
             "type": "string",
-            "description": "The file's text."
+            "description": "File contents."
           },
           "executable": {
             "type": "boolean",
-            "description": "Whether to install it executable: true for everything under `bin/`."
+            "description": "Install as executable."
           }
         },
         "required": [
@@ -125,11 +129,11 @@
               "InternalServerException",
               "ServiceUnavailableException"
             ],
-            "description": "What went wrong, as an exception name: one per HTTP status."
+            "description": "Exception name."
           },
           "message": {
             "type": "string",
-            "description": "What went wrong, in words."
+            "description": "What went wrong."
           }
         },
         "required": [
@@ -150,19 +154,19 @@
             "type": "string",
             "maxLength": 200,
             "pattern": "^[A-Za-z0-9_.-]+\\/[A-Za-z0-9_.-]+$",
-            "description": "`owner/name` on GitHub: checked out at `/work`; with a routine, its target.",
+            "description": "GitHub repo, `owner/name`.",
             "example": "dakotacolorado/python-template"
           },
           "commit": {
             "type": "string",
             "pattern": "^[0-9a-f]{40}$",
-            "description": "The commit to run, as a full lowercase sha: the runner checks out exactly this.",
+            "description": "Full commit sha to check out.",
             "example": "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
           },
           "job": {
             "type": "string",
             "pattern": "^[a-z0-9][a-z0-9_-]{0,62}$",
-            "description": "A `[jobs.<name>]` in the repo's `jobs.toml` at that commit, or in the routine directory's when it has a routine.",
+            "description": "A `[jobs.<name>]` in the repo's `jobs.toml`.",
             "example": "hello"
           },
           "routine": {
@@ -171,14 +175,14 @@
           "host": {
             "type": "string",
             "nullable": true,
-            "description": "The machine it must run on, on the host itself; null: any runner that fits."
+            "description": "The host it must run on, if any."
           },
           "args": {
             "type": "array",
             "items": {
               "type": "string"
             },
-            "description": "Appended to the job's `run` command from `jobs.toml`."
+            "description": "Arguments appended to the job's command."
           },
           "limits": {
             "$ref": "#/components/schemas/Limits"
@@ -189,7 +193,7 @@
               "type": "string",
               "pattern": "^[A-Za-z0-9]([A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?$"
             },
-            "description": "Labels as Kubernetes writes them. On a run, what a runner must have, every key with that value; on a runner, what it has.",
+            "description": "Key-value labels. On a run, what its runner must have.",
             "example": {
               "arch": "x86_64"
             }
@@ -206,23 +210,23 @@
               "failed",
               "canceled"
             ],
-            "description": "`pending` until a runner claims it, `running` on that runner, then `succeeded`, `failed` or `canceled`, which it never leaves.",
+            "description": "`pending` → `running` → `succeeded`, `failed` or `canceled`.",
             "example": "pending"
           },
           "reason": {
             "type": "string",
             "nullable": true,
-            "description": "Why it is in its state, when that is not plain: a cancel, a lapsed lease, a timeout."
+            "description": "Why it ended, when not plain (e.g. timed out)."
           },
           "cancelRequested": {
             "type": "boolean",
-            "description": "A cancel was asked for: the runner of a run in progress is told to stop it on its next log append."
+            "description": "Cancel asked for; its runner will stop it."
           },
           "runner": {
             "type": "string",
             "nullable": true,
             "format": "uuid",
-            "description": "The runner that claimed it; null while pending."
+            "description": "Runner that claimed it."
           },
           "runsWith": {
             "$ref": "#/components/schemas/RunsWith"
@@ -230,44 +234,44 @@
           "exit": {
             "type": "integer",
             "nullable": true,
-            "description": "The run's exit code, once its runner reports one."
+            "description": "Exit code."
           },
           "duration": {
             "type": "number",
             "nullable": true,
-            "description": "Seconds it ran, as its runner reported."
+            "description": "Seconds it ran."
           },
           "logSize": {
             "type": "integer",
-            "description": "Bytes of log stored so far."
+            "description": "Log size in bytes."
           },
           "submittedBy": {
             "type": "string",
             "nullable": true,
-            "description": "The `claimed-by` it was submitted with."
+            "description": "Who submitted it (`claimed-by`)."
           },
           "createdAt": {
             "type": "string",
-            "description": "When it was submitted, as an ISO 8601 timestamp."
+            "description": "Submitted at (ISO 8601)."
           },
           "updatedAt": {
             "type": "string",
-            "description": "When it last changed, as an ISO 8601 timestamp."
+            "description": "Last changed at (ISO 8601)."
           },
           "startedAt": {
             "type": "string",
             "nullable": true,
-            "description": "When a runner claimed it; null while pending."
+            "description": "Claimed at (ISO 8601)."
           },
           "endedAt": {
             "type": "string",
             "nullable": true,
-            "description": "When it ended; null until it does."
+            "description": "Ended at (ISO 8601)."
           },
           "leaseExpiresAt": {
             "type": "string",
             "nullable": true,
-            "description": "While running: if no log append renews it by then, the run fails."
+            "description": "Fails at this time unless its runner checks in."
           }
         },
         "required": [
@@ -305,20 +309,20 @@
             "type": "string",
             "maxLength": 200,
             "pattern": "^[A-Za-z0-9_.-]+\\/[A-Za-z0-9_.-]+$",
-            "description": "`owner/name` on GitHub: the repo the routine is in.",
+            "description": "Repo holding the routine.",
             "example": "dakotacolorado/release-routines"
           },
           "commit": {
             "type": "string",
             "pattern": "^[0-9a-f]{40}$",
-            "description": "The routine repo's commit, as a full lowercase sha: the runner checks out exactly this.",
+            "description": "Full commit sha of that repo.",
             "example": "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
           },
           "dir": {
             "type": "string",
             "maxLength": 200,
             "pattern": "^(?!\\.{1,2}(\\/|$))[A-Za-z0-9_.-]+(\\/(?!\\.{1,2}(\\/|$))[A-Za-z0-9_.-]+)*$",
-            "description": "The routine's directory in that repo, holding the `jobs.toml` that names `job`: `/`-separated, no `.` or `..`.",
+            "description": "Directory holding the routine's `jobs.toml`.",
             "example": "dakotacolorado/honed"
           }
         },
@@ -327,7 +331,7 @@
           "commit",
           "dir"
         ],
-        "description": "Where its steps live, when not in `repo`'s own `jobs.toml`; null when they are."
+        "description": "The routine it runs, if any."
       },
       "Limits": {
         "type": "object",
@@ -338,7 +342,7 @@
             "minimum": 16,
             "maximum": 1048576,
             "default": null,
-            "description": "MiB the container may use, and the runner reserves for it. Null: `jobs.toml`'s, within the 1024 MiB a run without one is admitted with."
+            "description": "Memory in MiB. Default: `jobs.toml`'s, else 1024."
           },
           "timeout": {
             "type": "integer",
@@ -346,7 +350,7 @@
             "minimum": 1,
             "maximum": 86400,
             "default": null,
-            "description": "Seconds before the runner stops it and it fails. Null: `jobs.toml`'s."
+            "description": "Timeout in seconds. Default: `jobs.toml`'s."
           }
         }
       },
@@ -362,19 +366,19 @@
               "item",
               "worker"
             ],
-            "description": "What asked for the run: an approval-service batch or change, a work-tracker item, or a worker."
+            "description": "What kind of thing asked for it."
           },
           "id": {
             "type": "string",
             "pattern": "^\\S{1,200}$",
-            "description": "Its id there, without spaces."
+            "description": "Its id."
           }
         },
         "required": [
           "kind",
           "id"
         ],
-        "description": "What it was for; null when its submitter did not say.",
+        "description": "What it is for, if given.",
         "example": {
           "kind": "item",
           "id": "28af81bc-6a9a-4189-ad1f-8fd9de51308a"
@@ -388,20 +392,20 @@
             "type": "integer",
             "minimum": 1,
             "maximum": 1048576,
-            "description": "MiB the container may use."
+            "description": "Memory in MiB."
           },
           "timeout": {
             "type": "integer",
             "minimum": 1,
             "maximum": 86400,
-            "description": "Seconds before the runner stops it and it fails."
+            "description": "Timeout in seconds."
           },
           "stall": {
             "type": "integer",
             "nullable": true,
             "minimum": 1,
             "maximum": 86400,
-            "description": "Seconds without progress (output, CPU or network) before the runner ends it, failed as stalled; null when it never does."
+            "description": "Seconds without progress before it fails as stalled; null for never."
           }
         },
         "required": [
@@ -409,7 +413,7 @@
           "timeout",
           "stall"
         ],
-        "description": "What its runner runs it with: `limits`, else `jobs.toml`'s for the job, else its `[defaults]`. Null until its runner has read `jobs.toml`, and on a runner that does not say."
+        "description": "Limits it actually runs with, once its runner says."
       },
       "SubmitRunInput": {
         "type": "object",
@@ -418,19 +422,19 @@
             "type": "string",
             "maxLength": 200,
             "pattern": "^[A-Za-z0-9_.-]+\\/[A-Za-z0-9_.-]+$",
-            "description": "`owner/name` on GitHub.",
+            "description": "GitHub repo, `owner/name`.",
             "example": "dakotacolorado/python-template"
           },
           "commit": {
             "type": "string",
             "pattern": "^[0-9a-f]{40}$",
-            "description": "The commit to run, as a full lowercase sha: the runner checks out exactly this.",
+            "description": "Full commit sha to check out.",
             "example": "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
           },
           "job": {
             "type": "string",
             "pattern": "^[a-z0-9][a-z0-9_-]{0,62}$",
-            "description": "A `[jobs.<name>]` in the repo's `jobs.toml` at that commit, or in the routine directory's when it has a routine.",
+            "description": "A `[jobs.<name>]` in the repo's `jobs.toml`.",
             "example": "hello"
           },
           "args": {
@@ -441,7 +445,7 @@
             },
             "maxItems": 50,
             "default": [],
-            "description": "Appended to the job's `run` command from `jobs.toml`."
+            "description": "Arguments appended to the job's command."
           },
           "limits": {
             "$ref": "#/components/schemas/Limits"
@@ -453,7 +457,7 @@
               "pattern": "^[A-Za-z0-9]([A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?$"
             },
             "default": {},
-            "description": "Labels as Kubernetes writes them. On a run, what a runner must have, every key with that value; on a runner, what it has.",
+            "description": "Key-value labels. On a run, what its runner must have.",
             "example": {
               "arch": "x86_64"
             }
@@ -464,7 +468,7 @@
                 "$ref": "#/components/schemas/For"
               },
               {
-                "description": "What the run was for, as `GET /runs?for=<kind>:<id>` lists it."
+                "description": "What the run is for: filter with `ListRuns?for=<kind>:<id>`."
               }
             ]
           },
@@ -474,7 +478,7 @@
                 "$ref": "#/components/schemas/Routine"
               },
               {
-                "description": "Where the job's steps live, when not in its own repo: `job` is read from `<dir>/jobs.toml` in `repo` at `commit`, and the run's own `repo` and `commit` are its target, the package checked out at `/work` beside the routine. Only a runner that says it `can` run a `routine` claims it."
+                "description": "Run a job from another repo's `jobs.toml` against this repo (used by release routines)."
               }
             ]
           },
@@ -484,7 +488,7 @@
             "minLength": 1,
             "maxLength": 200,
             "default": null,
-            "description": "The machine it must run on, as a runner's `hostId`: claimed only by that machine's runner, and only one that says it `can` run `host` runs, which runs it on the host itself, with the host's user services, if that host's config lets it. Null: any runner that fits."
+            "description": "Run on this host itself, outside a container. Default: any runner, in a container."
           }
         },
         "required": [
@@ -501,7 +505,7 @@
             "items": {
               "$ref": "#/components/schemas/Run"
             },
-            "description": "The runs, newest first."
+            "description": "Runs, newest first."
           }
         },
         "required": [
@@ -516,7 +520,7 @@
           },
           "token": {
             "type": "string",
-            "description": "Its own bearer token, `<runner id>.<secret>`, shown only here: keep it where only the runner's user can read it."
+            "description": "Its own token, `<id>.<secret>`. Shown only once."
           }
         },
         "required": [
@@ -534,7 +538,7 @@
           },
           "name": {
             "type": "string",
-            "description": "What it calls itself, e.g. its host's name: not unique."
+            "description": "Display name; not unique."
           },
           "labels": {
             "type": "object",
@@ -542,36 +546,36 @@
               "type": "string",
               "pattern": "^[A-Za-z0-9]([A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?$"
             },
-            "description": "Labels as Kubernetes writes them. On a run, what a runner must have, every key with that value; on a runner, what it has.",
+            "description": "Key-value labels. On a run, what its runner must have.",
             "example": {
               "arch": "x86_64"
             }
           },
           "slots": {
             "type": "integer",
-            "description": "Runs it runs at once."
+            "description": "Runs at once."
           },
           "memory": {
             "type": "integer",
-            "description": "MiB it has for runs and their image builds."
+            "description": "Memory for runs, in MiB."
           },
           "version": {
             "type": "string",
             "nullable": true,
-            "description": "job-runner's version, as it said."
+            "description": "job-runner version."
           },
           "hostId": {
             "type": "string",
             "nullable": true,
-            "description": "The machine it runs on, the same as that machine's worker-host's `host_id` (by default its hostname); null until it says."
+            "description": "Host it runs on."
           },
           "createdAt": {
             "type": "string",
-            "description": "When it registered, as an ISO 8601 timestamp."
+            "description": "Registered at (ISO 8601)."
           },
           "lastSeenAt": {
             "type": "string",
-            "description": "When it last asked for a run, as an ISO 8601 timestamp."
+            "description": "Last claim at (ISO 8601)."
           }
         },
         "required": [
@@ -585,7 +589,7 @@
           "createdAt",
           "lastSeenAt"
         ],
-        "description": "The runner, registered."
+        "description": "The new runner."
       },
       "RegisterRunnerInput": {
         "type": "object",
@@ -594,7 +598,7 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 200,
-            "description": "What it calls itself, e.g. its host's name: not unique."
+            "description": "Display name; not unique."
           },
           "labels": {
             "type": "object",
@@ -603,7 +607,7 @@
               "pattern": "^[A-Za-z0-9]([A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?$"
             },
             "default": {},
-            "description": "Labels as Kubernetes writes them. On a run, what a runner must have, every key with that value; on a runner, what it has.",
+            "description": "Key-value labels. On a run, what its runner must have.",
             "example": {
               "arch": "x86_64"
             }
@@ -612,20 +616,20 @@
             "type": "integer",
             "minimum": 1,
             "maximum": 64,
-            "description": "Runs it runs at once."
+            "description": "Runs at once."
           },
           "memory": {
             "type": "integer",
             "minimum": 16,
             "maximum": 1048576,
-            "description": "MiB it has for runs and their image builds."
+            "description": "Memory for runs, in MiB."
           },
           "version": {
             "type": "string",
             "nullable": true,
             "maxLength": 100,
             "default": null,
-            "description": "job-runner's version."
+            "description": "job-runner version."
           },
           "hostId": {
             "type": "string",
@@ -633,7 +637,7 @@
             "minLength": 1,
             "maxLength": 200,
             "default": null,
-            "description": "The machine it runs on: its worker-host's `host_id`, by default the hostname."
+            "description": "Host name, as worker-host knows it."
           }
         },
         "required": [
@@ -650,7 +654,7 @@
             "items": {
               "$ref": "#/components/schemas/Runner"
             },
-            "description": "Every registered runner, most recently seen first."
+            "description": "Runners, most recently seen first."
           }
         },
         "required": [
@@ -666,17 +670,17 @@
                 "$ref": "#/components/schemas/Run"
               },
               {
-                "description": "The run, now running on this runner."
+                "description": "The claimed run."
               }
             ]
           },
           "memory": {
             "type": "integer",
-            "description": "MiB the run was admitted with: reserve this, and run it with no more."
+            "description": "Memory to reserve, in MiB."
           },
           "lease": {
             "type": "integer",
-            "description": "Seconds the run lives without a log append. Append, or renew with an empty one, well within it."
+            "description": "Seconds between check-ins before the run fails."
           }
         },
         "required": [
@@ -694,7 +698,7 @@
               "type": "string",
               "pattern": "^[A-Za-z0-9]([A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?$"
             },
-            "description": "What it has now; its registered labels when absent.",
+            "description": "Labels now. Default: as registered.",
             "example": {
               "arch": "x86_64"
             }
@@ -710,13 +714,13 @@
             },
             "maxItems": 10,
             "default": [],
-            "description": "What it can run beyond a job in its repo's own `jobs.toml`: `routine`, a run with a routine; `host`, a run naming its host, run on the host itself. A run needing one it does not say is left for another."
+            "description": "Extra kinds of run it takes: `routine`, `host`."
           },
           "hostId": {
             "type": "string",
             "minLength": 1,
             "maxLength": 200,
-            "description": "The machine it runs on now, recorded on the runner, so one registered before it said keeps its id."
+            "description": "Host it runs on now."
           },
           "free": {
             "type": "object",
@@ -724,19 +728,19 @@
               "slots": {
                 "type": "integer",
                 "minimum": 0,
-                "description": "Slots not taken by a run."
+                "description": "Free slots."
               },
               "memory": {
                 "type": "integer",
                 "minimum": 0,
-                "description": "MiB not reserved by a run in progress or an image build."
+                "description": "Free memory in MiB."
               }
             },
             "required": [
               "slots",
               "memory"
             ],
-            "description": "What it can take on now."
+            "description": "Free capacity now."
           }
         },
         "required": [
@@ -748,15 +752,15 @@
         "properties": {
           "size": {
             "type": "integer",
-            "description": "Bytes of log stored: the offset the next append starts at."
+            "description": "Log size: where the next append starts."
           },
           "canceled": {
             "type": "boolean",
-            "description": "A cancel was asked for: stop the run and report it `canceled`."
+            "description": "Cancel asked for: stop and complete as `canceled`."
           },
           "leaseExpiresAt": {
             "type": "string",
-            "description": "When the run fails unless another append renews it, as an ISO 8601 timestamp."
+            "description": "Lease end (ISO 8601)."
           }
         },
         "required": [
@@ -775,7 +779,7 @@
             "properties": {
               "size": {
                 "type": "integer",
-                "description": "Bytes of log stored: the offset to resend from."
+                "description": "Log size: resend from here."
               }
             },
             "required": [
@@ -795,12 +799,12 @@
               "failed",
               "canceled"
             ],
-            "description": "`canceled` when stopped for a cancel; `failed` for a non-zero exit, a timeout, or an image that would not build."
+            "description": "How it ended."
           },
           "exit": {
             "type": "integer",
             "nullable": true,
-            "description": "The run's exit code; null when it never ran or was killed."
+            "description": "Exit code, if it ran."
           },
           "duration": {
             "type": "number",
@@ -813,7 +817,7 @@
             "minLength": 1,
             "maxLength": 2000,
             "default": null,
-            "description": "Why, when the state does not say: `timed out after 600s`, `image build failed`."
+            "description": "Why, if not plain (e.g. `timed out after 600s`)."
           }
         },
         "required": [
@@ -830,9 +834,9 @@
       "get": {
         "operationId": "GetHealth",
         "tags": [
-          "Service"
+          "Platform"
         ],
-        "summary": "Get the service's health and version",
+        "summary": "Get health",
         "responses": {
           "200": {
             "description": "Service is up.",
@@ -855,11 +859,11 @@
           }
         ],
         "tags": [
-          "Service"
+          "Platform"
         ],
         "operationId": "GetSkill",
-        "summary": "Get the client workers call this deployment with",
-        "description": "The jobs skill's `bin/` and `reference/`, as this deployment was built with them, so a worker calls the API that is deployed.",
+        "summary": "Get the jobs skill",
+        "description": "For worker-service: the `jobs` client it installs in every worker session.",
         "responses": {
           "200": {
             "description": "The skill's files.",
@@ -905,18 +909,18 @@
           "Runs"
         ],
         "operationId": "SubmitRun",
-        "summary": "Submit a run of a job: a named script in a repo at a commit",
-        "description": "One run, stored `pending` until a runner whose labels and free memory fit claims it, with what it was for when `for` says. Nothing is checked against the repo here: a run of a job missing from `jobs.toml` at that commit fails on its runner, saying so in its log.",
+        "summary": "Submit a run",
+        "description": "Queues a run as `pending` until a runner claims it. The repo isn't checked here: a missing job fails on its runner.",
         "parameters": [
           {
             "schema": {
               "type": "string",
               "minLength": 1,
               "maxLength": 200,
-              "description": "Who is submitting: recorded on the run as `submittedBy`."
+              "description": "Who is submitting; saved as `submittedBy`."
             },
             "required": false,
-            "description": "Who is submitting: recorded on the run as `submittedBy`.",
+            "description": "Who is submitting; saved as `submittedBy`.",
             "name": "claimed-by",
             "in": "header"
           }
@@ -984,7 +988,7 @@
           "Runs"
         ],
         "operationId": "ListRuns",
-        "summary": "List runs, newest first",
+        "summary": "List runs",
         "parameters": [
           {
             "schema": {
@@ -996,11 +1000,11 @@
                 "failed",
                 "canceled"
               ],
-              "description": "`pending` until a runner claims it, `running` on that runner, then `succeeded`, `failed` or `canceled`, which it never leaves.",
+              "description": "`pending` → `running` → `succeeded`, `failed` or `canceled`.",
               "example": "pending"
             },
             "required": false,
-            "description": "`pending` until a runner claims it, `running` on that runner, then `succeeded`, `failed` or `canceled`, which it never leaves.",
+            "description": "`pending` → `running` → `succeeded`, `failed` or `canceled`.",
             "name": "state",
             "in": "query"
           },
@@ -1009,11 +1013,11 @@
               "type": "string",
               "maxLength": 200,
               "pattern": "^[A-Za-z0-9_.-]+\\/[A-Za-z0-9_.-]+$",
-              "description": "`owner/name` on GitHub.",
+              "description": "GitHub repo, `owner/name`.",
               "example": "dakotacolorado/python-template"
             },
             "required": false,
-            "description": "`owner/name` on GitHub.",
+            "description": "GitHub repo, `owner/name`.",
             "name": "repo",
             "in": "query"
           },
@@ -1022,21 +1026,21 @@
               "type": "string",
               "minLength": 1,
               "maxLength": 200,
-              "description": "Only the runs submitted with this `claimed-by`, as `submittedBy` records it."
+              "description": "Only runs with this `submittedBy`."
             },
             "required": false,
-            "description": "Only the runs submitted with this `claimed-by`, as `submittedBy` records it.",
+            "description": "Only runs with this `submittedBy`.",
             "name": "submittedBy",
             "in": "query"
           },
           {
             "schema": {
               "type": "string",
-              "description": "`<kind>:<id>`, e.g. `item:28af81bc-…`: only the runs submitted with that `for`.",
+              "description": "Only runs for this `<kind>:<id>`.",
               "example": "item:28af81bc-6a9a-4189-ad1f-8fd9de51308a"
             },
             "required": false,
-            "description": "`<kind>:<id>`, e.g. `item:28af81bc-…`: only the runs submitted with that `for`.",
+            "description": "Only runs for this `<kind>:<id>`.",
             "name": "for",
             "in": "query"
           },
@@ -1046,10 +1050,10 @@
               "minimum": 1,
               "maximum": 500,
               "default": 100,
-              "description": "At most this many, newest first."
+              "description": "Max results. Default: 100."
             },
             "required": false,
-            "description": "At most this many, newest first.",
+            "description": "Max results. Default: 100.",
             "name": "limit",
             "in": "query"
           }
@@ -1183,11 +1187,11 @@
           }
         ],
         "tags": [
-          "Runners"
+          "Runner protocol"
         ],
         "operationId": "CompleteRun",
-        "summary": "Complete a run in progress, saying how it ended",
-        "description": "From the run's own runner. Sending the same end again answers it unchanged, so a lost reply can be retried.",
+        "summary": "Complete a run",
+        "description": "Records how a run ended. Retrying with the same result is safe.",
         "parameters": [
           {
             "schema": {
@@ -1286,8 +1290,8 @@
           "Runs"
         ],
         "operationId": "GetRunLog",
-        "summary": "Get a run's log from a byte offset",
-        "description": "Send `Range: bytes=N-` to read from offset N; without it, from 0. Answers 206 with `Content-Range: bytes N-M/size` and at most 1 MiB, or an empty body when N is the log's size, so a follower polls from where it got to. `Run-State` says the run's state, so it knows when to stop.",
+        "summary": "Get a run's log",
+        "description": "Reads up to 1 MiB from byte N (`Range: bytes=N-`). To follow a run, poll from the last `size` until `Run-State` has ended.",
         "parameters": [
           {
             "schema": {
@@ -1314,15 +1318,15 @@
         ],
         "responses": {
           "206": {
-            "description": "The log from N, up to 1 MiB.",
+            "description": "Log bytes from N, up to 1 MiB.",
             "headers": {
               "content-range": {
                 "schema": {
                   "type": "string",
-                  "description": "`bytes N-M/size` for the bytes sent, or `bytes */size` when there are none: `size` is the log's length so far."
+                  "description": "`bytes N-M/size`; `size` is the log's length so far."
                 },
                 "required": true,
-                "description": "`bytes N-M/size` for the bytes sent, or `bytes */size` when there are none: `size` is the log's length so far."
+                "description": "`bytes N-M/size`; `size` is the log's length so far."
               },
               "run-state": {
                 "schema": {
@@ -1334,11 +1338,11 @@
                     "failed",
                     "canceled"
                   ],
-                  "description": "The run's state: once it has ended and the log is read to `size`, there is no more.",
+                  "description": "The run's state: stop polling once it has ended.",
                   "example": "pending"
                 },
                 "required": true,
-                "description": "The run's state: once it has ended and the log is read to `size`, there is no more."
+                "description": "The run's state: stop polling once it has ended."
               }
             },
             "content": {
@@ -1408,11 +1412,11 @@
           }
         ],
         "tags": [
-          "Runners"
+          "Runner protocol"
         ],
         "operationId": "AppendRunLog",
-        "summary": "Append to the log of a run in progress, and renew its lease",
-        "description": "The body is the bytes, `Content-Range: bytes S-E/*` where S is the log's current size and E = S + length - 1. An empty body without `Content-Range` only renews the lease. 416 for any other S, with the size to resend from. At most 256 KiB per append and 64 MiB per run (413). The reply says whether a cancel was asked for.",
+        "summary": "Append to a log",
+        "description": "Appends bytes at the log's end (`Content-Range: bytes S-E/*`) and renews the lease; an empty body only renews. Max 256 KiB per call, 64 MiB per run.",
         "parameters": [
           {
             "schema": {
@@ -1544,7 +1548,7 @@
         ],
         "operationId": "CancelRun",
         "summary": "Cancel a run",
-        "description": "A pending run ends `canceled` at once. A running one is marked `cancelRequested`: its runner is told on its next log append, stops it, and reports it `canceled`.",
+        "description": "Ends a pending run now. A running one is stopped by its runner within seconds.",
         "parameters": [
           {
             "schema": {
@@ -1630,11 +1634,11 @@
           }
         ],
         "tags": [
-          "Runners"
+          "Runner protocol"
         ],
         "operationId": "RegisterRunner",
         "summary": "Register a runner",
-        "description": "With the registration token, not the submitters'. Answers the runner's own token once.",
+        "description": "Takes the registration token. Returns the runner's own token, once.",
         "requestBody": {
           "description": "What the runner is and has.",
           "content": {
@@ -1698,7 +1702,7 @@
           "Runners"
         ],
         "operationId": "ListRunners",
-        "summary": "List runners, most recently seen first",
+        "summary": "List runners",
         "responses": {
           "200": {
             "description": "The runners.",
@@ -1751,11 +1755,11 @@
           }
         ],
         "tags": [
-          "Runners"
+          "Runner protocol"
         ],
         "operationId": "ClaimRun",
-        "summary": "Claim the oldest pending run that fits",
-        "description": "The oldest pending run whose labels the runner has, whose memory fits `free`, whose routine or host, if any, it `can` run, and whose `host`, if any, is the runner's own `hostId`, moved to `running` on this runner. Two claims never get the same run. 204 when none fits.",
+        "summary": "Claim a run",
+        "description": "Takes the oldest pending run that fits this runner and marks it `running`. 204 if none fits.",
         "parameters": [
           {
             "schema": {
@@ -1834,11 +1838,11 @@
           }
         ],
         "tags": [
-          "Runners"
+          "Runner protocol"
         ],
         "operationId": "PutRunsWith",
-        "summary": "Put what a run in progress runs with",
-        "description": "From the run's own runner, once it has read `jobs.toml` and before it starts the run's container. Sending it again replaces it.",
+        "summary": "Put run limits",
+        "description": "Records the memory, timeout and stall limit a run actually got, once its runner has read `jobs.toml`.",
         "parameters": [
           {
             "schema": {

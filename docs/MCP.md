@@ -42,21 +42,21 @@ What the server tells an agent when it connects:
 
 ### submit_run
 
-One run, stored `pending` until a runner whose labels and free memory fit claims it, with what it was for when `for` says. Nothing is checked against the repo here: a run of a job missing from `jobs.toml` at that commit fails on its runner, saying so in its log.
+Queues a run as `pending` until a runner claims it. The repo isn't checked here: a missing job fails on its runner.
 
 | Input | Type | Required | |
 | --- | --- | --- | --- |
-| `repo` | string | yes | `owner/name` on GitHub. |
-| `commit` | string | yes | The commit to run, as a full lowercase sha: the runner checks out exactly this. |
-| `job` | string | yes | A `[jobs.<name>]` in the repo's `jobs.toml` at that commit, or in the routine directory's when it has a routine. |
-| `args` | string[] |  | Appended to the job's `run` command from `jobs.toml`. |
+| `repo` | string | yes | GitHub repo, `owner/name`. |
+| `commit` | string | yes | Full commit sha to check out. |
+| `job` | string | yes | A `[jobs.<name>]` in the repo's `jobs.toml`. |
+| `args` | string[] |  | Arguments appended to the job's command. |
 | `limits` | object |  |  |
-| `limits.memory` | integer or null |  | MiB the container may use, and the runner reserves for it. Null: `jobs.toml`'s, within the 1024 MiB a run without one is admitted with. |
-| `limits.timeout` | integer or null |  | Seconds before the runner stops it and it fails. Null: `jobs.toml`'s. |
-| `labels` | object |  | Labels as Kubernetes writes them. On a run, what a runner must have, every key with that value; on a runner, what it has. |
-| `for` | object or null |  | What the run was for, as `GET /runs?for=<kind>:<id>` lists it. |
-| `routine` | object or null |  | Where the job's steps live, when not in its own repo: `job` is read from `<dir>/jobs.toml` in `repo` at `commit`, and the run's own `repo` and `commit` are its target, the package checked out at `/work` beside the routine. Only a runner that says it `can` run a `routine` claims it. |
-| `host` | string or null |  | The machine it must run on, as a runner's `hostId`: claimed only by that machine's runner, and only one that says it `can` run `host` runs, which runs it on the host itself, with the host's user services, if that host's config lets it. Null: any runner that fits. |
+| `limits.memory` | integer or null |  | Memory in MiB. Default: `jobs.toml`'s, else 1024. |
+| `limits.timeout` | integer or null |  | Timeout in seconds. Default: `jobs.toml`'s. |
+| `labels` | object |  | Key-value labels. On a run, what its runner must have. |
+| `for` | object or null |  | What the run is for: filter with `ListRuns?for=<kind>:<id>`. |
+| `routine` | object or null |  | Run a job from another repo's `jobs.toml` against this repo (used by release routines). |
+| `host` | string or null |  | Run on this host itself, outside a container. Default: any runner, in a container. |
 
 ### list_runs
 
@@ -64,11 +64,11 @@ Returns runs matching every filter given, newest first.
 
 | Input | Type | Required | |
 | --- | --- | --- | --- |
-| `state` | `pending`, `running`, `succeeded`, `failed`, `canceled` |  | `pending` until a runner claims it, `running` on that runner, then `succeeded`, `failed` or `canceled`, which it never leaves. |
-| `repo` | string |  | `owner/name` on GitHub. |
-| `submittedBy` | string |  | Only the runs submitted with this `claimed-by`, as `submittedBy` records it. |
-| `for` | string |  | `<kind>:<id>`, e.g. `item:28af81bc-…`: only the runs submitted with that `for`. |
-| `limit` | integer |  | At most this many, newest first. |
+| `state` | `pending`, `running`, `succeeded`, `failed`, `canceled` |  | `pending` → `running` → `succeeded`, `failed` or `canceled`. |
+| `repo` | string |  | GitHub repo, `owner/name`. |
+| `submittedBy` | string |  | Only runs with this `submittedBy`. |
+| `for` | string |  | Only runs for this `<kind>:<id>`. |
+| `limit` | integer |  | Max results. Default: 100. |
 
 ### get_run
 
@@ -89,7 +89,7 @@ Returns the log from byte `offset`, at most 1 MiB, with the log's size so far an
 
 ### cancel_run
 
-A pending run ends `canceled` at once. A running one is marked `cancelRequested`: its runner is told on its next log append, stops it, and reports it `canceled`.
+Ends a pending run now. A running one is stopped by its runner within seconds.
 
 | Input | Type | Required | |
 | --- | --- | --- | --- |

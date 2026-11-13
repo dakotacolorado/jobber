@@ -1,4 +1,6 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { PACKAGE_VERSION } from "./build.ts";
 import { banner, MARK_PIXELS, TAGLINE, WORDMARK } from "./banner.ts";
 
 const info = { version: "1.2.3", url: "http://127.0.0.1:4500", publicUrl: "https://beta:8445", db: "/data/jobber.db", missing: [], color: false };
@@ -42,5 +44,12 @@ describe("banner", () => {
   it("is painted in jobber's violet only when color is on", () => {
     expect(banner(info)).not.toContain("\x1b");
     expect(banner({ ...info, color: true })).toContain("\x1b[38;5;98m");
+  });
+
+  it("is in the README as jobber prints it, starting locally", () => {
+    const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
+    const local = "http://127.0.0.1:4500";
+    const printed = banner({ ...info, url: local, publicUrl: local, db: "~/.local/share/jobber/jobber.db", version: PACKAGE_VERSION });
+    expect(readme).toContain(`\`\`\`\n${printed.replace(/^\n+|\n+$/g, "")}\n\`\`\``);
   });
 });

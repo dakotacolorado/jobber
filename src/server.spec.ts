@@ -37,7 +37,7 @@ describe("a database on disk", () => {
     const first = start({ db, tokens });
     const call = on(first);
     const run = (await (await call("POST", "/runs", tokens.submitter, { repo: "o/r", commit: COMMIT, job: "hello" })).json()) as Run;
-    const { host, token } = (await (await call("POST", "/hosts", tokens.registration, { name: "h", os: "linux", arch: "x86_64", slots: 1, memory: 2048 })).json()) as {
+    const { host, token } = (await (await call("POST", "/hosts", tokens.registration, { name: "h", os: "linux", arch: "x86_64", capacity: { cpu: 1, memory: 2048 } })).json()) as {
       host: Host;
       token: string;
     };
@@ -82,7 +82,7 @@ describe("the timers", () => {
       commit: COMMIT,
       job: "hello",
       args: [],
-      requirements: { os: null, arch: null, memory: null, timeout: null },
+      requirements: { os: null, arch: null, cpu: null, memory: null, timeout: null },
       labels: {},
       priority: 0,
       state: "running",

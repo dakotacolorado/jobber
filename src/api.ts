@@ -207,7 +207,8 @@ export class JobApi {
       const host: StoredHost = {
         ...draft,
         id: before?.id ?? newId(),
-        free: before?.free ?? null,
+        // What it had free was of the capacity it registered before.
+        free: null,
         metrics: before?.metrics ?? null,
         createdAt: before?.createdAt ?? at,
         lastSeenAt: at,

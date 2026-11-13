@@ -70,9 +70,9 @@ const pairs = (labels) => Object.entries(labels).map(([k, v]) => `${k}=${v}`);
 /** A run's labels, each a link to the runs that share it. */
 const labelLinks = (labels) =>
   pairs(labels).flatMap((pair, i) => [i ? " " : "", h("a", { class: "mono label", href: `#/?label=${encodeURIComponent(pair)}` }, pair)]);
-/** What a run asked for, in a few words: `linux x86_64, 256 MiB, 60 s`. */
+/** What a run asked for, in a few words: `linux x86_64, 0.5 CPU, 256 MiB, 60 s`. */
 const needs = (r) =>
-  [r.os, r.arch, r.memory !== null && `${r.memory} MiB`, r.timeout !== null && `${r.timeout} s`].filter(Boolean).join(", ") || "any host";
+  [r.os, r.arch, r.cpu != null && `${r.cpu} CPU`, r.memory !== null && `${r.memory} MiB`, r.timeout !== null && `${r.timeout} s`].filter(Boolean).join(", ") || "any host";
 function took(run) {
   if (run.duration !== null) return `${run.duration.toFixed(1)} s`;
   if (run.startedAt && !run.endedAt) return `${Math.round((Date.now() - Date.parse(run.startedAt)) / 1000)} s so far`;
@@ -363,6 +363,7 @@ function newRun(params) {
   const choose = (options) => h("select", {}, h("option", { value: "" }, "any"), options.map((each) => h("option", { value: each }, each)));
   const os = choose(["linux", "macos", "windows"]);
   const arch = choose(["x86_64", "aarch64"]);
+  const cpu = input("cpu", { type: "number", min: 0.001, step: "any", placeholder: "0.5" });
   const memory = input("memory", { type: "number", min: 16, placeholder: "jobs.toml's" });
   const timeout = input("timeout", { type: "number", min: 1, placeholder: "jobs.toml's" });
   const priority = input("priority", { type: "number", min: -1000, max: 1000, step: 1, placeholder: "0" });
@@ -393,6 +394,7 @@ function newRun(params) {
               requirements: {
                 os: os.value || null,
                 arch: arch.value || null,
+                cpu: cpu.value ? Number(cpu.value) : null,
                 memory: memory.value ? Number(memory.value) : null,
                 timeout: timeout.value ? Number(timeout.value) : null,
               },
@@ -410,9 +412,10 @@ function newRun(params) {
       h("label", {}, "Job"), job,
       h("label", {}, "Arguments"), args,
       h("h2", { class: "section" }, "Requirements"),
-      h("div", { class: "grid4" },
+      h("div", { class: "grid5" },
         h("div", {}, h("label", {}, "OS"), os),
         h("div", {}, h("label", {}, "Arch"), arch),
+        h("div", {}, h("label", {}, "CPUs"), cpu),
         h("div", {}, h("label", {}, "Memory, MiB"), memory),
         h("div", {}, h("label", {}, "Timeout, s"), timeout)),
       h("label", {}, "Labels"), labels,
@@ -427,6 +430,8 @@ function newRun(params) {
 }
 
 const mib = (n) => (n >= 1024 ? `${(n / 1024).toFixed(1)} GiB` : `${n} MiB`);
+/** CPUs and memory: `13.5 CPU, 9.0 GiB`. */
+const resources = (r) => `${+r.cpu.toFixed(3)} CPU, ${mib(r.memory)}`;
 
 async function hosts() {
   current();
@@ -447,9 +452,9 @@ async function hosts() {
                 h("td", {}, host.name, h("div", { class: "muted mono" }, short(host.id))),
                 h("td", {}, host.connected ? "yes" : h("span", { class: "muted" }, "no")),
                 h("td", {}, `${host.os} ${host.arch}`),
-                h("td", {}, `${host.slots} slots, ${mib(host.memory)}`),
-                h("td", {}, host.free ? `${host.free.slots} slots, ${mib(host.free.memory)}` : ""),
-                h("td", {}, host.metrics ? host.metrics.cpuLoad.toFixed(2) : ""),
+                h("td", {}, resources(host.capacity)),
+                h("td", {}, host.free ? resources(host.free) : ""),
+                h("td", {}, host.metrics ? `${host.metrics.cpuLoad.toFixed(2)}${host.metrics.cpus ? ` of ${host.metrics.cpus} CPUs` : ""}` : ""),
                 h("td", {}, host.metrics ? `${mib(host.metrics.memoryUsed)} of ${mib(host.metrics.memoryTotal)}` : ""),
                 h("td", {}, host.metrics ? mib(host.metrics.diskFree) : ""),
                 h("td", { class: "mono" }, pairs(host.labels).join(", ")),

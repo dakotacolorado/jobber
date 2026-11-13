@@ -36,13 +36,13 @@ function setup() {
 describe("POST /runs", () => {
   it("stores a pending run with what was submitted, and defaults for what was not", async () => {
     const { submit, call } = setup();
-    const run = await submit({ args: ["--n", "3"], requirements: { memory: 256, os: "linux" }, labels: { item: "28af81bc", by: "agent-1" } });
+    const run = await submit({ args: ["--n", "3"], requirements: { cpu: 1.5, memory: 256, os: "linux" }, labels: { item: "28af81bc", by: "agent-1" } });
     expect(run).toMatchObject({
       repo: "dakotacolorado/python-template",
       commit: COMMIT,
       job: "hello",
       args: ["--n", "3"],
-      requirements: { os: "linux", arch: null, memory: 256, timeout: null },
+      requirements: { os: "linux", arch: null, cpu: 1.5, memory: 256, timeout: null },
       labels: { item: "28af81bc", by: "agent-1" },
       state: "pending",
       host: null,
@@ -50,7 +50,7 @@ describe("POST /runs", () => {
       logSize: 0,
     });
     expect(await (await call("GET", `/runs/${run.id}`)).json()).toEqual(run);
-    expect(await submit()).toMatchObject({ args: [], requirements: { os: null, arch: null, memory: null, timeout: null }, labels: {}, priority: 0 });
+    expect(await submit()).toMatchObject({ args: [], requirements: { os: null, arch: null, cpu: null, memory: null, timeout: null }, labels: {}, priority: 0 });
     expect(await submit({ priority: -5 })).toMatchObject({ priority: -5 });
   });
 
@@ -63,6 +63,8 @@ describe("POST /runs", () => {
     ["no job", { job: undefined }],
     ["memory that is not whole MiB", { requirements: { memory: 1.5 } }],
     ["a negative timeout", { requirements: { timeout: -1 } }],
+    ["no cpu at all", { requirements: { cpu: 0 } }],
+    ["a cpu that is not a number", { requirements: { cpu: "1" } }],
     ["a label with a space", { labels: { "a b": "c" } }],
     ["args that are not strings", { args: [1] }],
     ["a priority that is not whole", { priority: 1.5 }],

@@ -9,7 +9,7 @@ import { sweep } from "./sweep.ts";
 const TOKEN = "submitter";
 const REGISTRATION = "registration";
 const COMMIT = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
-const METRICS = { cpuLoad: 0.5, memoryUsed: 2048, memoryTotal: 8192, diskFree: 50_000 };
+const METRICS = { cpuLoad: 0.5, memoryUsed: 2048, memoryTotal: 8192, diskFree: 50_000, cpus: 8 };
 
 /** Writes `run` over what is stored, as no API call would: to put a run in a state a test needs. */
 function force(store: Store, run: Run) {
@@ -38,16 +38,16 @@ function setup() {
     return (await res.json()) as Run;
   };
   const register = async (over: Record<string, unknown> = {}) => {
-    const res = await call("POST", "/hosts", REGISTRATION, { name: `host-${++names}`, os: "linux", arch: "x86_64", slots: 2, memory: 3072, ...over });
+    const res = await call("POST", "/hosts", REGISTRATION, { name: `host-${++names}`, os: "linux", arch: "x86_64", capacity: { cpu: 2, memory: 3072 }, ...over });
     expect(res.status).toBe(201);
     return (await res.json()) as Registered;
   };
   /** Starts the next queued run that fits on `h`, answering it as `ClaimRun` once did: 204 for none. */
-  const claim = async (h: Registered, free = { slots: 1, memory: 2048 }) => {
+  const claim = async (h: Registered, free = { cpu: 1, memory: 2048 }) => {
     const started = startNext(store, h.host.id, free);
     return started ? Response.json(started) : new Response(null, { status: 204 });
   };
-  const heartbeat = (h: Registered, running: string[] = [], free = { slots: 1, memory: 2048 }) =>
+  const heartbeat = (h: Registered, running: string[] = [], free = { cpu: 1, memory: 2048 }) =>
     call("POST", `/hosts/${h.host.id}/heartbeat`, h.token, { free, metrics: METRICS, running });
   const append = (id: string, token: string, text: string, start: number) => {
     const bytes = new TextEncoder().encode(text);
@@ -65,38 +65,43 @@ describe("RegisterHost", () => {
   it("registers with the registration token, answers a token of the host's own, and lists it", async () => {
     const { register, hosts } = setup();
     const { host, token } = await register({ name: "studio", labels: { room: "office" }, version: "1.2.3" });
-    expect(host).toMatchObject({ name: "studio", os: "linux", arch: "x86_64", slots: 2, memory: 3072, labels: { room: "office" }, version: "1.2.3", free: null, metrics: null });
+    expect(host).toMatchObject({ name: "studio", os: "linux", arch: "x86_64", capacity: { cpu: 2, memory: 3072 }, labels: { room: "office" }, version: "1.2.3", free: null, metrics: null });
     expect(host).not.toHaveProperty("tokenHash");
     expect(token.startsWith(`${host.id}.`)).toBe(true);
     expect((await hosts()).map((h) => h.id)).toEqual([host.id]);
   });
 
-  it("keeps a host's id when its name registers again, and only the new token works", async () => {
+  it("keeps a host's id when its name registers again, takes its new capacity and version, and only the new token works", async () => {
     const { register, heartbeat, hosts } = setup();
-    const first = await register({ name: "studio" });
-    const again = await register({ name: "studio", slots: 4 });
+    const first = await register({ name: "studio", version: "1.0.0" });
+    expect((await heartbeat(first)).status).toBe(200);
+    const again = await register({ name: "studio", capacity: { cpu: 13.5, memory: 9216 }, version: "1.1.0" });
     expect(again.host.id).toBe(first.host.id);
-    expect(again.host.slots).toBe(4);
-    expect(await hosts()).toHaveLength(1);
+    expect(await hosts()).toEqual([
+      expect.objectContaining({ id: first.host.id, capacity: { cpu: 13.5, memory: 9216 }, version: "1.1.0", free: null, createdAt: first.host.createdAt }),
+    ]);
+    for (const gone of ["slots", "memory"]) expect(again.host).not.toHaveProperty(gone);
     expect((await heartbeat(first)).status).toBe(401);
     expect((await heartbeat(again)).status).toBe(200);
   });
 
   it("refuses the submitter token, and a host token cannot list or submit", async () => {
     const { call, register } = setup();
-    expect((await call("POST", "/hosts", TOKEN, { name: "h", os: "linux", arch: "x86_64", slots: 1, memory: 512 })).status).toBe(401);
+    expect((await call("POST", "/hosts", TOKEN, { name: "h", os: "linux", arch: "x86_64", capacity: { cpu: 1, memory: 512 } })).status).toBe(401);
     const { token } = await register();
     expect((await call("GET", "/hosts", token)).status).toBe(401);
     expect((await call("POST", "/runs", token, { repo: "a/b", commit: COMMIT, job: "hello" })).status).toBe(401);
   });
 
   it.each([
-    ["no slots", { slots: 0 }],
+    ["no capacity", { capacity: undefined }],
+    ["no cpu", { capacity: { cpu: 0, memory: 512 } }],
+    ["memory that is not whole MiB", { capacity: { cpu: 1, memory: 512.5 } }],
     ["an os it does not know", { os: "plan9" }],
     ["an arch it does not know", { arch: "mips" }],
   ])("refuses %s", async (_, over) => {
     const { call } = setup();
-    expect((await call("POST", "/hosts", REGISTRATION, { name: "h", os: "linux", arch: "x86_64", slots: 1, memory: 512, ...over })).status).toBe(400);
+    expect((await call("POST", "/hosts", REGISTRATION, { name: "h", os: "linux", arch: "x86_64", capacity: { cpu: 1, memory: 512 }, ...over })).status).toBe(400);
   });
 });
 
@@ -106,7 +111,7 @@ describe("host auth", () => {
     const a = await register();
     const b = await register();
     const run = await submit();
-    const free = { free: { slots: 1, memory: 2048 } };
+    const free = { free: { cpu: 1, memory: 2048 } };
     const beat = { ...free, metrics: METRICS, running: [] };
     expect((await call("POST", `/hosts/${a.host.id}/heartbeat`, TOKEN, beat)).status).toBe(401);
     expect((await call("POST", `/hosts/${a.host.id}/heartbeat`, `${a.host.id}.wrong`, beat)).status).toBe(401);
@@ -133,12 +138,12 @@ describe("SendHeartbeat", () => {
     const theirs = ((await (await claim(other)).json()) as Claim).run;
     const old = "2000-01-01T00:00:00.000Z";
     for (const id of [mine.id, theirs.id]) force(store, { ...store.run(id)!, leaseExpiresAt: old });
-    const res = await heartbeat(h, [mine.id, theirs.id], { slots: 0, memory: 1024 });
+    const res = await heartbeat(h, [mine.id, theirs.id], { cpu: 0, memory: 1024 });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ cancel: [], ended: [theirs.id], lease: LEASE_SECONDS });
     expect(store.run(mine.id)!.leaseExpiresAt! > new Date().toISOString()).toBe(true);
     expect(store.run(theirs.id)!.leaseExpiresAt).toBe(old);
-    expect((await hosts()).find((each) => each.id === h.host.id)).toMatchObject({ free: { slots: 0, memory: 1024 }, metrics: METRICS });
+    expect((await hosts()).find((each) => each.id === h.host.id)).toMatchObject({ free: { cpu: 0, memory: 1024 }, metrics: METRICS });
   });
 
   it("answers which of its runs to cancel, which stay running until it completes them", async () => {
@@ -170,7 +175,7 @@ describe("SendHeartbeat", () => {
   it("refuses metrics that are missing", async () => {
     const { register, call } = setup();
     const h = await register();
-    expect((await call("POST", `/hosts/${h.host.id}/heartbeat`, h.token, { free: { slots: 1, memory: 1 }, running: [] })).status).toBe(400);
+    expect((await call("POST", `/hosts/${h.host.id}/heartbeat`, h.token, { free: { cpu: 1, memory: 1 }, running: [] })).status).toBe(400);
   });
 });
 
@@ -237,7 +242,7 @@ describe("CompleteRun", () => {
     const h = await register();
     const ok = await submit();
     const bad = await submit();
-    for (let i = 0; i < 2; i++) await claim(h, { slots: 1, memory: 8192 });
+    for (let i = 0; i < 2; i++) await claim(h, { cpu: 1, memory: 8192 });
     const res = await complete(ok.id, h.token, { state: "succeeded", exit: 0 });
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ state: "succeeded", exit: 0, duration: 1.5, leaseExpiresAt: null });
@@ -338,7 +343,7 @@ describe("a database from before hosts", () => {
     const store = new Store(db);
     const run = store.run(old.id)!;
     expect(run).toMatchObject({
-      requirements: { os: null, arch: null, memory: 256, timeout: null },
+      requirements: { os: null, arch: null, cpu: null, memory: 256, timeout: null },
       labels: { worker: "jobber-check", by: "jobber-check" },
       host: runner.id,
     });
@@ -346,8 +351,26 @@ describe("a database from before hosts", () => {
     expect(store.runs({ labels: [["worker", "jobber-check"]], limit: 10 }).map((r) => r.id)).toEqual([old.id]);
     expect(store.hosts()).toEqual([
       { ...runner, name: "dakotas-hp-laptop", os: "linux", arch: "x86_64", free: null, metrics: null, hostId: undefined, ...{} },
-    ].map(({ hostId: _, ...h }) => h));
+    ].map(({ hostId: _, slots, memory, ...h }) => ({ ...h, capacity: { cpu: slots, memory } })));
     // Opening it again changes nothing.
     expect(new Store(db).run(old.id)).toEqual(run);
+  });
+});
+
+describe("a database from before capacity", () => {
+  it("opens with each host's slots and memory as its capacity, and each run's requirements with no cpu", () => {
+    const db = new DatabaseSync(":memory:");
+    const first = new Store(db);
+    const at = "2026-11-13T00:00:00.000Z";
+    const host = { id: "33333333-3333-4333-8333-333333333333", name: "lenovo", os: "linux", arch: "x86_64", slots: 1, memory: 1024, labels: {}, version: "v1", free: { slots: 1, memory: 1024 }, metrics: null, createdAt: at, lastSeenAt: at, tokenHash: "ab" };
+    db.prepare("INSERT INTO hosts (id, name, record) VALUES (?, ?, ?)").run(host.id, host.name, JSON.stringify(host));
+    const run = { id: "44444444-4444-4444-8444-444444444444", state: "pending", repo: "o/r", requirements: { os: null, arch: null, memory: 256, timeout: null } };
+    db.prepare("INSERT INTO runs (id, state, repo, created_at, updated_at, record) VALUES (?, ?, ?, ?, ?, ?)").run(run.id, run.state, run.repo, at, at, JSON.stringify(run));
+    void first;
+    const store = new Store(db);
+    const { slots: _s, memory: _m, ...rest } = host;
+    expect(store.hosts()).toEqual([{ ...rest, capacity: { cpu: 1, memory: 1024 }, free: null }]);
+    expect(store.run(run.id)!.requirements).toEqual({ os: null, arch: null, cpu: null, memory: 256, timeout: null });
+    expect(new Store(db).hosts()).toEqual(store.hosts());
   });
 });

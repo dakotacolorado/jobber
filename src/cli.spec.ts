@@ -95,13 +95,13 @@ describe("jobber serve, to a host", () => {
     const registered = await fetch(`${url}/hosts`, {
       method: "POST",
       headers: { authorization: "Bearer r", "content-type": "application/json" },
-      body: JSON.stringify({ name: "h", os: "linux", arch: "x86_64", slots: 1, memory: 1024 }),
+      body: JSON.stringify({ name: "h", os: "linux", arch: "x86_64", capacity: { cpu: 1, memory: 1024 } }),
     });
     const { host, token } = (await registered.json()) as { host: { id: string }; token: string };
     const socket = new WebSocket(`${url.replace("http", "ws")}/hosts/${host.id}/connect`, { headers: { authorization: `Bearer ${token}` } });
     await new Promise((open) => socket.once("open", open));
     const answer = new Promise<string>((got) => socket.once("message", (data) => got(data.toString())));
-    socket.send(JSON.stringify({ type: "heartbeat", free: { slots: 1, memory: 1024 }, metrics: { cpuLoad: 0, memoryUsed: 0, memoryTotal: 0, diskFree: 0 }, running: [] }));
+    socket.send(JSON.stringify({ type: "heartbeat", free: { cpu: 1, memory: 1024 }, metrics: { cpuLoad: 0, memoryUsed: 0, memoryTotal: 0, diskFree: 50_000, cpus: 0 }, running: [] }));
     expect(JSON.parse(await answer)).toEqual({ type: "heartbeat", cancel: [], ended: [], lease: 60 });
     socket.close();
   });
@@ -121,7 +121,7 @@ describe("jobber backup", () => {
   it("copies the database to the file it names", () => {
     const dir = temp();
     const store = Store.open(join(dir, "js.db"));
-    store.putHost({ id: "h1", name: "h", os: "linux", arch: "x86_64", labels: {}, slots: 1, memory: 16, version: null, free: null, metrics: null, createdAt: "t", lastSeenAt: "t", tokenHash: "x" });
+    store.putHost({ id: "h1", name: "h", os: "linux", arch: "x86_64", labels: {}, capacity: { cpu: 1, memory: 16 }, version: null, free: null, metrics: null, createdAt: "t", lastSeenAt: "t", tokenHash: "x" });
     const done = spawnSync(process.execPath, [CLI, "backup", join(dir, "copy.db"), "--db", join(dir, "js.db")], { env: clean(), encoding: "utf8" });
     store.close();
     expect(done.status, done.stderr).toBe(0);

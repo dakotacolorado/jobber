@@ -1,4 +1,4 @@
-import { due, expired, fresh, freeOn, now, RequestError, schedule, assigned, type Run } from "./domain.ts";
+import { due, expired, fresh, freeOn, healthy, now, RequestError, schedule, assigned, type Run } from "./domain.ts";
 import type { Store } from "./store.ts";
 
 /** The hosts jobber can reach now, and how it hands one a run. */
@@ -16,7 +16,7 @@ export const NO_LINK: Link = { connected: () => [], assign: () => {}, cancel: ()
 
 /**
  * Returns every assignment not taken in time to the queue, then places queued
- * runs on connected hosts that heartbeated lately and fit them, recording each
+ * runs on connected hosts that heartbeated lately, are healthy and fit them, recording each
  * assignment before handing it over. Answers what it moved. A run changed
  * meanwhile (canceled, claimed) is left as it now is.
  */
@@ -30,7 +30,7 @@ export function tick(store: Store, link: Link, at = now()): { expired: number; p
   const active = store.inState("assigned", "running");
   const candidates = store
     .hosts()
-    .filter((h) => reachable.has(h.id) && fresh(h, at))
+    .filter((h) => reachable.has(h.id) && fresh(h, at) && healthy(h))
     .map((h) => ({ id: h.id, os: h.os, arch: h.arch, free: freeOn(h, active) }));
   let placed = 0;
   if (candidates.length) {

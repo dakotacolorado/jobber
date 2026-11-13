@@ -59,9 +59,19 @@ capacity and health.
   reads the repo.
 - A run is submitted `pending` into a queue ordered by `priority`, then age.
   The scheduler places it `assigned` on a connected host that fits its
-  `requirements` (os, arch, memory) and has room, and pushes it there. The host
+  `requirements` and has room, and pushes it there. The host
   takes it and it is `running`. It ends `succeeded`, `failed` or `canceled`,
   with its exit code. An assignment not taken in 30 s goes back to the queue.
+- Hosts and runs fit as in Kubernetes. A host offers its **capacity**: what
+  its runner measured of the machine (CPUs, memory) less what its config
+  keeps back for everything else there, registered each time it starts. A run
+  **requests** `cpu` (a decimal number of CPUs, 0.5 when none is given) and
+  `memory` (MiB, 1024 when none is given), and fits a host whose os and arch
+  match its own, if it names them, and whose capacity, less the requests of
+  the runs assigned or running there, holds its requests. There is no count
+  of runs: as many go to a host as their requests fit. Live metrics only say
+  whether a host is well: one under 2 GiB of free disk, or with a load over
+  1.5 per CPU, is given nothing more until it recovers.
 - A run given `retry: {limit, backoff}` that fails goes back to the queue as
   its next `attempt`, `backoff` seconds later, doubling each time. Each attempt
   keeps its own log and exit.
@@ -71,7 +81,8 @@ capacity and health.
   calls with its own token, which works for its own runs and nothing else. It
   holds a WebSocket open to jobber, over which runs are pushed
   ([`docs/PROTOCOL.md`](./docs/PROTOCOL.md)). It heartbeats every few seconds
-  with its free capacity and metrics (CPU load, memory, free disk), which
+  with what its budget has free and its metrics (CPU load and CPUs, memory,
+  free disk), which
   renews its running runs' 60 s leases. It appends their logs and completes
   them over HTTP.
 - Every change of a run's state is a conditional write, so two hosts never get

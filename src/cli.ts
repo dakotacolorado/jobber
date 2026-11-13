@@ -4,6 +4,7 @@ import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
+import { banner } from "./banner.ts";
 import { PACKAGE_VERSION } from "./build.ts";
 import { start, type Running } from "./server.ts";
 import { Store } from "./store.ts";
@@ -18,6 +19,8 @@ Options:
   --host <addr>   address to listen on (default 127.0.0.1, or JOB_SERVICE_HOST)
   --port <n>      port (default 4500, or JOB_SERVICE_PORT)
   --db <path>     the SQLite file (default ~/.local/share/job-service/job-service.db, or JOB_SERVICE_DB)
+  --public-url <url>  its address behind a proxy, as https://host:8445: what the banner
+                  gives (default this server's own, or JOBBER_PUBLIC_URL)
   -h, --help      this
 
 Environment:
@@ -35,6 +38,7 @@ const { values, positionals } = parseArgs({
     host: { type: "string" },
     port: { type: "string" },
     db: { type: "string" },
+    "public-url": { type: "string" },
     help: { type: "boolean", short: "h" },
   },
 });
@@ -75,13 +79,12 @@ const port = Number(values.port ?? env.JOB_SERVICE_PORT ?? 4500);
 if (!Number.isInteger(port) || port < 0 || port > 65535) fail(`--port must be a port number, not ${values.port ?? env.JOB_SERVICE_PORT}`);
 
 const running: Running = start({ db: path, tokens: { submitter: env.AUTH_TOKEN || null, registration: env.RUNNER_TOKEN || null } });
+const shown = (at: number) => `http://${host.includes(":") ? `[${host}]` : host}:${at}`;
 const server = serve({ fetch: running.api.fetch, hostname: host, port }, (info) => {
-  const missing = [!env.AUTH_TOKEN && "AUTH_TOKEN", !env.RUNNER_TOKEN && "RUNNER_TOKEN"].filter(Boolean);
-  process.stdout.write(
-    `job-service v${PACKAGE_VERSION} on http://${host.includes(":") ? `[${host}]` : host}:${info.port}, data in ${path}` +
-      (missing.length ? ` (${missing.join(" and ")} not set)` : "") +
-      "\n",
-  );
+  const missing = ["AUTH_TOKEN", "RUNNER_TOKEN"].filter((name) => !env[name]);
+  const publicUrl = (values["public-url"] ?? env.JOBBER_PUBLIC_URL ?? shown(info.port)).replace(/\/+$/, "");
+  const color = Boolean(process.stdout.isTTY) && !env.NO_COLOR;
+  process.stdout.write(banner({ version: PACKAGE_VERSION, url: shown(info.port), publicUrl, db: path, missing, color }));
 });
 
 running.connections.attach(server as import("node:http").Server, (authorization, id) => running.api.hostAt(authorization, id));

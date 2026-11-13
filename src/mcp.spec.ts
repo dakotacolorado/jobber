@@ -102,7 +102,7 @@ describe("the MCP server", () => {
     // The runner protocol takes a runner's token, or the registration token; meta is for the platform.
     const submitters = Object.values(paths)
       .flatMap((methods) => Object.values(methods))
-      .filter((op) => !op.tags?.includes("Service") && op.operationId !== "RegisterRunner" && op.security?.some((s) => typeof s === "object" && s !== null && "bearerAuth" in s))
+      .filter((op) => !op.tags?.includes("Platform") && op.operationId !== "RegisterRunner" && op.security?.some((s) => typeof s === "object" && s !== null && "bearerAuth" in s))
       .map((op) => snake(op.operationId));
     expect((await mcpDocument()).tools.map((tool) => tool.name).sort()).toEqual(submitters.sort());
   });

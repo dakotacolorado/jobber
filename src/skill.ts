@@ -127,7 +127,7 @@ const body = (content: Record<string, { schema?: Schema }> | undefined) => {
 
 /**
  * A worker's reference to the API, from its OpenAPI document: every operation
- * but `Service`'s, with its parameters, body and answers, then every named schema's fields.
+ * but `Platform`'s, with its parameters, body and answers, then every named schema's fields.
  * Short enough for a worker's context, where the full rendering is not.
  */
 export function renderReference(doc: Document): string {
@@ -143,7 +143,7 @@ export function renderReference(doc: Document): string {
     for (const method of METHODS) {
       const op = item[method];
       // Liveness and the skill itself are for the platform, not a worker's calls.
-      if (!op || op.tags?.includes("Service")) continue;
+      if (!op || op.tags?.includes("Platform")) continue;
       rendered.push(op);
       out.push(`## ${op.operationId ? `${op.operationId}: ` : ""}${method.toUpperCase()} ${path}`, "");
       if (op.summary) out.push(op.summary + ".", "");

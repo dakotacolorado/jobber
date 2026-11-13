@@ -36,13 +36,15 @@ export const SPEC_PATH = "/openapi.json";
 export const API_VERSION = "2026-11-12";
 
 /** The API's overview, at the top of its reference. Markdown. */
-export const OVERVIEW = `Runs of jobs. A **job** is a named script in a repo's \`jobs.toml\`; a **run** is one execution of it, to completion at one commit, by a **runner** that claims it.
+export const OVERVIEW = `Runs jobs on self-hosted runners. A **job** is a named script in a repo's \`jobs.toml\`; a **run** is one execution of it at a commit.
 
-- A run is submitted \`pending\`, claimed and \`running\`, and ends \`succeeded\`, \`failed\` or \`canceled\` with its exit code. It says what it was for when its submitter said.
-- A run's log is read from any byte offset, while it runs and after: \`GetRunLog\` from where the last read ended, until \`Run-State\` says the run has ended.
-- Runners call in and are never called: one registers with the registration token, then claims runs, appends to their logs and completes them with its own token, \`<runner id>.<secret>\`.
+- **Submit** a run, then follow it: \`pending\` → \`running\` → \`succeeded\`, \`failed\` or \`canceled\`.
+- **Read its log** with \`GetRunLog\`, from any byte offset, while it runs and after.
+- **Runners** (job-runner) pull work through the *Runner protocol* calls. You don't call those.
 
-Submitters send \`Authorization: Bearer <token>\` with the submitters' token, and may send \`claimed-by\`, recorded on a run they submit. \`GetHealth\` takes no token. Errors are \`{code, message}\`, the code an exception name for the HTTP status: \`ValidationException\` (400), \`UnauthorizedException\` (401), \`AccessDeniedException\` (403), \`ResourceNotFoundException\` (404), \`ConflictException\` (409), \`PayloadTooLargeException\` (413), \`InvalidRangeException\` (416), \`InternalServerException\` (500) and \`ServiceUnavailableException\` (503).`;
+**Auth:** \`Authorization: Bearer <token>\` with the submitters' token, on everything but \`GetHealth\`.
+
+**Errors:** \`{code, message}\`, where \`code\` is an AWS-style exception name such as \`ValidationException\` or \`ResourceNotFoundException\`.`;
 
 export interface Tokens {
   /** Submitters': submit, read and cancel runs, list runners. Null: every such call answers 503. */
@@ -323,9 +325,10 @@ export class JobApi {
       openapi: "3.1.0",
       info: { version: API_VERSION, title: "job-service", description: OVERVIEW },
       tags: [
-        { name: "Runs", description: "What submitters call, with the submitters' token." },
-        { name: "Runners", description: "What job-runner calls: registering with the registration token, then the rest with its own." },
-        { name: "Service", description: "Its health, and the client workers call it with." },
+        { name: "Runs", description: "Submit, follow and cancel runs." },
+        { name: "Runners", description: "See the runners." },
+        { name: "Runner protocol", description: "Called by job-runner, not by you." },
+        { name: "Platform", description: "Health, and the client worker-service installs." },
       ],
     });
   }

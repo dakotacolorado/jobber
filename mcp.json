@@ -4,7 +4,7 @@
     {
       "name": "submit_run",
       "title": "Submit a run",
-      "description": "One run, stored `pending` until a runner whose labels and free memory fit claims it, with what it was for when `for` says. Nothing is checked against the repo here: a run of a job missing from `jobs.toml` at that commit fails on its runner, saying so in its log.",
+      "description": "Queues a run as `pending` until a runner claims it. The repo isn't checked here: a missing job fails on its runner.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "type": "object",
@@ -13,21 +13,21 @@
             "type": "string",
             "maxLength": 200,
             "pattern": "^[A-Za-z0-9_.-]+\\/[A-Za-z0-9_.-]+$",
-            "description": "`owner/name` on GitHub."
+            "description": "GitHub repo, `owner/name`."
           },
           "commit": {
             "type": "string",
             "pattern": "^[0-9a-f]{40}$",
-            "description": "The commit to run, as a full lowercase sha: the runner checks out exactly this."
+            "description": "Full commit sha to check out."
           },
           "job": {
             "type": "string",
             "pattern": "^[a-z0-9][a-z0-9_-]{0,62}$",
-            "description": "A `[jobs.<name>]` in the repo's `jobs.toml` at that commit, or in the routine directory's when it has a routine."
+            "description": "A `[jobs.<name>]` in the repo's `jobs.toml`."
           },
           "args": {
             "default": [],
-            "description": "Appended to the job's `run` command from `jobs.toml`.",
+            "description": "Arguments appended to the job's command.",
             "maxItems": 50,
             "type": "array",
             "items": {
@@ -44,7 +44,7 @@
             "properties": {
               "memory": {
                 "default": null,
-                "description": "MiB the container may use, and the runner reserves for it. Null: `jobs.toml`'s, within the 1024 MiB a run without one is admitted with.",
+                "description": "Memory in MiB. Default: `jobs.toml`'s, else 1024.",
                 "anyOf": [
                   {
                     "type": "integer",
@@ -58,7 +58,7 @@
               },
               "timeout": {
                 "default": null,
-                "description": "Seconds before the runner stops it and it fails. Null: `jobs.toml`'s.",
+                "description": "Timeout in seconds. Default: `jobs.toml`'s.",
                 "anyOf": [
                   {
                     "type": "integer",
@@ -74,7 +74,7 @@
           },
           "labels": {
             "default": {},
-            "description": "Labels as Kubernetes writes them. On a run, what a runner must have, every key with that value; on a runner, what it has.",
+            "description": "Key-value labels. On a run, what its runner must have.",
             "type": "object",
             "propertyNames": {
               "type": "string",
@@ -87,7 +87,7 @@
           },
           "for": {
             "default": null,
-            "description": "What the run was for, as `GET /runs?for=<kind>:<id>` lists it.",
+            "description": "What the run is for: filter with `ListRuns?for=<kind>:<id>`.",
             "anyOf": [
               {
                 "type": "object",
@@ -100,12 +100,12 @@
                       "item",
                       "worker"
                     ],
-                    "description": "What asked for the run: an approval-service batch or change, a work-tracker item, or a worker."
+                    "description": "What kind of thing asked for it."
                   },
                   "id": {
                     "type": "string",
                     "pattern": "^\\S{1,200}$",
-                    "description": "Its id there, without spaces."
+                    "description": "Its id."
                   }
                 },
                 "required": [
@@ -120,7 +120,7 @@
           },
           "routine": {
             "default": null,
-            "description": "Where the job's steps live, when not in its own repo: `job` is read from `<dir>/jobs.toml` in `repo` at `commit`, and the run's own `repo` and `commit` are its target, the package checked out at `/work` beside the routine. Only a runner that says it `can` run a `routine` claims it.",
+            "description": "Run a job from another repo's `jobs.toml` against this repo (used by release routines).",
             "anyOf": [
               {
                 "type": "object",
@@ -133,7 +133,7 @@
                   "commit": {
                     "type": "string",
                     "pattern": "^[0-9a-f]{40}$",
-                    "description": "The routine repo's commit, as a full lowercase sha: the runner checks out exactly this."
+                    "description": "Full commit sha of that repo."
                   },
                   "dir": {
                     "type": "string",
@@ -154,13 +154,13 @@
           },
           "host": {
             "default": null,
-            "description": "The machine it must run on, as a runner's `hostId`: claimed only by that machine's runner, and only one that says it `can` run `host` runs, which runs it on the host itself, with the host's user services, if that host's config lets it. Null: any runner that fits.",
+            "description": "Run on this host itself, outside a container. Default: any runner, in a container.",
             "anyOf": [
               {
                 "type": "string",
                 "minLength": 1,
                 "maxLength": 200,
-                "description": "The machine it runs on: its worker-host's `host_id`, by default the hostname."
+                "description": "Host name, as worker-host knows it."
               },
               {
                 "type": "null"
@@ -191,7 +191,7 @@
         "type": "object",
         "properties": {
           "state": {
-            "description": "`pending` until a runner claims it, `running` on that runner, then `succeeded`, `failed` or `canceled`, which it never leaves.",
+            "description": "`pending` → `running` → `succeeded`, `failed` or `canceled`.",
             "type": "string",
             "enum": [
               "pending",
@@ -202,24 +202,24 @@
             ]
           },
           "repo": {
-            "description": "`owner/name` on GitHub.",
+            "description": "GitHub repo, `owner/name`.",
             "type": "string",
             "maxLength": 200,
             "pattern": "^[A-Za-z0-9_.-]+\\/[A-Za-z0-9_.-]+$"
           },
           "submittedBy": {
-            "description": "Only the runs submitted with this `claimed-by`, as `submittedBy` records it.",
+            "description": "Only runs with this `submittedBy`.",
             "type": "string",
             "minLength": 1,
             "maxLength": 200
           },
           "for": {
-            "description": "`<kind>:<id>`, e.g. `item:28af81bc-…`: only the runs submitted with that `for`.",
+            "description": "Only runs for this `<kind>:<id>`.",
             "type": "string"
           },
           "limit": {
             "default": 100,
-            "description": "At most this many, newest first.",
+            "description": "Max results. Default: 100.",
             "type": "integer",
             "minimum": 1,
             "maximum": 500
@@ -297,7 +297,7 @@
     {
       "name": "cancel_run",
       "title": "Cancel a run",
-      "description": "A pending run ends `canceled` at once. A running one is marked `cancelRequested`: its runner is told on its next log append, stops it, and reports it `canceled`.",
+      "description": "Ends a pending run now. A running one is stopped by its runner within seconds.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "type": "object",

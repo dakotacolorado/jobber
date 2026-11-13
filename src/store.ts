@@ -259,9 +259,16 @@ export class Store {
 /**
  * Gives each run stored before a field was added that field's default:
  * `priority` 0, `assignedAt` null, `attempt` 1 with no earlier `attempts`,
- * no `retry` and no `retryAt`.
+ * no `retry` and no `retryAt`, no `requirements.cpu`. A host stored with a
+ * slot count offers its memory and a CPU a slot until it registers again,
+ * and what it last said it had free is forgotten.
  */
 export function backfill(db: DatabaseSync): void {
+  db.exec(`UPDATE runs SET record = json_set(record, '$.requirements.cpu', json('null')) WHERE json_type(record, '$.requirements.cpu') IS NULL`);
+  db.exec(`UPDATE hosts SET record = json_remove(
+      json_set(record, '$.capacity', json_object('cpu', record ->> '$.slots', 'memory', coalesce(record ->> '$.memory', ${DEFAULT_MEMORY_MIB})), '$.free', json('null')),
+      '$.slots', '$.memory')
+    WHERE json_type(record, '$.slots') IS NOT NULL`);
   db.exec(`UPDATE runs SET record = json_set(record, '$.retry', json('${JSON.stringify(NO_RETRY)}'), '$.attempts', json('[]'), '$.retryAt', json('null'))
     WHERE json_type(record, '$.retry') IS NULL`);
   db.exec("UPDATE runs SET record = json_set(record, '$.attempt', 1) WHERE record ->> '$.attempt' IS NULL");
@@ -304,7 +311,7 @@ export function migrate(db: DatabaseSync): void {
       if (submittedBy) labels.by = label(submittedBy);
       const run = {
         ...rest,
-        requirements: { os: null, arch: null, memory: limits?.memory ?? null, timeout: limits?.timeout ?? null },
+        requirements: { os: null, arch: null, cpu: null, memory: limits?.memory ?? null, timeout: limits?.timeout ?? null },
         labels,
         host: runner ?? null,
       };
@@ -338,8 +345,7 @@ export function migrate(db: DatabaseSync): void {
           name,
           os: "linux",
           arch,
-          slots: old.slots,
-          memory: old.memory ?? DEFAULT_MEMORY_MIB,
+          capacity: { cpu: old.slots, memory: old.memory ?? DEFAULT_MEMORY_MIB },
           labels: old.labels ?? {},
           version: old.version ?? null,
           free: null,

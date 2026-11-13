@@ -262,6 +262,14 @@
             "default": null,
             "description": "CPU architecture it needs. Default: any."
           },
+          "cpu": {
+            "type": "number",
+            "nullable": true,
+            "maximum": 65536,
+            "minimum": 0.001,
+            "default": null,
+            "description": "CPUs, a decimal number (e.g. 0.5). Default: 0.5."
+          },
           "memory": {
             "type": "integer",
             "nullable": true,
@@ -537,13 +545,8 @@
             ],
             "description": "CPU architecture."
           },
-          "slots": {
-            "type": "integer",
-            "description": "Runs at once."
-          },
-          "memory": {
-            "type": "integer",
-            "description": "Memory for runs, in MiB."
+          "capacity": {
+            "$ref": "#/components/schemas/Capacity"
           },
           "labels": {
             "type": "object",
@@ -560,7 +563,7 @@
           "version": {
             "type": "string",
             "nullable": true,
-            "description": "job-runner version."
+            "description": "job-runner version, as it last registered."
           },
           "free": {
             "$ref": "#/components/schemas/Free"
@@ -586,8 +589,7 @@
           "name",
           "os",
           "arch",
-          "slots",
-          "memory",
+          "capacity",
           "labels",
           "version",
           "free",
@@ -598,23 +600,47 @@
         ],
         "description": "The host."
       },
+      "Capacity": {
+        "type": "object",
+        "properties": {
+          "cpu": {
+            "type": "number",
+            "maximum": 65536,
+            "minimum": 0.001,
+            "description": "CPUs for runs, a decimal number."
+          },
+          "memory": {
+            "type": "integer",
+            "minimum": 16,
+            "maximum": 67108864,
+            "description": "Memory for runs, in MiB."
+          }
+        },
+        "required": [
+          "cpu",
+          "memory"
+        ],
+        "description": "What the host offers runs: what it measured, less what it keeps back for the rest of the machine."
+      },
       "Free": {
         "type": "object",
         "nullable": true,
         "properties": {
-          "slots": {
-            "type": "integer",
+          "cpu": {
+            "type": "number",
+            "maximum": 65536,
             "minimum": 0,
-            "description": "Free run slots."
+            "description": "CPUs free for runs."
           },
           "memory": {
             "type": "integer",
             "minimum": 0,
-            "description": "Free memory for runs, in MiB."
+            "maximum": 67108864,
+            "description": "Memory free for runs, in MiB."
           }
         },
         "required": [
-          "slots",
+          "cpu",
           "memory"
         ],
         "description": "Free capacity, as last reported."
@@ -642,13 +668,20 @@
             "type": "integer",
             "minimum": 0,
             "description": "Free disk where runs work, in MiB."
+          },
+          "cpus": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 65536,
+            "description": "CPUs the machine has, all of them; 0 if unknown."
           }
         },
         "required": [
           "cpuLoad",
           "memoryUsed",
           "memoryTotal",
-          "diskFree"
+          "diskFree",
+          "cpus"
         ],
         "description": "Health, as last reported."
       },
@@ -678,17 +711,8 @@
             ],
             "description": "CPU architecture."
           },
-          "slots": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 64,
-            "description": "Runs at once."
-          },
-          "memory": {
-            "type": "integer",
-            "minimum": 16,
-            "maximum": 1048576,
-            "description": "Memory for runs, in MiB."
+          "capacity": {
+            "$ref": "#/components/schemas/Capacity"
           },
           "labels": {
             "type": "object",
@@ -715,8 +739,7 @@
           "name",
           "os",
           "arch",
-          "slots",
-          "memory"
+          "capacity"
         ]
       },
       "ListHostsResponse": {
@@ -773,7 +796,7 @@
                 "$ref": "#/components/schemas/Free"
               },
               {
-                "description": "Capacity free now."
+                "description": "What the host has free for runs now: its capacity less what its runs and image builds hold."
               }
             ]
           },
@@ -793,7 +816,7 @@
               "type": "string",
               "format": "uuid"
             },
-            "maxItems": 64,
+            "maxItems": 10000,
             "description": "Runs it is running: their leases are renewed."
           }
         },
@@ -1764,7 +1787,7 @@
         ],
         "operationId": "RegisterHost",
         "summary": "Register a host",
-        "description": "Takes the registration token. Returns the host's own token, once; registering the same name again replaces it.",
+        "description": "Takes the registration token. Returns the host's own token, once. Registering the same name again keeps its id, replaces its token, and updates what it is and offers: a host registers each time it starts.",
         "requestBody": {
           "description": "What the host is and has.",
           "content": {

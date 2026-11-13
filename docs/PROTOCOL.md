@@ -25,9 +25,12 @@ Every message either way is one JSON text frame, an object with a `type`.
 
 ## Host → service
 
-- `heartbeat`: `{"type": "heartbeat", "free": {"slots", "memory"}, "metrics":
-  {"cpuLoad", "memoryUsed", "memoryTotal", "diskFree"}, "running": [{"id",
-  "attempt"}]}`. Send one as soon as the connection opens, then at least
+- `heartbeat`: `{"type": "heartbeat", "free": {"cpu", "memory"}, "metrics":
+  {"cpuLoad", "memoryUsed", "memoryTotal", "diskFree", "cpus"}, "running":
+  [{"id", "attempt"}]}`. `free` is what the host's own budget has free: its
+  capacity less what its runs and image builds hold. The scheduler places runs
+  within the least of that and the capacity less the requests it has placed
+  there; `metrics` only say whether the host is well enough for more. Send one as soon as the connection opens, then at least
   every 15 seconds. The scheduler places nothing on a host until its first
   heartbeat on this connection, nor on one silent for 30 seconds. Renews the
   lease of each listed run still running here on that attempt. Answered by a
@@ -35,13 +38,15 @@ Every message either way is one JSON text frame, an object with a `type`.
 - `accept`: `{"type": "accept", "run": "<id>", "attempt": n}`, for an
   `assign`. Answered `start` or `drop`. Run the job only on `start`.
 - `decline`: `{"type": "decline", "run": "<id>", "attempt": n, "reason":
-  "…"}`, for an `assign` the host cannot take (its budget is full). The run
+  "…"}`, for an `assign` the host cannot take (its cpu or memory is not free). The run
   goes back to the queue. Not answered.
 
 ## Service → host
 
-- `assign`: `{"type": "assign", "run": <Run>, "attempt": n, "memory": MiB,
-  "lease": seconds}`. Sent when the scheduler places a run here, and again,
+- `assign`: `{"type": "assign", "run": <Run>, "attempt": n, "cpu": CPUs,
+  "memory": MiB, "lease": seconds}`: `cpu` and `memory` are what the run
+  requests (its `requirements`, or their defaults), which the host reserves
+  for it and gives its container. Sent when the scheduler places a run here, and again,
   on connecting, for each run still assigned here. Answer `accept` or
   `decline`. An assignment neither accepted nor declined within 30 seconds
   goes back to the queue. An `assign` for a run and attempt the host already

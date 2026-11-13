@@ -1,5 +1,5 @@
 import { createRoute, z } from "@hono/zod-openapi";
-import { ARCHES, BACKOFF_MAX_SECONDS, COMMIT_PATTERN, NO_RETRY, RETRY_LIMIT_MAX, JOB_NAME_PATTERN, LABEL_PATTERN, OSES, PRIORITY_MAX, PRIORITY_MIN, REPO_PATTERN, STATES } from "./domain.ts";
+import { ARCHES, BACKOFF_MAX_SECONDS, DEFAULT_CPU, DEFAULT_MEMORY_MIB, COMMIT_PATTERN, NO_RETRY, RETRY_LIMIT_MAX, JOB_NAME_PATTERN, LABEL_PATTERN, OSES, PRIORITY_MAX, PRIORITY_MIN, REPO_PATTERN, STATES } from "./domain.ts";
 
 /** Validates every request and generates `openapi.json`, so neither can drift. */
 
@@ -35,11 +35,15 @@ export const Labels = z
   .describe("Free-form key-value labels.")
   .openapi({ example: { item: "28af81bc", by: "agent-7" } });
 
+/** CPUs, to the thousandth. No host has more than this. */
+const Cpu = z.number().max(65_536);
+
 export const RequirementsSchema = z
   .object({
     os: Os.nullable().default(null).describe("Operating system it needs. Default: any."),
     arch: Arch.nullable().default(null).describe("CPU architecture it needs. Default: any."),
-    memory: z.int().min(16).max(1_048_576).nullable().default(null).describe("Memory in MiB. Default: `jobs.toml`'s, else 1024."),
+    cpu: Cpu.min(0.001).nullable().default(null).describe(`CPUs, a decimal number (e.g. 0.5). Default: ${DEFAULT_CPU}.`),
+    memory: z.int().min(16).max(1_048_576).nullable().default(null).describe(`Memory in MiB. Default: \`jobs.toml\`'s, else ${DEFAULT_MEMORY_MIB}.`),
     timeout: z.int().min(1).max(86_400).nullable().default(null).describe("Timeout in seconds. Default: `jobs.toml`'s."),
   })
   .describe("What the run needs from its host.")
@@ -81,7 +85,7 @@ export const SubmitSchema = z
     commit: Commit,
     job: JobName,
     args: z.array(z.string().max(4000)).max(50).default([]).describe("Arguments appended to the job's command."),
-    requirements: RequirementsSchema.default({ os: null, arch: null, memory: null, timeout: null }),
+    requirements: RequirementsSchema.default({ os: null, arch: null, cpu: null, memory: null, timeout: null }),
     labels: Labels.default({}).describe("Labels to find it by, e.g. what it is for and who asked."),
     priority: Priority.default(0).describe(`Higher is placed first; equal ones oldest first. ${PRIORITY_MIN} to ${PRIORITY_MAX}. Default: 0.`),
     retry: RetrySchema.default(NO_RETRY),
@@ -286,12 +290,20 @@ export const priorityRoute = createRoute({
 
 // --- hosts ------------------------------------------------------------------
 
+const CapacitySchema = z
+  .object({
+    cpu: Cpu.min(0.001).describe("CPUs for runs, a decimal number."),
+    memory: z.int().min(16).max(1_048_576 * 64).describe("Memory for runs, in MiB."),
+  })
+  .describe("What the host offers runs: what it measured, less what it keeps back for the rest of the machine.")
+  .openapi("Capacity");
+
 const FreeSchema = z
   .object({
-    slots: z.int().min(0).describe("Free run slots."),
-    memory: z.int().min(0).describe("Free memory for runs, in MiB."),
+    cpu: Cpu.min(0).describe("CPUs free for runs."),
+    memory: z.int().min(0).max(1_048_576 * 64).describe("Memory free for runs, in MiB."),
   })
-  .describe("Capacity free now.")
+  .describe("What the host has free for runs now: its capacity less what its runs and image builds hold.")
   .openapi("Free");
 
 export const MetricsSchema = z
@@ -300,6 +312,7 @@ export const MetricsSchema = z
     memoryUsed: z.int().min(0).describe("Memory in use, in MiB."),
     memoryTotal: z.int().min(0).describe("Total memory, in MiB."),
     diskFree: z.int().min(0).describe("Free disk where runs work, in MiB."),
+    cpus: z.int().min(0).max(65_536).describe("CPUs the machine has, all of them; 0 if unknown."),
   })
   .describe("The host's health.")
   .openapi("Metrics");
@@ -310,10 +323,9 @@ export const HostSchema = z
     name: z.string().describe("Unique host name."),
     os: Os,
     arch: Arch,
-    slots: z.int().describe("Runs at once."),
-    memory: z.int().describe("Memory for runs, in MiB."),
+    capacity: CapacitySchema,
     labels: Labels,
-    version: z.string().nullable().describe("job-runner version."),
+    version: z.string().nullable().describe("job-runner version, as it last registered."),
     free: FreeSchema.nullable().describe("Free capacity, as last reported."),
     metrics: MetricsSchema.nullable().describe("Health, as last reported."),
     createdAt: z.string().describe("First registered at (ISO 8601)."),
@@ -327,8 +339,7 @@ export const RegisterSchema = z
     name: z.string().trim().min(1).max(200).describe("Unique host name. Registering it again keeps its id."),
     os: Os,
     arch: Arch,
-    slots: z.int().min(1).max(64).describe("Runs at once."),
-    memory: z.int().min(16).max(1_048_576).describe("Memory for runs, in MiB."),
+    capacity: CapacitySchema,
     labels: Labels.default({}),
     version: z.string().max(100).nullable().default(null).describe("job-runner version."),
   })
@@ -346,11 +357,14 @@ export const AttemptQuery = z.object({
   attempt: z.coerce.number().int().min(1).optional().describe("The attempt it was started on. Refused with 409 if the run has moved on."),
 });
 
+/** Most runs one heartbeat lists: a bound on its size, which no host's capacity comes near. */
+const RUNNING_MAX = 10_000;
+
 export const HeartbeatSchema = z
   .object({
     free: FreeSchema,
     metrics: MetricsSchema,
-    running: z.array(z.string().uuid()).max(64).describe("Runs it is running: their leases are renewed."),
+    running: z.array(z.string().uuid()).max(RUNNING_MAX).describe("Runs it is running: their leases are renewed."),
   })
   .openapi("SendHeartbeatInput");
 
@@ -390,7 +404,8 @@ export const registerRoute = createRoute({
   path: "/hosts",
   operationId: "RegisterHost",
   summary: "Register a host",
-  description: "Takes the registration token. Returns the host's own token, once; registering the same name again replaces it.",
+  description:
+    "Takes the registration token. Returns the host's own token, once. Registering the same name again keeps its id, replaces its token, and updates what it is and offers: a host registers each time it starts.",
   request: { body: json(RegisterSchema, "What the host is and has.") },
   responses: { 201: json(RegisteredSchema, "Registered."), ...FAILS },
 });
@@ -462,7 +477,7 @@ export const reportRoute = createRoute({
 const RunningAttempt = z.object({ id: z.string().uuid(), attempt: z.int().min(1) });
 
 export const HostMessage = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("heartbeat"), free: FreeSchema, metrics: MetricsSchema, running: z.array(RunningAttempt).max(64) }),
+  z.object({ type: z.literal("heartbeat"), free: FreeSchema, metrics: MetricsSchema, running: z.array(RunningAttempt).max(RUNNING_MAX) }),
   z.object({ type: z.literal("accept"), run: z.string().uuid(), attempt: z.int().min(1) }),
   z.object({ type: z.literal("decline"), run: z.string().uuid(), attempt: z.int().min(1), reason: z.string().max(2000).default("") }),
 ]);

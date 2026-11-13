@@ -32,6 +32,9 @@ export const ENDED: readonly State[] = ["succeeded", "failed", "canceled"];
 /** Memory a run is admitted with when its requirements set none: its host reserves this much for it. */
 export const DEFAULT_MEMORY_MIB = 1024;
 
+/** CPUs a run is admitted with when its requirements set none. */
+export const DEFAULT_CPU = 0.5;
+
 /** Operating systems and architectures, as a host reports them (Rust's `std::env::consts`). */
 export const OSES = ["linux", "macos", "windows"] as const;
 export const ARCHES = ["x86_64", "aarch64"] as const;
@@ -43,13 +46,15 @@ export type Arch = (typeof ARCHES)[number];
 export interface Requirements {
   os: Os | null;
   arch: Arch | null;
+  /** CPUs, a decimal number. Null: admitted at `DEFAULT_CPU`. */
+  cpu: number | null;
   /** MiB. Null: `jobs.toml`'s, admitted at `DEFAULT_MEMORY_MIB`. */
   memory: number | null;
   /** Seconds. Null: `jobs.toml`'s. */
   timeout: number | null;
 }
 
-export const NO_REQUIREMENTS: Requirements = { os: null, arch: null, memory: null, timeout: null };
+export const NO_REQUIREMENTS: Requirements = { os: null, arch: null, cpu: null, memory: null, timeout: null };
 
 export type Labels = Record<string, string>;
 
@@ -172,6 +177,12 @@ export function reprioritized(run: Run, priority: number, when = now()): Run {
 /** The memory a host reserves for the run when it takes it. */
 export const admittedMemory = (run: Pick<Run, "requirements">) => run.requirements.memory ?? DEFAULT_MEMORY_MIB;
 
+/** The CPUs a host reserves for the run when it takes it; a run stored before `cpu` has none. */
+export const admittedCpu = (run: Pick<Run, "requirements">) => run.requirements.cpu ?? DEFAULT_CPU;
+
+/** CPUs to the thousandth, so sums and differences of decimal requests stay exact enough to compare. */
+const milli = (cpu: number) => Math.round(cpu * 1000) / 1000;
+
 export function submitted(draft: RunDraft, at = now()): Run {
   return {
     ...draft,
@@ -219,8 +230,9 @@ export const LOG_MAX = 64 * 1024 * 1024;
 /** Days a run's log is kept after it is written; the run itself stays. */
 export const LOG_DAYS = 90;
 
-export interface Free {
-  slots: number;
+/** CPUs and MiB: what a host offers runs, or has free for them. */
+export interface Resources {
+  cpu: number;
   /** MiB. */
   memory: number;
 }
@@ -234,6 +246,8 @@ export interface Metrics {
   memoryTotal: number;
   /** MiB free on the disk runs use. */
   diskFree: number;
+  /** CPUs the machine has, all of them: what `cpuLoad` is measured against. */
+  cpus: number;
 }
 
 export interface Host {
@@ -242,22 +256,21 @@ export interface Host {
   name: string;
   os: Os;
   arch: Arch;
-  /** Runs it runs at once, and MiB it has for them. */
-  slots: number;
-  memory: number;
+  /** What it offers runs: what it measured, less what it keeps back for the rest of the machine. As it last registered. */
+  capacity: Resources;
   labels: Labels;
   version: string | null;
-  /** As its last heartbeat said; null until one does. */
-  free: Free | null;
+  /** What its own budget had free, as its last heartbeat said; null until one does since it registered. */
+  free: Resources | null;
   metrics: Metrics | null;
   createdAt: string;
   lastSeenAt: string;
 }
 
-/** The run may run on this host: pending, a slot and its memory free, and its os and arch, if it names them, the host's. */
+/** The run may run on this host: pending, its cpu and memory free there, and its os and arch, if it names them, the host's. */
 export const fits = (run: Run, host: Pick<Candidate, "os" | "arch" | "free">) =>
   run.state === "pending" &&
-  host.free.slots >= 1 &&
+  admittedCpu(run) <= host.free.cpu &&
   admittedMemory(run) <= host.free.memory &&
   (run.requirements.os === null || run.requirements.os === host.os) &&
   (run.requirements.arch === null || run.requirements.arch === host.arch);
@@ -304,21 +317,38 @@ export interface Candidate {
   id: string;
   os: Os;
   arch: Arch;
-  free: Free;
+  free: Resources;
 }
 
 /**
- * What `host` has free for new runs: the least of what it last reported and
- * its capacity less the runs assigned or running there, since a report can
- * predate the scheduler's last assignment and the scheduler cannot see what
- * else the host holds.
+ * What `host` has free for new runs: the least of what it last reported free
+ * and its capacity less the requests of the runs assigned or running there,
+ * since a report can predate the scheduler's last assignment and the
+ * scheduler cannot see what else the host holds (an image build).
  */
-export function freeOn(host: Pick<Host, "id" | "slots" | "memory" | "free">, runs: Run[]): Free {
+export function freeOn(host: Pick<Host, "id" | "capacity" | "free">, runs: Run[]): Resources {
   const mine = runs.filter((r) => r.host === host.id && (r.state === "assigned" || r.state === "running"));
-  const slots = host.slots - mine.length;
-  const memory = host.memory - mine.reduce((sum, r) => sum + admittedMemory(r), 0);
-  const reported = host.free ?? { slots, memory };
-  return { slots: Math.max(0, Math.min(slots, reported.slots)), memory: Math.max(0, Math.min(memory, reported.memory)) };
+  const cpu = milli(host.capacity.cpu - mine.reduce((sum, r) => sum + admittedCpu(r), 0));
+  const memory = host.capacity.memory - mine.reduce((sum, r) => sum + admittedMemory(r), 0);
+  const reported = host.free ?? { cpu, memory };
+  return { cpu: Math.max(0, Math.min(cpu, reported.cpu)), memory: Math.max(0, Math.min(memory, reported.memory)) };
+}
+
+/** Least MiB free on the disk runs use for a host to be given more: a run's checkout and image need room. */
+export const MIN_DISK_FREE_MIB = 2048;
+
+/** 1-minute load per CPU of the machine past which a host is given nothing more, whatever its requests leave free. */
+export const MAX_LOAD_PER_CPU = 1.5;
+
+/**
+ * Live metrics say nothing of what fits, only whether the host is well
+ * enough to be given more: not nearly out of disk, not overloaded. A host
+ * that has not said is given the benefit of the doubt.
+ */
+export function healthy(host: Pick<Host, "metrics">): boolean {
+  const m = host.metrics;
+  if (!m) return true;
+  return m.diskFree >= MIN_DISK_FREE_MIB && !(m.cpus > 0 && m.cpuLoad > MAX_LOAD_PER_CPU * m.cpus);
 }
 
 /** A host fit to be given work: it heartbeated within `FRESH_SECONDS`. */
@@ -326,8 +356,8 @@ export const fresh = (host: Pick<Host, "lastSeenAt">, when = now()) => Date.pars
 
 /**
  * Places queued runs on hosts: each run, highest priority first and then
- * oldest, on the fitting host with the most slots free (then memory, then
- * id), whose free capacity it then takes. A run no host fits is passed over,
+ * oldest, on the fitting host with the most CPU free (then memory, then
+ * id), whose free capacity its requests then take. A run no host fits is passed over,
  * not waited for, so one large run does not hold up the small ones behind it.
  */
 export function schedule(queue: Run[], hosts: Candidate[]): { run: Run; host: string }[] {
@@ -336,8 +366,8 @@ export function schedule(queue: Run[], hosts: Candidate[]): { run: Run; host: st
   for (const run of [...queue].sort(queueOrder)) {
     const fitting = left.filter((h) => fits(run, h));
     if (!fitting.length) continue;
-    const best = fitting.reduce((a, b) => (b.free.slots > a.free.slots || (b.free.slots === a.free.slots && (b.free.memory > a.free.memory || (b.free.memory === a.free.memory && b.id < a.id))) ? b : a));
-    best.free.slots -= 1;
+    const best = fitting.reduce((a, b) => (b.free.cpu > a.free.cpu || (b.free.cpu === a.free.cpu && (b.free.memory > a.free.memory || (b.free.memory === a.free.memory && b.id < a.id))) ? b : a));
+    best.free.cpu = milli(best.free.cpu - admittedCpu(run));
     best.free.memory -= admittedMemory(run);
     placed.push({ run, host: best.id });
   }

@@ -31,6 +31,7 @@ Runs jobs on a fleet of hosts. A **job** is a named script in a repo's `jobs.tom
 ## Data types
 
 - [Attempt](#attempt)
+- [Capacity](#capacity)
 - [Error](#error)
 - [Free](#free)
 - [Health](#health)
@@ -161,6 +162,7 @@ Content-type: application/json
    "requirements": {
       "os": "linux | macos | windows | ",
       "arch": "x86_64 | aarch64 | ",
+      "cpu": number,
       "memory": number,
       "timeout": number
    },
@@ -389,6 +391,7 @@ Content-type: application/json
    "requirements": {
       "os": "linux | macos | windows | ",
       "arch": "x86_64 | aarch64 | ",
+      "cpu": number,
       "memory": number,
       "timeout": number
    },
@@ -673,6 +676,7 @@ Content-type: application/json
    "requirements": {
       "os": "linux | macos | windows | ",
       "arch": "x86_64 | aarch64 | ",
+      "cpu": number,
       "memory": number,
       "timeout": number
    },
@@ -940,19 +944,22 @@ Content-type: application/json
       "name": "string",
       "os": "linux | macos | windows",
       "arch": "x86_64 | aarch64",
-      "slots": number,
-      "memory": number,
+      "capacity": {
+         "cpu": number,
+         "memory": number
+      },
       "labels": { },
       "version": "string",
       "free": {
-         "slots": number,
+         "cpu": number,
          "memory": number
       },
       "metrics": {
          "cpuLoad": number,
          "memoryUsed": number,
          "memoryTotal": number,
-         "diskFree": number
+         "diskFree": number,
+         "cpus": number
       },
       "createdAt": "string",
       "lastSeenAt": "string",
@@ -1028,6 +1035,7 @@ Content-type: application/json
       "requirements": {
          "os": "linux | macos | windows | ",
          "arch": "x86_64 | aarch64 | ",
+         "cpu": number,
          "memory": number,
          "timeout": number
       },
@@ -1091,7 +1099,7 @@ HTTP status: 503
 
 ## RegisterHost
 
-Takes the registration token. Returns the host's own token, once; registering the same name again replaces it.
+Takes the registration token. Returns the host's own token, once. Registering the same name again keeps its id, replaces its token, and updates what it is and offers: a host registers each time it starts.
 
 ### Request syntax
 
@@ -1104,8 +1112,10 @@ Content-type: application/json
    "name": "string",
    "os": "linux | macos | windows",
    "arch": "x86_64 | aarch64",
-   "slots": number,
-   "memory": number,
+   "capacity": {
+      "cpu": number,
+      "memory": number
+   },
    "labels": { },
    "version": "string"
 }
@@ -1125,13 +1135,9 @@ Type: String. Valid values: `linux` | `macos` | `windows`. Required: Yes.
 CPU architecture.  
 Type: String. Valid values: `x86_64` | `aarch64`. Required: Yes.
 
-**slots**  
-Runs at once.  
-Type: Integer. Range: 1 to 64. Required: Yes.
-
-**memory**  
-Memory for runs, in MiB.  
-Type: Integer. Range: 16 to 1048576. Required: Yes.
+**capacity**  
+What the host offers runs: what it measured, less what it keeps back for the rest of the machine.  
+Type: [Capacity](#capacity) object. Required: Yes.
 
 **labels**  
 Free-form key-value labels.  
@@ -1153,19 +1159,22 @@ Content-type: application/json
       "name": "string",
       "os": "linux | macos | windows",
       "arch": "x86_64 | aarch64",
-      "slots": number,
-      "memory": number,
+      "capacity": {
+         "cpu": number,
+         "memory": number
+      },
       "labels": { },
       "version": "string",
       "free": {
-         "slots": number,
+         "cpu": number,
          "memory": number
       },
       "metrics": {
          "cpuLoad": number,
          "memoryUsed": number,
          "memoryTotal": number,
-         "diskFree": number
+         "diskFree": number,
+         "cpus": number
       },
       "createdAt": "string",
       "lastSeenAt": "string",
@@ -1214,14 +1223,15 @@ Content-type: application/json
 
 {
    "free": {
-      "slots": number,
+      "cpu": number,
       "memory": number
    },
    "metrics": {
       "cpuLoad": number,
       "memoryUsed": number,
       "memoryTotal": number,
-      "diskFree": number
+      "diskFree": number,
+      "cpus": number
    },
    "running": [ "string" ]
 }
@@ -1236,7 +1246,7 @@ Type: String. Required: Yes.
 ### Request body
 
 **free**  
-Capacity free now.  
+What the host has free for runs now: its capacity less what its runs and image builds hold.  
 Type: [Free](#free) object. Required: Yes.
 
 **metrics**  
@@ -1245,7 +1255,7 @@ Type: [Metrics](#metrics) object. Required: Yes.
 
 **running**  
 Runs it is running: their leases are renewed.  
-Type: Array of strings. At most 64 items. Required: Yes.
+Type: Array of strings. At most 10000 items. Required: Yes.
 
 ### Response syntax
 
@@ -1309,6 +1319,7 @@ Content-type: application/json
    "requirements": {
       "os": "linux | macos | windows | ",
       "arch": "x86_64 | aarch64 | ",
+      "cpu": number,
       "memory": number,
       "timeout": number
    },
@@ -1370,6 +1381,7 @@ Content-type: application/json
    "requirements": {
       "os": "linux | macos | windows | ",
       "arch": "x86_64 | aarch64 | ",
+      "cpu": number,
       "memory": number,
       "timeout": number
    },
@@ -1569,6 +1581,7 @@ Content-type: application/json
    "requirements": {
       "os": "linux | macos | windows | ",
       "arch": "x86_64 | aarch64 | ",
+      "cpu": number,
       "memory": number,
       "timeout": number
    },
@@ -1777,6 +1790,20 @@ Type: String. Nullable: Yes. Required: Yes.
 Ended at (ISO 8601).  
 Type: String. Required: Yes.
 
+## Capacity
+
+What the host offers runs: what it measured, less what it keeps back for the rest of the machine.
+
+### Contents
+
+**cpu**  
+CPUs for runs, a decimal number.  
+Type: Number. Range: 0.001 to 65536. Required: Yes.
+
+**memory**  
+Memory for runs, in MiB.  
+Type: Integer. Range: 16 to 67108864. Required: Yes.
+
 ## Error
 
 Every error's body.
@@ -1797,13 +1824,13 @@ Free capacity, as last reported.
 
 ### Contents
 
-**slots**  
-Free run slots.  
-Type: Integer. Range: 0 to any. Required: Yes.
+**cpu**  
+CPUs free for runs.  
+Type: Number. Range: 0 to 65536. Required: Yes.
 
 **memory**  
-Free memory for runs, in MiB.  
-Type: Integer. Range: 0 to any. Required: Yes.
+Memory free for runs, in MiB.  
+Type: Integer. Range: 0 to 67108864. Required: Yes.
 
 ## Health
 
@@ -1843,20 +1870,16 @@ Type: String. Valid values: `linux` | `macos` | `windows`. Required: Yes.
 CPU architecture.  
 Type: String. Valid values: `x86_64` | `aarch64`. Required: Yes.
 
-**slots**  
-Runs at once.  
-Type: Integer. Required: Yes.
-
-**memory**  
-Memory for runs, in MiB.  
-Type: Integer. Required: Yes.
+**capacity**  
+What the host offers runs: what it measured, less what it keeps back for the rest of the machine.  
+Type: [Capacity](#capacity) object. Required: Yes.
 
 **labels**  
 Free-form key-value labels.  
 Type: Object. Required: Yes.
 
 **version**  
-job-runner version.  
+job-runner version, as it last registered.  
 Type: String. Nullable: Yes. Required: Yes.
 
 **free**  
@@ -1907,6 +1930,10 @@ Type: Integer. Range: 0 to any. Required: Yes.
 Free disk where runs work, in MiB.  
 Type: Integer. Range: 0 to any. Required: Yes.
 
+**cpus**  
+CPUs the machine has, all of them; 0 if unknown.  
+Type: Integer. Range: 0 to 65536. Required: Yes.
+
 ## Requirements
 
 What the run needs from its host.
@@ -1920,6 +1947,10 @@ Type: String. Valid values: `linux` | `macos` | `windows` | `null`. Nullable: Ye
 **arch**  
 CPU architecture it needs. Default: any.  
 Type: String. Valid values: `x86_64` | `aarch64` | `null`. Nullable: Yes. Required: No.
+
+**cpu**  
+CPUs, a decimal number (e.g. 0.5). Default: 0.5.  
+Type: Number. Range: 0.001 to 65536. Nullable: Yes. Required: No.
 
 **memory**  
 Memory in MiB. Default: `jobs.toml`'s, else 1024.  

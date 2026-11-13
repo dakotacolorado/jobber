@@ -12,7 +12,7 @@ import { Store } from "./store.ts";
 const TOKEN = "submitter";
 const REGISTRATION = "registration";
 const COMMIT = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
-const METRICS = { cpuLoad: 0.5, memoryUsed: 2048, memoryTotal: 8192, diskFree: 50_000 };
+const METRICS = { cpuLoad: 0.5, memoryUsed: 2048, memoryTotal: 8192, diskFree: 50_000, cpus: 8 };
 
 const servers: ServerType[] = [];
 const sockets: WebSocket[] = [];
@@ -54,7 +54,7 @@ class Peer {
     }
   }
 
-  heartbeat(running: { id: string; attempt: number }[] = [], free = { slots: 4, memory: 8192 }) {
+  heartbeat(running: { id: string; attempt: number }[] = [], free = { cpu: 4, memory: 8192 }) {
     this.send({ type: "heartbeat", free, metrics: METRICS, running });
   }
 }
@@ -77,7 +77,7 @@ async function setup() {
   const submit = async (over: Record<string, unknown> = {}) =>
     (await (await call("POST", "/runs", TOKEN, { repo: "o/r", commit: COMMIT, job: "hello", ...over })).json()) as Run;
   const register = async (name: string) =>
-    (await (await call("POST", "/hosts", REGISTRATION, { name, os: "linux", arch: "x86_64", slots: 4, memory: 8192 })).json()) as { host: Host; token: string };
+    (await (await call("POST", "/hosts", REGISTRATION, { name, os: "linux", arch: "x86_64", capacity: { cpu: 4, memory: 8192 } })).json()) as { host: Host; token: string };
   /** Opens host `id`'s connection with `token`; answers the peer, or the HTTP status it was refused with. */
   const connect = (id: string, token: string) =>
     new Promise<Peer | number>((done) => {
@@ -127,7 +127,7 @@ describe("a host's connection", () => {
     const first = await host.next("assign");
     const second = await host.next("assign", 2);
     expect([first.run.id, second.run.id]).toEqual([high.id, low.id]);
-    expect(first).toMatchObject({ attempt: 1, memory: 1024, lease: 60, run: { state: "assigned", host: a.host.id } });
+    expect(first).toMatchObject({ attempt: 1, cpu: 0.5, memory: 1024, lease: 60, run: { state: "assigned", host: a.host.id } });
     expect(store.run(high.id)!.state).toBe("assigned");
 
     host.send({ type: "accept", run: high.id, attempt: 1 });

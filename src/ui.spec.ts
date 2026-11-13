@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { JobApi } from "./api.ts";
+import { MARK_ICON, MARK_SVG, SUMMARY, TAGLINE } from "./banner.ts";
 import { Store } from "./store.ts";
 
 const TOKEN = "submitter-secret";
@@ -23,6 +24,31 @@ describe("the page", () => {
     const body = await res.text();
     expect(body).toBe(file(source));
     expect(body).not.toContain(TOKEN);
+  });
+
+  it("serves jobber's mark as the favicon, an SVG for light and dark", async () => {
+    const res = await api.fetch(new Request("http://local/ui/mark.svg"));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("image/svg+xml");
+    expect(await res.text()).toBe(MARK_ICON);
+    expect(MARK_ICON).toContain("prefers-color-scheme:dark");
+    expect(file("ui/index.html")).toContain('<link rel="icon" type="image/svg+xml" href="./ui/mark.svg">');
+  });
+
+  it("wears jobber's mark and name in its header and tab, and nowhere says its old name", () => {
+    const page = file("ui/index.html");
+    expect(page).toContain("<title>jobber</title>");
+    expect(page).toContain(`<a class="brand" href="#/">${MARK_SVG}jobber</a>`);
+    for (const path of ["ui/index.html", "ui/app.js", "ui/style.css"]) expect(file(path)).not.toMatch(/job[-]service/i);
+  });
+
+  it("gives the page banner.ts's tagline and summary, so the terminal and the page say the same", async () => {
+    const res = await api.fetch(new Request("http://local/ui/banner.js"));
+    expect(res.headers.get("content-type")).toContain("text/javascript");
+    const body = await res.text();
+    expect(body).toContain(`export const TAGLINE = ${JSON.stringify(TAGLINE)};`);
+    expect(body).toContain(`export const SUMMARY = ${JSON.stringify(SUMMARY)};`);
+    expect(file("ui/app.js")).toContain('import { SUMMARY, TAGLINE } from "./banner.js";');
   });
 
   it("makes every element from text, so nothing a run or its log says is run as HTML", () => {

@@ -25,6 +25,7 @@ import {
   type Host,
   type Run,
 } from "./domain.ts";
+import { MARK_ICON, SUMMARY, TAGLINE } from "./banner.ts";
 import { LOCAL_URL, mcpServer, type Call } from "./mcp.ts";
 import * as routes from "./schema.ts";
 import { ERROR_CODES, type ErrorStatus } from "./schema.ts";
@@ -326,6 +327,10 @@ export class JobApi {
     this.hono.get("/", page("ui/index.html", "text/html"));
     this.hono.get("/ui/app.js", page("ui/app.js", "text/javascript"));
     this.hono.get("/ui/style.css", page("ui/style.css", "text/css"));
+    // The page's words and mark are banner.ts's own, so the terminal, the page and the tab cannot differ.
+    const banner = Object.entries({ TAGLINE, SUMMARY }).map(([name, value]) => `export const ${name} = ${JSON.stringify(value)};\n`).join("");
+    this.hono.get("/ui/banner.js", (c) => c.body(banner, 200, { "content-type": "text/javascript; charset=utf-8" }));
+    this.hono.get("/ui/mark.svg", (c) => c.body(MARK_ICON, 200, { "content-type": "image/svg+xml; charset=utf-8" }));
     this.hono.get("/docs/api", page("docs/index.html", "text/html"));
     this.hono.get("/mcp.json", page("mcp.json", "application/json"));
     // The docs' example address is a local one; served, they give the address they were reached at.

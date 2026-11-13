@@ -85,7 +85,7 @@ describe("jobber's settings", () => {
     expect(done.status).toBe(0);
     expect(done.stdout).toMatch(/^jobber v\S+: submit code to run on whatever computers you have available\./);
     expect(done.stdout).toContain("JOBBER_PORT");
-    expect(done.stdout).not.toContain("job-service");
+    expect(done.stdout).not.toMatch(/job[-]service/i);
   });
 });
 

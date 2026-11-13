@@ -1,6 +1,8 @@
 // jobber's page: runs by state, a run and its log, a form to submit one, and the hosts, over the API.
 // Every element is made with `h`, which sets text, never HTML, so nothing a run or its log says is run.
 
+import { SUMMARY, TAGLINE } from "./banner.js";
+
 const TOKEN_KEY = "jobber.token";
 const STATES = ["pending", "assigned", "running", "succeeded", "failed", "canceled"];
 const ENDED = ["succeeded", "failed", "canceled"];
@@ -130,7 +132,8 @@ function signIn() {
       "div",
       { class: "signin" },
       h("h1", {}, "jobber"),
-      h("p", { class: "muted" }, "Runs jobs on a fleet of hosts. The API is at ", h("code", {}, `${location.origin}/runs`), ", the MCP server at ", h("code", {}, `${location.origin}/mcp`), "."),
+      h("p", { class: "tagline" }, TAGLINE),
+      h("p", { class: "muted" }, `${SUMMARY} The API is at `, h("code", {}, `${location.origin}/runs`), ", the MCP server at ", h("code", {}, `${location.origin}/mcp`), "."),
       form,
     ),
   );

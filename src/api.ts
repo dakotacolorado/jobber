@@ -8,7 +8,6 @@ import {
   admittedMemory,
   appendAt,
   canceled,
-  claimed,
   finished,
   fits,
   leaseFrom,
@@ -42,7 +41,7 @@ export const OVERVIEW = `Runs jobs on a fleet of hosts. A **job** is a named scr
 
 - **Submit** a run, with a \`priority\` if it should jump the queue, then follow it: \`pending\` → \`assigned\` → \`running\` → \`succeeded\`, \`failed\` or \`canceled\`.
 - **Read its log** with \`GetRunLog\`, from any byte offset, while it runs and after.
-- **Hosts** run job-runner, which registers, sends heartbeats and claims runs through the *Host protocol* calls. You don't call those.
+- **Hosts** run job-runner, which registers, holds a connection over which it is sent its runs, and reports their logs and ends through the *Host protocol* calls. You don't call those.
 
 **Auth:** \`Authorization: Bearer <token>\` with the submitters' token, on everything but \`GetHealth\`.
 
@@ -239,26 +238,6 @@ export class JobApi {
     app.openapi(routes.connectRoute, (c) => {
       this.pathHost(c, c.req.valid("param").id);
       throw new RequestError("GET /hosts/{id}/connect opens a WebSocket: send it as an upgrade", 426);
-    });
-
-    app.openapi(routes.claimRoute, (c) => {
-      const host = this.pathHost(c, c.req.valid("param").id);
-      const { free } = c.req.valid("json");
-      this.store.seen(host.id, now(), { free });
-      const at = now();
-      for (const run of this.store.pending()) {
-        if (!due(run, at) || !fits(run, { os: host.os, arch: host.arch, free })) continue;
-        const next = claimed(run, host.id);
-        try {
-          this.store.update(next, run.updatedAt);
-        } catch (err) {
-          // Canceled since it was read: try the next.
-          if (err instanceof RequestError && err.status === 409) continue;
-          throw err;
-        }
-        return c.json({ run: next, memory: admittedMemory(next), lease: LEASE_SECONDS }, 200);
-      }
-      return c.body(null, 204);
     });
 
     app.openapi(routes.appendRoute, async (c) => {

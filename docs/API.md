@@ -6,7 +6,7 @@ Runs jobs on a fleet of hosts. A **job** is a named script in a repo's `jobs.tom
 
 - **Submit** a run, with a `priority` if it should jump the queue, then follow it: `pending` → `assigned` → `running` → `succeeded`, `failed` or `canceled`.
 - **Read its log** with `GetRunLog`, from any byte offset, while it runs and after.
-- **Hosts** run job-runner, which registers, sends heartbeats and claims runs through the *Host protocol* calls. You don't call those.
+- **Hosts** run job-runner, which registers, holds a connection over which it is sent its runs, and reports their logs and ends through the *Host protocol* calls. You don't call those.
 
 **Auth:** `Authorization: Bearer <token>` with the submitters' token, on everything but `GetHealth`.
 
@@ -16,7 +16,6 @@ Runs jobs on a fleet of hosts. A **job** is a named script in a repo's `jobs.tom
 
 - [AppendRunLog](#appendrunlog): Append to a log
 - [CancelRun](#cancelrun): Cancel a run
-- [ClaimRun](#claimrun): Claim a run
 - [CompleteRun](#completerun): Complete a run
 - [ConnectHost](#connecthost): Connect a host
 - [GetHealth](#gethealth): Get health
@@ -326,124 +325,6 @@ HTTP status: 503
 
 ---
 
-## ClaimRun
-
-Takes the first queued run (highest priority, then oldest) whose requirements this host meets and marks it `running`. 204 if none fits.
-
-### Request syntax
-
-```http
-POST /hosts/{id}/claim HTTP/1.1
-Authorization: Bearer token
-Content-type: application/json
-
-{
-   "free": {
-      "slots": number,
-      "memory": number
-   }
-}
-```
-
-### URI request parameters
-
-**id**  
-The host's id.  
-Type: String. Required: Yes.
-
-### Request body
-
-**free**  
-Capacity free now.  
-Type: [Free](#free) object. Required: Yes.
-
-### Response syntax
-
-```http
-HTTP/1.1 200
-Content-type: application/json
-
-{
-   "run": {
-      "id": "string",
-      "repo": "string",
-      "commit": "string",
-      "job": "string",
-      "args": [ "string" ],
-      "requirements": {
-         "os": "linux | macos | windows | ",
-         "arch": "x86_64 | aarch64 | ",
-         "memory": number,
-         "timeout": number
-      },
-      "labels": { },
-      "priority": number,
-      "retry": {
-         "limit": number,
-         "backoff": number
-      },
-      "state": "pending | assigned | running | succeeded | failed | canceled",
-      "reason": "string",
-      "cancelRequested": boolean,
-      "attempt": number,
-      "attempts": [ {
-         "attempt": number,
-         "host": "string",
-         "state": "succeeded | failed | canceled",
-         "exit": number,
-         "reason": "string",
-         "duration": number,
-         "logSize": number,
-         "startedAt": "string",
-         "endedAt": "string"
-      } ],
-      "retryAt": "string",
-      "host": "string",
-      "assignedAt": "string",
-      "exit": number,
-      "duration": number,
-      "logSize": number,
-      "createdAt": "string",
-      "updatedAt": "string",
-      "startedAt": "string",
-      "endedAt": "string",
-      "leaseExpiresAt": "string"
-   },
-   "memory": number,
-   "lease": number
-}
-```
-
-### Response elements
-
-**run**  
-The claimed run.  
-Type: [Run](#run) object.
-
-**memory**  
-Memory to reserve, in MiB.  
-Type: Integer.
-
-**lease**  
-Seconds before the run fails without a heartbeat.  
-Type: Integer.
-
-### Errors
-
-**ValidationException**  
-The request failed validation.  
-HTTP status: 400
-
-**UnauthorizedException**  
-The bearer token is not a host's own.  
-HTTP status: 401
-
-**AccessDeniedException**  
-The run is another host's, or the path names another host.  
-HTTP status: 403
-
----
-
 ## CompleteRun
 
 Records how a run ended. Retrying with the same result is safe.
@@ -486,7 +367,7 @@ Exit code, if it ran.
 Type: Integer. Nullable: Yes. Required: Yes.
 
 **duration**  
-Seconds from claim to end.  
+Seconds from start to end.  
 Type: Number. Range: 0 to any. Required: Yes.
 
 **reason**  
@@ -1991,7 +1872,7 @@ First registered at (ISO 8601).
 Type: String. Required: Yes.
 
 **lastSeenAt**  
-Last heartbeat or claim at (ISO 8601).  
+Last heartbeat at (ISO 8601).  
 Type: String. Required: Yes.
 
 **connected**  

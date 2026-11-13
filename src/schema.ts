@@ -317,7 +317,7 @@ export const HostSchema = z
     free: FreeSchema.nullable().describe("Free capacity, as last reported."),
     metrics: MetricsSchema.nullable().describe("Health, as last reported."),
     createdAt: z.string().describe("First registered at (ISO 8601)."),
-    lastSeenAt: z.string().describe("Last heartbeat or claim at (ISO 8601)."),
+    lastSeenAt: z.string().describe("Last heartbeat at (ISO 8601)."),
     connected: z.boolean().describe("Holds a connection open now: the scheduler can push runs to it."),
   })
   .openapi("Host");
@@ -362,16 +362,6 @@ export const HeartbeatAnswerSchema = z
   })
   .openapi("SendHeartbeatResponse");
 
-export const ClaimRequestSchema = z.object({ free: FreeSchema }).openapi("ClaimRunInput");
-
-export const ClaimSchema = z
-  .object({
-    run: RunSchema.describe("The claimed run."),
-    memory: z.int().describe("Memory to reserve, in MiB."),
-    lease: z.int().describe("Seconds before the run fails without a heartbeat."),
-  })
-  .openapi("ClaimRunResponse");
-
 export const AppendedSchema = z
   .object({ size: z.int().describe("Log size: where the next append starts.") })
   .openapi("AppendRunLogResponse");
@@ -380,7 +370,7 @@ export const ReportSchema = z
   .object({
     state: z.enum(["succeeded", "failed", "canceled"]).describe("How it ended."),
     exit: z.int().nullable().describe("Exit code, if it ran."),
-    duration: z.number().min(0).describe("Seconds from claim to end."),
+    duration: z.number().min(0).describe("Seconds from start to end."),
     reason: z.string().trim().min(1).max(2000).nullable().default(null).describe("Why, if not plain (e.g. `timed out after 600s`)."),
   })
   .openapi("CompleteRunInput");
@@ -427,17 +417,6 @@ export const heartbeatRoute = createRoute({
   description: "Reports free capacity and health, and renews the leases of the runs it lists. Send one at least every 15 seconds.",
   request: { params: HostIdParam, body: json(HeartbeatSchema, "Free capacity, health and running runs.") },
   responses: { 200: json(HeartbeatAnswerSchema, "Leases renewed."), ...HOST_FAILS },
-});
-
-export const claimRoute = createRoute({
-  ...hostAuth,
-  method: "post",
-  path: "/hosts/{id}/claim",
-  operationId: "ClaimRun",
-  summary: "Claim a run",
-  description: "Takes the first queued run (highest priority, then oldest) whose requirements this host meets and marks it `running`. 204 if none fits.",
-  request: { params: HostIdParam, body: json(ClaimRequestSchema, "Capacity free now.") },
-  responses: { 200: json(ClaimSchema, "A run, now running here."), 204: { description: "No pending run fits." }, ...HOST_FAILS },
 });
 
 export const InvalidRangeSchema = ErrorSchema.extend({

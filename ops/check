@@ -3,7 +3,7 @@
 # Submits a run (default: dakotacolorado/python-template's hello at its
 # main) to this host's job-service at its public address, follows its log,
 # and exits with the run's exit: 0 once it ends `succeeded`. Then lists the
-# hosts, which name the one that claimed it.
+# hosts, which name the one that ran it.
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 . "$here/common"

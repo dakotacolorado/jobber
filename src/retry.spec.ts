@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { JobApi } from "./api.ts";
 import { BACKOFF_MAX_SECONDS, backoffAfter, canceled, finished, lapsed, NO_RETRY, retried, submitted, type Host, type Run } from "./domain.ts";
 import { Store } from "./store.ts";
+import { startNext } from "./testing.ts";
 
 const COMMIT = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 const T0 = "2026-11-13T00:00:00.000Z";
@@ -91,7 +92,7 @@ describe("a run with retries, over the API", () => {
     const run = (await created.json()) as Run;
     expect(run).toMatchObject({ retry: { limit: 1, backoff: 60 }, attempt: 1, attempts: [], retryAt: null });
     const { host, token } = (await (await call("POST", "/hosts", "r", { name: "h", os: "linux", arch: "x86_64", slots: 1, memory: 2048 })).json()) as { host: Host; token: string };
-    const claim = () => call("POST", `/hosts/${host.id}/claim`, token, { free: { slots: 1, memory: 2048 } });
+    const claim = () => startNext(store, host.id);
     const append = (text: string, attempt: number) => call("PATCH", `/runs/${run.id}/log?attempt=${attempt}`, token, text, { "content-range": `bytes 0-${text.length - 1}/*` });
     const complete = (attempt: number, state: string, exit: number) => call("PUT", `/runs/${run.id}?attempt=${attempt}`, token, { state, exit, duration: 1 });
     const log = async (attempt?: number) => {
@@ -99,7 +100,7 @@ describe("a run with retries, over the API", () => {
       return { status: res.status, text: await res.text(), state: res.headers.get("run-state"), attempt: res.headers.get("run-attempt") };
     };
 
-    expect((await claim()).status).toBe(200);
+    expect(claim()).not.toBeNull();
     expect((await append("first\n", 1)).status).toBe(200);
     const failed = (await (await complete(1, "failed", 2)).json()) as Run;
     expect(failed).toMatchObject({ state: "pending", attempt: 2, attempts: [{ attempt: 1, exit: 2, state: "failed", logSize: 6, host: host.id }] });
@@ -108,9 +109,9 @@ describe("a run with retries, over the API", () => {
     expect((await complete(1, "failed", 2)).status).toBe(200);
     expect((await append("late\n", 1)).status).toBe(409);
     // Its backoff not yet over: no host gets it.
-    expect((await claim()).status).toBe(204);
+    expect(claim()).toBeNull();
     force(store, { ...store.run(run.id)!, retryAt: new Date(Date.now() - 1000).toISOString() });
-    const second = (await (await claim()).json()) as { run: Run };
+    const second = claim()!;
     expect(second.run).toMatchObject({ id: run.id, attempt: 2, state: "running" });
     expect((await append("second!\n", 2)).status).toBe(200);
     expect(await log()).toEqual({ status: 206, text: "second!\n", state: "running", attempt: "2" });
@@ -123,10 +124,10 @@ describe("a run with retries, over the API", () => {
   });
 
   it("is not retried once canceled", async () => {
-    const { call } = setup();
+    const { store, call } = setup();
     const run = (await (await call("POST", "/runs", "s", { repo: "o/r", commit: COMMIT, job: "hello", retry: { limit: 3, backoff: 1 } })).json()) as Run;
     const { host, token } = (await (await call("POST", "/hosts", "r", { name: "h", os: "linux", arch: "x86_64", slots: 1, memory: 2048 })).json()) as { host: Host; token: string };
-    await call("POST", `/hosts/${host.id}/claim`, token, { free: { slots: 1, memory: 2048 } });
+    startNext(store, host.id);
     await call("POST", `/runs/${run.id}/cancel`, "s");
     const ended = (await (await call("PUT", `/runs/${run.id}?attempt=1`, token, { state: "failed", exit: 143, duration: 1 })).json()) as Run;
     expect(ended).toMatchObject({ state: "failed", attempt: 1, attempts: [] });

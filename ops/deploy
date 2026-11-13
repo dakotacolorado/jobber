@@ -51,7 +51,7 @@ umask 022
 mkdir -p "$units"
 cat >"$units/$app.service" <<UNIT
 [Unit]
-Description=job-service ($stage): runs of jobs, claimed by runners (dakotacolorado/job-service-2 ops/)
+Description=job-service ($stage): runs of jobs, pushed to the hosts of its fleet (dakotacolorado/job-service-2 ops/)
 After=network-online.target
 Wants=network-online.target
 

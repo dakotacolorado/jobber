@@ -47,7 +47,6 @@ it holds a WebSocket open, over which job-service pushes its runs, as
 POST  /hosts                    registration token → host id and its own token (same name again: same id, new token)
 GET   /hosts/{id}/connect       WebSocket: assign/start/drop/cancel pushed; heartbeat/accept/decline sent
 POST  /hosts/{id}/heartbeat     {free, metrics, running: [run ids]} → {cancel, ended, lease}, while not connected
-POST  /hosts/{id}/claim         {free: {slots, memory}} → {run, memory, lease}, or 204: the old pull, until every host connects
 PATCH /runs/{id}/log?attempt=n  Content-Range: bytes S-E/* → {size}
 PUT   /runs/{id}?attempt=n      {state, exit, duration, reason?}
 ```
@@ -89,7 +88,7 @@ from a checkout at the commit to release, as the hosts' user:
 ```sh
 ops/deploy beta dakotajp-lenovo-laptop     # on the HP; prod: ops/deploy prod dakotajp-hp-laptop on the Lenovo
 ops/runner beta <job-runner binary>        # the second job-runner, registered here as a host (api = "hosts")
-ops/check                                  # a run of python-template's hello, claimed by this host, to `succeeded`
+ops/check                                  # a run of python-template's hello, pushed to this host, to `succeeded`
 ```
 
 `ops/deploy` installs the build under `~/.local/share/routines/job-service/`

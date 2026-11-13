@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 /**
  * A **job** is a `[jobs.<name>]` in a repo's `jobs.toml`; a **run** is one
- * execution of it, at one commit, on a **host** of the fleet that claims it.
+ * execution of it, at one commit, on a **host** of the fleet the scheduler places it on.
  */
 
 /** `owner/name` on GitHub. */
@@ -19,7 +19,7 @@ export const LABEL_PATTERN = /^[A-Za-z0-9]([A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?$/;
 
 /**
  * `pending` in the queue, `assigned` once the scheduler places it on a host,
- * `running` once that host takes it (or claims it), then how it ended. An
+ * `running` once that host takes it, then how it ended. An
  * assignment the host does not take in time goes back to `pending`. A run
  * never leaves an ended state; running the job again is a new run.
  */
@@ -169,7 +169,7 @@ export function reprioritized(run: Run, priority: number, when = now()): Run {
   return { ...run, priority, updatedAt: stamp(run, when) };
 }
 
-/** The memory a host reserves for the run when it claims it. */
+/** The memory a host reserves for the run when it takes it. */
 export const admittedMemory = (run: Pick<Run, "requirements">) => run.requirements.memory ?? DEFAULT_MEMORY_MIB;
 
 export function submitted(draft: RunDraft, at = now()): Run {
@@ -247,29 +247,20 @@ export interface Host {
   memory: number;
   labels: Labels;
   version: string | null;
-  /** As its last heartbeat or claim said; null until one does. */
+  /** As its last heartbeat said; null until one does. */
   free: Free | null;
   metrics: Metrics | null;
   createdAt: string;
   lastSeenAt: string;
 }
 
-/** What a claiming host is and has free. */
-export type Claimant = Pick<Host, "os" | "arch"> & { free: Free };
-
 /** The run may run on this host: pending, a slot and its memory free, and its os and arch, if it names them, the host's. */
-export const fits = (run: Run, host: Claimant) =>
+export const fits = (run: Run, host: Pick<Candidate, "os" | "arch" | "free">) =>
   run.state === "pending" &&
   host.free.slots >= 1 &&
   admittedMemory(run) <= host.free.memory &&
   (run.requirements.os === null || run.requirements.os === host.os) &&
   (run.requirements.arch === null || run.requirements.arch === host.arch);
-
-export function claimed(run: Run, host: string, when = now()): Run {
-  if (run.state !== "pending") throw new RequestError(`run ${run.id} is ${run.state}, not pending`, 409);
-  const at = stamp(run, when);
-  return { ...run, state: "running", host, startedAt: at, updatedAt: at, leaseExpiresAt: leaseFrom(at) };
-}
 
 /** Seconds an assigned run waits for its host to take it before it goes back to the queue. */
 export const ASSIGN_SECONDS = 30;

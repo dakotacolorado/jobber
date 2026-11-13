@@ -3,7 +3,7 @@
   "info": {
     "version": "2026-11-12",
     "title": "job-service",
-    "description": "Runs jobs on a fleet of hosts. A **job** is a named script in a repo's `jobs.toml`; a **run** is one execution of it at a commit.\n\n- **Submit** a run, with a `priority` if it should jump the queue, then follow it: `pending` → `assigned` → `running` → `succeeded`, `failed` or `canceled`.\n- **Read its log** with `GetRunLog`, from any byte offset, while it runs and after.\n- **Hosts** run job-runner, which registers, sends heartbeats and claims runs through the *Host protocol* calls. You don't call those.\n\n**Auth:** `Authorization: Bearer <token>` with the submitters' token, on everything but `GetHealth`.\n\n**Errors:** `{code, message}`, where `code` is an AWS-style exception name such as `ValidationException` or `ResourceNotFoundException`."
+    "description": "Runs jobs on a fleet of hosts. A **job** is a named script in a repo's `jobs.toml`; a **run** is one execution of it at a commit.\n\n- **Submit** a run, with a `priority` if it should jump the queue, then follow it: `pending` → `assigned` → `running` → `succeeded`, `failed` or `canceled`.\n- **Read its log** with `GetRunLog`, from any byte offset, while it runs and after.\n- **Hosts** run job-runner, which registers, holds a connection over which it is sent its runs, and reports their logs and ends through the *Host protocol* calls. You don't call those.\n\n**Auth:** `Authorization: Bearer <token>` with the submitters' token, on everything but `GetHealth`.\n\n**Errors:** `{code, message}`, where `code` is an AWS-style exception name such as `ValidationException` or `ResourceNotFoundException`."
   },
   "tags": [
     {
@@ -574,7 +574,7 @@
           },
           "lastSeenAt": {
             "type": "string",
-            "description": "Last heartbeat or claim at (ISO 8601)."
+            "description": "Last heartbeat at (ISO 8601)."
           },
           "connected": {
             "type": "boolean",
@@ -803,52 +803,6 @@
           "running"
         ]
       },
-      "ClaimRunResponse": {
-        "type": "object",
-        "properties": {
-          "run": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/Run"
-              },
-              {
-                "description": "The claimed run."
-              }
-            ]
-          },
-          "memory": {
-            "type": "integer",
-            "description": "Memory to reserve, in MiB."
-          },
-          "lease": {
-            "type": "integer",
-            "description": "Seconds before the run fails without a heartbeat."
-          }
-        },
-        "required": [
-          "run",
-          "memory",
-          "lease"
-        ]
-      },
-      "ClaimRunInput": {
-        "type": "object",
-        "properties": {
-          "free": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/Free"
-              },
-              {
-                "description": "Capacity free now."
-              }
-            ]
-          }
-        },
-        "required": [
-          "free"
-        ]
-      },
       "AppendRunLogResponse": {
         "type": "object",
         "properties": {
@@ -901,7 +855,7 @@
           "duration": {
             "type": "number",
             "minimum": 0,
-            "description": "Seconds from claim to end."
+            "description": "Seconds from start to end."
           },
           "reason": {
             "type": "string",
@@ -2061,89 +2015,6 @@
           },
           "426": {
             "description": "UpgradeRequiredException: Not a WebSocket upgrade.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/hosts/{id}/claim": {
-      "post": {
-        "security": [
-          {
-            "hostAuth": []
-          }
-        ],
-        "tags": [
-          "Host protocol"
-        ],
-        "operationId": "ClaimRun",
-        "summary": "Claim a run",
-        "description": "Takes the first queued run (highest priority, then oldest) whose requirements this host meets and marks it `running`. 204 if none fits.",
-        "parameters": [
-          {
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "description": "The host's id."
-            },
-            "required": true,
-            "description": "The host's id.",
-            "name": "id",
-            "in": "path"
-          }
-        ],
-        "requestBody": {
-          "description": "Capacity free now.",
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ClaimRunInput"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "A run, now running here.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ClaimRunResponse"
-                }
-              }
-            }
-          },
-          "204": {
-            "description": "No pending run fits."
-          },
-          "400": {
-            "description": "ValidationException: The request failed validation.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "UnauthorizedException: The bearer token is not a host's own.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "AccessDeniedException: The run is another host's, or the path names another host.",
             "content": {
               "application/json": {
                 "schema": {

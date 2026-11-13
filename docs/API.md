@@ -1,4 +1,4 @@
-# job-service API reference
+# jobber API reference
 
 API version 2026-11-12
 
@@ -555,7 +555,7 @@ HTTP status: 409
 
 ## ConnectHost
 
-Opens the WebSocket over which job-service pushes runs to the host and the host sends heartbeats and takes them. Its messages are in `docs/PROTOCOL.md`. A request that is not an upgrade gets 426.
+Opens the WebSocket over which jobber pushes runs to the host and the host sends heartbeats and takes them. Its messages are in `docs/PROTOCOL.md`. A request that is not an upgrade gets 426.
 
 ### Request syntax
 

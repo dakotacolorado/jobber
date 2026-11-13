@@ -3,7 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "@hono/zod-openapi";
 import * as routes from "./schema.ts";
 
-export const INSTRUCTIONS = `job-service runs jobs on a fleet of hosts: a job is a named script in a repo's jobs.toml, a run one execution of it at one commit, placed by its scheduler on a host that meets its requirements (os, arch, memory).
+export const INSTRUCTIONS = `jobber runs jobs on a fleet of hosts: a job is a named script in a repo's jobs.toml, a run one execution of it at one commit, placed by its scheduler on a host that meets its requirements (os, arch, memory).
 
 - A run is submitted pending, assigned to a host by the scheduler, running there, and ends succeeded, failed or canceled with its exit code.
 - A run's log is read from a byte offset: get_run_log answers the bytes from offset, the log's size, and the run's state, so call it again from offset + the bytes read until the state has ended.
@@ -55,7 +55,7 @@ async function answer(res: Response): Promise<Answer> {
  * recorded exactly as that request would be.
  */
 export function mcpServer(version: string, call: Call): McpServer {
-  const server = new McpServer({ name: "job-service", version }, { instructions: INSTRUCTIONS });
+  const server = new McpServer({ name: "jobber", version }, { instructions: INSTRUCTIONS });
 
   const tool = <Shape extends z.ZodRawShape>(
     name: string,

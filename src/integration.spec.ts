@@ -15,7 +15,7 @@ const call = (method: string, path: string, body?: unknown, auth = `Bearer ${tok
     body: body === undefined ? undefined : JSON.stringify(body),
   });
 
-describe.skipIf(!url || !token)("job-service as deployed", () => {
+describe.skipIf(!url || !token)("jobber as deployed", () => {
   it("answers /health without a token, and refuses /runs with a wrong one", async () => {
     expect((await call("GET", "/health", undefined, "")).status).toBe(200);
     expect((await call("GET", "/runs", undefined, "Bearer wrong")).status).toBe(401);
@@ -27,7 +27,7 @@ describe.skipIf(!url || !token)("job-service as deployed", () => {
 
   it("submits, shows, lists, reads the log of and cancels a job", async () => {
     // An os no host in the fleet has, so none claims it before it is canceled.
-    const draft = { repo: "dakotacolorado/python-template", commit: "0".repeat(40), job: "hello", requirements: { os: "windows" }, labels: { by: "job-service-integration" } };
+    const draft = { repo: "dakotacolorado/python-template", commit: "0".repeat(40), job: "hello", requirements: { os: "windows" }, labels: { by: "jobber-integration" } };
     const res = await call("POST", "/runs", draft);
     expect(res.status).toBe(201);
     const job = (await res.json()) as { id: string; state: string };
@@ -49,9 +49,9 @@ describe.skipIf(!url || !token)("job-service as deployed", () => {
 
 const registration = process.env.INTEGRATION_JS_RUNNER_TOKEN;
 
-describe.skipIf(!url || !token || !registration)("job-service's host API as deployed", () => {
+describe.skipIf(!url || !token || !registration)("jobber's host API as deployed", () => {
   it("registers, connects, is pushed its own run, appends, is pushed a cancel, and completes", async () => {
-    const name = `job-service-integration-${crypto.randomUUID().slice(0, 8)}`;
+    const name = `jobber-integration-${crypto.randomUUID().slice(0, 8)}`;
     // A Windows host: no real one is, so only this test's run, which asks for Windows, is placed on it.
     const reg = await call("POST", "/hosts", { name, os: "windows", arch: "x86_64", slots: 1, memory: 16 }, `Bearer ${registration}`);
     expect(reg.status).toBe(201);

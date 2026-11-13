@@ -1,9 +1,9 @@
 ---
 name: test
-description: How to run job-service's checks. Use before submitting a change to job-service, and when reviewing one.
+description: How to run jobber's checks. Use before submitting a change to jobber, and when reviewing one.
 ---
 
-# Testing job-service
+# Testing jobber
 
 ## The checks
 

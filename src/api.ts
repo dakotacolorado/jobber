@@ -348,7 +348,7 @@ export class JobApi {
     });
     this.hono.doc(SPEC_PATH, {
       openapi: "3.1.0",
-      info: { version: API_VERSION, title: "job-service", description: OVERVIEW },
+      info: { version: API_VERSION, title: "jobber", description: OVERVIEW },
       tags: [
         { name: "Runs", description: "Submit, follow and cancel runs." },
         { name: "Hosts", description: "See the fleet." },

@@ -1,4 +1,4 @@
-# job-service's MCP server
+# jobber's MCP server
 
 <!-- Generated from src/mcp.ts by `npm run spec`; do not edit. -->
 
@@ -7,7 +7,7 @@ Streamable HTTP at `/mcp`, stateless, answering JSON. Every request takes the su
 ```json
 {
   "mcpServers": {
-    "job-service": {
+    "jobber": {
       "type": "http",
       "url": "http://127.0.0.1:4500/mcp",
       "headers": {
@@ -22,7 +22,7 @@ Streamable HTTP at `/mcp`, stateless, answering JSON. Every request takes the su
 
 What the server tells an agent when it connects:
 
-> job-service runs jobs on a fleet of hosts: a job is a named script in a repo's jobs.toml, a run one execution of it at one commit, placed by its scheduler on a host that meets its requirements (os, arch, memory).
+> jobber runs jobs on a fleet of hosts: a job is a named script in a repo's jobs.toml, a run one execution of it at one commit, placed by its scheduler on a host that meets its requirements (os, arch, memory).
 >
 > - A run is submitted pending, assigned to a host by the scheduler, running there, and ends succeeded, failed or canceled with its exit code.
 > - A run's log is read from a byte offset: get_run_log answers the bytes from offset, the log's size, and the run's state, so call it again from offset + the bytes read until the state has ended.

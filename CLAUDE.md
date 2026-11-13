@@ -1,4 +1,4 @@
-# job-service
+# jobber
 
 Runs jobs on a fleet of hosts: a job is a named script in a repo's
 `jobs.toml`, a run one execution of it at one commit, on a host the scheduler

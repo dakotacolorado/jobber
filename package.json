@@ -1,22 +1,47 @@
 {
-  "name": "job-service",
+  "name": "@dakotajp/jobber",
   "version": "0.1.0",
-  "private": true,
-  "description": "Runs of jobs, claimed by runners, over HTTP, on SQLite.",
+  "description": "Submit code to run on whatever computers you have available.",
+  "keywords": [
+    "jobs",
+    "scheduler",
+    "runner",
+    "mcp",
+    "sqlite",
+    "api"
+  ],
+  "homepage": "https://github.com/dakotacolorado/jobber",
+  "bugs": {
+    "url": "https://github.com/dakotacolorado/jobber/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dakotacolorado/jobber.git"
+  },
+  "license": "MIT",
+  "author": "Dakota Parker",
   "type": "module",
   "bin": {
-    "job-service": "dist/cli.js"
+    "jobber": "dist/cli.js"
   },
+  "files": [
+    "dist",
+    "ui",
+    "docs",
+    "openapi.json",
+    "mcp.json"
+  ],
   "engines": {
     "node": ">=24"
   },
   "scripts": {
-    "dev": "node src/cli.ts --db .job-service-dev.db",
+    "dev": "node src/cli.ts --db .jobber-dev.db",
     "build": "rm -rf dist && tsc -p tsconfig.build.json && node src/build.ts dist/build.json",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "spec": "node src/spec.ts && redocly build-docs openapi.json -o docs/index.html",
-    "prepare": "git config core.hooksPath .githooks || true"
+    "prepare": "npm run build && (git config core.hooksPath .githooks 2>/dev/null || true)",
+    "prepack": "npm run build"
   },
   "dependencies": {
     "@asteasolutions/zod-to-openapi": "^9.1.0",
@@ -33,5 +58,8 @@
     "@types/ws": "^8.18.2",
     "typescript": "^5.7.2",
     "vitest": "^5.0.5"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

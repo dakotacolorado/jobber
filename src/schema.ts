@@ -476,7 +476,7 @@ export const connectRoute = createRoute({
   operationId: "ConnectHost",
   summary: "Connect a host",
   description:
-    "Opens the WebSocket over which job-service pushes runs to the host and the host sends heartbeats and takes them. Its messages are in `docs/PROTOCOL.md`. A request that is not an upgrade gets 426.",
+    "Opens the WebSocket over which jobber pushes runs to the host and the host sends heartbeats and takes them. Its messages are in `docs/PROTOCOL.md`. A request that is not an upgrade gets 426.",
   request: { params: HostIdParam },
   responses: {
     101: { description: "Switched to the WebSocket." },

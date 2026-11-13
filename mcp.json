@@ -1,10 +1,10 @@
 {
-  "instructions": "job-service runs jobs: a job is a named script in a repo's jobs.toml, a run one execution of it at one commit, claimed by a runner whose labels and free memory fit.\n\n- A run is submitted pending, claimed and running, and ends succeeded, failed or canceled with its exit code.\n- A run's log is read from a byte offset: get_run_log answers the bytes from offset, the log's size, and the run's state, so call it again from offset + the bytes read until the state has ended.\n- cancel_run ends a pending run at once; a running one is canceled by its runner shortly after.\n- Every tool takes the submitters' token this server was connected with. Registering runners and their claims and reports are the runner protocol, not tools.",
+  "instructions": "job-service runs jobs on a fleet of hosts: a job is a named script in a repo's jobs.toml, a run one execution of it at one commit, claimed by a host that meets its requirements (os, arch, memory).\n\n- A run is submitted pending, claimed and running, and ends succeeded, failed or canceled with its exit code.\n- A run's log is read from a byte offset: get_run_log answers the bytes from offset, the log's size, and the run's state, so call it again from offset + the bytes read until the state has ended.\n- Label runs to find them again (e.g. {\"item\": \"28af81bc\", \"by\": \"agent-7\"}); list_runs filters by label as key=value.\n- cancel_run ends a pending run at once; a running one is stopped by its host shortly after.\n- Every tool takes the submitters' token this server was connected with. The host protocol (register, heartbeat, claim, append, complete) is job-runner's, not tools.",
   "tools": [
     {
       "name": "submit_run",
       "title": "Submit a run",
-      "description": "Queues a run as `pending` until a runner claims it. The repo isn't checked here: a missing job fails on its runner.",
+      "description": "Queues a run as `pending` until a host that meets its requirements claims it. The repo isn't checked here: a missing job fails on its host.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "type": "object",
@@ -35,13 +35,51 @@
               "maxLength": 4000
             }
           },
-          "limits": {
+          "requirements": {
             "default": {
+              "os": null,
+              "arch": null,
               "memory": null,
               "timeout": null
             },
+            "description": "What the run needs from its host.",
             "type": "object",
             "properties": {
+              "os": {
+                "default": null,
+                "description": "Operating system it needs. Default: any.",
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "linux",
+                      "macos",
+                      "windows"
+                    ],
+                    "description": "Operating system."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "arch": {
+                "default": null,
+                "description": "CPU architecture it needs. Default: any.",
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "x86_64",
+                      "aarch64"
+                    ],
+                    "description": "CPU architecture."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "memory": {
                 "default": null,
                 "description": "Memory in MiB. Default: `jobs.toml`'s, else 1024.",
@@ -74,7 +112,7 @@
           },
           "labels": {
             "default": {},
-            "description": "Key-value labels. On a run, what its runner must have.",
+            "description": "Labels to find it by, e.g. what it is for and who asked.",
             "type": "object",
             "propertyNames": {
               "type": "string",
@@ -84,88 +122,6 @@
               "type": "string",
               "pattern": "^[A-Za-z0-9]([A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?$"
             }
-          },
-          "for": {
-            "default": null,
-            "description": "What the run is for: filter with `ListRuns?for=<kind>:<id>`.",
-            "anyOf": [
-              {
-                "type": "object",
-                "properties": {
-                  "kind": {
-                    "type": "string",
-                    "enum": [
-                      "batch",
-                      "change",
-                      "item",
-                      "worker"
-                    ],
-                    "description": "What kind of thing asked for it."
-                  },
-                  "id": {
-                    "type": "string",
-                    "pattern": "^\\S{1,200}$",
-                    "description": "Its id."
-                  }
-                },
-                "required": [
-                  "kind",
-                  "id"
-                ]
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "routine": {
-            "default": null,
-            "description": "Run a job from another repo's `jobs.toml` against this repo (used by release routines).",
-            "anyOf": [
-              {
-                "type": "object",
-                "properties": {
-                  "repo": {
-                    "type": "string",
-                    "maxLength": 200,
-                    "pattern": "^[A-Za-z0-9_.-]+\\/[A-Za-z0-9_.-]+$"
-                  },
-                  "commit": {
-                    "type": "string",
-                    "pattern": "^[0-9a-f]{40}$",
-                    "description": "Full commit sha of that repo."
-                  },
-                  "dir": {
-                    "type": "string",
-                    "maxLength": 200,
-                    "pattern": "^(?!\\.{1,2}(\\/|$))[A-Za-z0-9_.-]+(\\/(?!\\.{1,2}(\\/|$))[A-Za-z0-9_.-]+)*$"
-                  }
-                },
-                "required": [
-                  "repo",
-                  "commit",
-                  "dir"
-                ]
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "host": {
-            "default": null,
-            "description": "Run on this host itself, outside a container. Default: any runner, in a container.",
-            "anyOf": [
-              {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 200,
-                "description": "Host name, as worker-host knows it."
-              },
-              {
-                "type": "null"
-              }
-            ]
           }
         },
         "required": [
@@ -207,15 +163,19 @@
             "maxLength": 200,
             "pattern": "^[A-Za-z0-9_.-]+\\/[A-Za-z0-9_.-]+$"
           },
-          "submittedBy": {
-            "description": "Only runs with this `submittedBy`.",
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 200
-          },
-          "for": {
-            "description": "Only runs for this `<kind>:<id>`.",
-            "type": "string"
+          "label": {
+            "description": "Only runs with this label, as `key=value`. Repeat to require several.",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            ]
           },
           "limit": {
             "default": 100,
@@ -297,7 +257,7 @@
     {
       "name": "cancel_run",
       "title": "Cancel a run",
-      "description": "Ends a pending run now. A running one is stopped by its runner within seconds.",
+      "description": "Ends a pending run now. A running one is stopped by its host within seconds.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "type": "object",
@@ -322,9 +282,9 @@
       }
     },
     {
-      "name": "list_runners",
-      "title": "List runners",
-      "description": "Returns every registered runner, most recently seen first, with its labels and host.",
+      "name": "list_hosts",
+      "title": "List hosts",
+      "description": "Returns every host in the fleet, most recently seen first, with its capacity, free capacity and health.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "type": "object",

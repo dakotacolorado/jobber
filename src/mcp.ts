@@ -3,12 +3,13 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "@hono/zod-openapi";
 import * as routes from "./schema.ts";
 
-export const INSTRUCTIONS = `job-service runs jobs: a job is a named script in a repo's jobs.toml, a run one execution of it at one commit, claimed by a runner whose labels and free memory fit.
+export const INSTRUCTIONS = `job-service runs jobs on a fleet of hosts: a job is a named script in a repo's jobs.toml, a run one execution of it at one commit, claimed by a host that meets its requirements (os, arch, memory).
 
 - A run is submitted pending, claimed and running, and ends succeeded, failed or canceled with its exit code.
 - A run's log is read from a byte offset: get_run_log answers the bytes from offset, the log's size, and the run's state, so call it again from offset + the bytes read until the state has ended.
-- cancel_run ends a pending run at once; a running one is canceled by its runner shortly after.
-- Every tool takes the submitters' token this server was connected with. Registering runners and their claims and reports are the runner protocol, not tools.`;
+- Label runs to find them again (e.g. {"item": "28af81bc", "by": "agent-7"}); list_runs filters by label as key=value.
+- cancel_run ends a pending run at once; a running one is stopped by its host shortly after.
+- Every tool takes the submitters' token this server was connected with. The host protocol (register, heartbeat, claim, append, complete) is job-runner's, not tools.`;
 
 /** The address the MCP docs give; served, the address they were reached at replaces it. */
 export const LOCAL_URL = "http://127.0.0.1:4500";
@@ -18,9 +19,9 @@ export type Call = (method: string, path: string, init?: { body?: unknown; heade
 
 const RunId = z.string().uuid().describe("The run's id.");
 
-const query = (params: Record<string, string | number | undefined>) => {
-  const set = Object.entries(params).filter((entry): entry is [string, string | number] => entry[1] !== undefined);
-  return set.length ? `?${new URLSearchParams(set.map(([key, value]): [string, string] => [key, String(value)]))}` : "";
+const query = (params: Record<string, string | number | string[] | undefined>) => {
+  const set = Object.entries(params).flatMap(([key, value]) => (value === undefined ? [] : [value].flat().map((each): [string, string] => [key, String(each)])));
+  return set.length ? `?${new URLSearchParams(set)}` : "";
 };
 
 /**
@@ -48,7 +49,7 @@ async function answer(res: Response): Promise<Answer> {
 /**
  * The MCP server for one request. Each tool is one API operation the
  * submitters' token can call, named as its `operationId` in snake_case, made
- * with the caller's own `authorization` and `claimed-by`, so it is refused and
+ * with the caller's own `authorization`, so it is refused and
  * recorded exactly as that request would be.
  */
 export function mcpServer(version: string, call: Call): McpServer {
@@ -116,11 +117,11 @@ export function mcpServer(version: string, call: Call): McpServer {
   );
 
   tool(
-    "list_runners",
-    "List runners",
-    "Returns every registered runner, most recently seen first, with its labels and host.",
+    "list_hosts",
+    "List hosts",
+    "Returns every host in the fleet, most recently seen first, with its capacity, free capacity and health.",
     {},
-    async () => answer(await call("GET", "/runners")),
+    async () => answer(await call("GET", "/hosts")),
     { readOnly: true },
   );
 

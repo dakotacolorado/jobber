@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { LOG_DAYS, type Run, type Runner } from "./domain.ts";
+import { LOG_DAYS, type Host, type Run } from "./domain.ts";
 import { start, type Running } from "./server.ts";
 import { Store } from "./store.ts";
 import { PRUNE_SECONDS, startTimers, SWEEP_SECONDS } from "./sweep.ts";
@@ -28,7 +28,7 @@ function on(running: Running) {
 }
 
 describe("a database on disk", () => {
-  it("keeps a run, its log and its runner across a restart", async () => {
+  it("keeps a run, its log and its host across a restart", async () => {
     const dir = mkdtempSync(join(tmpdir(), "job-service-"));
     dirs.push(dir);
     const db = join(dir, "job-service.db");
@@ -36,11 +36,11 @@ describe("a database on disk", () => {
     const first = start({ db, tokens });
     const call = on(first);
     const run = (await (await call("POST", "/runs", tokens.submitter, { repo: "o/r", commit: COMMIT, job: "hello" })).json()) as Run;
-    const { runner, token } = (await (await call("POST", "/runners", tokens.registration, { name: "h", slots: 1, memory: 2048 })).json()) as {
-      runner: Runner;
+    const { host, token } = (await (await call("POST", "/hosts", tokens.registration, { name: "h", os: "linux", arch: "x86_64", slots: 1, memory: 2048 })).json()) as {
+      host: Host;
       token: string;
     };
-    expect((await call("POST", `/runners/${runner.id}/claim`, token, { free: { slots: 1, memory: 2048 } })).status).toBe(200);
+    expect((await call("POST", `/hosts/${host.id}/claim`, token, { free: { slots: 1, memory: 2048 } })).status).toBe(200);
     const append = (text: string, at: number) =>
       call("PATCH", `/runs/${run.id}/log`, token, text, { "content-range": `bytes ${at}-${at + text.length - 1}/*` });
     expect((await append("hello ", 0)).status).toBe(200);
@@ -54,7 +54,7 @@ describe("a database on disk", () => {
     const log = await again("GET", `/runs/${run.id}/log`, tokens.submitter, undefined, { range: "bytes=3-" });
     expect(await log.text()).toBe("lo world\n");
     expect(log.headers.get("run-state")).toBe("succeeded");
-    expect(((await (await again("GET", "/runners")).json()) as { runners: Runner[] }).runners.map((r) => r.id)).toEqual([runner.id]);
+    expect(((await (await again("GET", "/hosts")).json()) as { hosts: Host[] }).hosts.map((h) => h.id)).toEqual([host.id]);
     second.close();
   });
 
@@ -80,21 +80,16 @@ describe("the timers", () => {
       repo: "o/r",
       commit: COMMIT,
       job: "hello",
-      routine: null,
-      host: null,
       args: [],
-      limits: { memory: null, timeout: null },
+      requirements: { os: null, arch: null, memory: null, timeout: null },
       labels: {},
-      for: null,
       state: "running",
       reason: null,
       cancelRequested: false,
-      runner: "22222222-2222-4222-8222-222222222222",
-      runsWith: null,
+      host: "22222222-2222-4222-8222-222222222222",
       exit: null,
       duration: null,
       logSize: 0,
-      submittedBy: null,
       createdAt: at,
       updatedAt: at,
       startedAt: at,
@@ -102,7 +97,7 @@ describe("the timers", () => {
       leaseExpiresAt: new Date(Date.now() + 90_000).toISOString(),
     };
     store.create(run);
-    store.append(run, 0, new TextEncoder().encode("old\n"), run.leaseExpiresAt!, at);
+    store.append(run, 0, new TextEncoder().encode("old\n"), at);
 
     vi.advanceTimersByTime(SWEEP_SECONDS * 1000);
     expect(store.run(run.id)!.state).toBe("running");

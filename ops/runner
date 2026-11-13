@@ -2,7 +2,7 @@
 # runner STAGE BINARY [MEMORY]: run on a host after ops/deploy. Installs a
 # second job-runner, beside the host's own (which stays on the AWS
 # job-service until cutover), registered with this host's job-service:
-# BINARY (a job-runner built with `api = "runs"`) as
+# BINARY (a job-runner with the `api = "hosts"` mode) as
 # ~/.local/share/routines/job-runner-local/job-runner, its config in
 # ~/.config/job-runner-local/, its identity in ~/.local/state/job-runner-local/,
 # its checkouts in ~/.local/share/job-runner-local/, its jobs in its own
@@ -29,13 +29,12 @@ cat >"$rconf/config.toml" <<CONF
 # The second job-runner on this host, registered with its own job-service
 # ($stage), written by dakotacolorado/job-service-2's ops/runner.
 service = "http://127.0.0.1:$port"
-api = "runs"
+api = "hosts"
 registration_token_file = "$rconf/registration-token"
 state_file = "$HOME/.local/state/$name/runner.json"
 work_dir = "$HOME/.local/share/$name"
-name = "$host_id-local"
+name = "$host_id"
 host_id = "$host_id"
-labels = { arch = "x86_64" }
 slots = 1
 memory = $memory
 build_memory = $memory

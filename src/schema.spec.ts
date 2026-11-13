@@ -15,7 +15,7 @@ describe("openapi.json", () => {
 
   it("names every operation in AWS's VerbNoun form, with a summary that starts with the same verb", async () => {
     for (const op of await operations()) {
-      expect(op.operationId).toMatch(/^(Get|List|Submit|Cancel|Register|Claim|Append|Put|Complete)[A-Z][A-Za-z]+$/);
+      expect(op.operationId).toMatch(/^(Get|List|Submit|Cancel|Register|Claim|Append|Send|Complete)[A-Z][A-Za-z]+$/);
       expect(op.summary.split(" ")[0]).toBe(op.operationId.match(/^[A-Z][a-z]+/)![0]);
     }
   });

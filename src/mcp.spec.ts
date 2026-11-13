@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { JobApi } from "./api.ts";
-import type { Run, Runner } from "./domain.ts";
+import type { Host, Run } from "./domain.ts";
 import { mcpDocument, renderMcp, renderMcpHtml } from "./mcp-doc.ts";
 import { MCP_DOC, MCP_FILE, MCP_PAGE, openApiDocument } from "./spec.ts";
 import { Store } from "./store.ts";
@@ -36,16 +36,16 @@ function setup() {
     const { result } = (await res.json()) as { result: { content: { text: string }[]; isError?: boolean } };
     return { isError: result.isError === true, json: JSON.parse(result.content[0]!.text) as T };
   };
-  /** A runner, as job-runner is: registered, claiming and appending under its own token. */
-  const runner = async () => {
-    const reg = await fetch("/runners", REGISTRATION, {
+  /** A host, as job-runner is: registered, claiming and appending under its own token. */
+  const host = async () => {
+    const reg = await fetch("/hosts", REGISTRATION, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: { name: "host", slots: 1, memory: 2048, labels: {} },
+      body: { name: "host", os: "linux", arch: "x86_64", slots: 1, memory: 2048 },
     });
-    const { runner, token } = (await reg.json()) as { runner: Runner; token: string };
+    const { host: me, token } = (await reg.json()) as { host: Host; token: string };
     const claim = async () =>
-      ((await (await fetch(`/runners/${runner.id}/claim`, token, { method: "POST", headers: { "content-type": "application/json" }, body: { free: { slots: 1, memory: 2048 } } })).json()) as { run: Run }).run;
+      ((await (await fetch(`/hosts/${me.id}/claim`, token, { method: "POST", headers: { "content-type": "application/json" }, body: { free: { slots: 1, memory: 2048 } } })).json()) as { run: Run }).run;
     const append = (id: string, text: string, start: number) => {
       const bytes = new TextEncoder().encode(text);
       return fetch(`/runs/${id}/log`, token, {
@@ -56,7 +56,7 @@ function setup() {
     };
     return { claim, append };
   };
-  return { rpc, use, runner, fetch };
+  return { rpc, use, host, fetch };
 }
 
 describe("the MCP server", () => {
@@ -66,14 +66,14 @@ describe("the MCP server", () => {
     expect((await rpc(REGISTRATION, "tools/list", {})).status).toBe(401);
   });
 
-  it("submits a run as the caller, follows its log, and cancels it", async () => {
-    const { use, runner } = setup();
-    const submitted = await use<Run>("submit_run", { repo: "dakotacolorado/python-template", commit: COMMIT, job: "hello" }, { "claimed-by": "agent-7" });
+  it("submits a labeled run, follows its log, finds it by label, and cancels it", async () => {
+    const { use, host } = setup();
+    const submitted = await use<Run>("submit_run", { repo: "dakotacolorado/python-template", commit: COMMIT, job: "hello", labels: { by: "agent-7" } });
     expect(submitted.isError).toBe(false);
-    expect(submitted.json).toMatchObject({ state: "pending", submittedBy: "agent-7", args: [] });
+    expect(submitted.json).toMatchObject({ state: "pending", labels: { by: "agent-7" }, args: [] });
     const run = submitted.json;
 
-    const r = await runner();
+    const r = await host();
     expect((await r.claim()).id).toBe(run.id);
     await r.append(run.id, "hello\n", 0);
     type Log = { state: string; offset: number; size: number; next: number; log: string };
@@ -84,7 +84,8 @@ describe("the MCP server", () => {
     expect((await use<Log>("get_run_log", { id: run.id, offset: 13 })).json).toMatchObject({ log: "", next: 13 });
 
     expect((await use<{ runs: Run[] }>("list_runs", { state: "running" })).json.runs.map((each) => each.id)).toEqual([run.id]);
-    expect((await use<{ runners: Runner[] }>("list_runners", {})).json.runners).toHaveLength(1);
+    expect((await use<{ runs: Run[] }>("list_runs", { label: "by=agent-7" })).json.runs.map((each) => each.id)).toEqual([run.id]);
+    expect((await use<{ hosts: Host[] }>("list_hosts", {})).json.hosts).toHaveLength(1);
     expect((await use<Run>("cancel_run", { id: run.id })).json).toMatchObject({ id: run.id, cancelRequested: true });
     expect((await use<Run>("get_run", { id: run.id })).json.cancelRequested).toBe(true);
   });
@@ -99,10 +100,10 @@ describe("the MCP server", () => {
   it("has one tool per operation the submitters' token calls, named the same in snake_case", async () => {
     const { paths } = await openApiDocument();
     const snake = (id: string) => id.replace(/([a-z])([A-Z])/g, "$1_$2").toLowerCase();
-    // The runner protocol takes a runner's token, or the registration token; meta is for the platform.
+    // The host protocol takes a host's token, or the registration token; Platform is health.
     const submitters = Object.values(paths)
       .flatMap((methods) => Object.values(methods))
-      .filter((op) => !op.tags?.includes("Platform") && op.operationId !== "RegisterRunner" && op.security?.some((s) => typeof s === "object" && s !== null && "bearerAuth" in s))
+      .filter((op) => !op.tags?.includes("Platform") && op.operationId !== "RegisterHost" && op.security?.some((s) => typeof s === "object" && s !== null && "bearerAuth" in s))
       .map((op) => snake(op.operationId));
     expect((await mcpDocument()).tools.map((tool) => tool.name).sort()).toEqual(submitters.sort());
   });

@@ -3,7 +3,7 @@
 # Submits a run (default: dakotacolorado/python-template's hello at its
 # main) to this host's job-service at its public address, follows its log,
 # and exits with the run's exit: 0 once it ends `succeeded`. Then lists the
-# runners, which name the one that claimed it.
+# hosts, which name the one that claimed it.
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 . "$here/common"
@@ -13,13 +13,13 @@ job=${3:-hello}
 # The token goes to node by its environment, never on a command line.
 JS_TOKEN=$(token AUTH_TOKEN) exec "$node" --input-type=module - "$url" "$repo" "$commit" "$job" <<'JS'
 const [url, repo, commit, job] = process.argv.slice(2);
-const headers = { authorization: `Bearer ${process.env.JS_TOKEN}`, "claimed-by": "job-service-check" };
+const headers = { authorization: `Bearer ${process.env.JS_TOKEN}` };
 const call = async (method, path, body, extra = {}) => {
   const res = await fetch(url + path, { method, headers: { ...headers, ...extra, ...(body && { "content-type": "application/json" }) }, body: body && JSON.stringify(body) });
   if (!res.ok && res.status !== 206) throw new Error(`${method} ${path}: ${res.status} ${await res.text()}`);
   return res;
 };
-const run = await (await call("POST", "/runs", { repo, commit, job, for: { kind: "worker", id: "job-service-check" } })).json();
+const run = await (await call("POST", "/runs", { repo, commit, job, labels: { by: "job-service-check" } })).json();
 console.log(`check: run ${run.id} of ${repo} ${job} at ${commit}, on ${url}`);
 const ended = ["succeeded", "failed", "canceled"];
 let offset = 0;
@@ -33,7 +33,7 @@ for (;;) {
   if (!bytes.length) await new Promise((ok) => setTimeout(ok, 1000));
 }
 const end = await (await call("GET", `/runs/${run.id}`)).json();
-console.log(`check: run ${end.id} ${end.state}, exit ${end.exit}, ${end.logSize} bytes of log, on runner ${end.runner}`);
-for (const r of (await (await call("GET", "/runners")).json()).runners) console.log(`check: runner ${r.id} ${r.name} on ${r.hostId}, version ${r.version}, last seen ${r.lastSeenAt}`);
+console.log(`check: run ${end.id} ${end.state}, exit ${end.exit}, ${end.logSize} bytes of log, on host ${end.host}`);
+for (const h of (await (await call("GET", "/hosts")).json()).hosts) console.log(`check: host ${h.id} ${h.name} (${h.os} ${h.arch}), version ${h.version}, load ${h.metrics?.cpuLoad ?? "?"}, last seen ${h.lastSeenAt}`);
 process.exit(end.state === "succeeded" ? 0 : (end.exit || 1));
 JS

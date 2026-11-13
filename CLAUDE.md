@@ -1,7 +1,10 @@
 # job-service
 
-Runs of jobs: a job is a named script in a repo's `jobs.toml`, a run one
-execution of it at one commit by a runner that claims it. One Node 24 process
+Runs jobs on a fleet of hosts: a job is a named script in a repo's
+`jobs.toml`, a run one execution of it at one commit, on a host that claims it
+and keeps it alive with heartbeats. Keep the model this simple: a run's
+`requirements` and `labels`, hosts with capacity and metrics, nothing of any
+one caller's (no release routines, no work-tracker kinds). One Node 24 process
 (`src/cli.ts`) serving HTTP, its data in one SQLite file (`src/store.ts`), its
 lease sweep and log prune as in-process timers (`src/sweep.ts`).
 
@@ -30,7 +33,8 @@ as text, never HTML.
 
 How a run moves between states is `src/domain.ts`, as pure functions: keep
 every transition there, tested, and let the store only refuse a write that lost
-a race.
+a race. A database from an older shape is brought up to date when it opens
+(`migrate` in `src/store.ts`), tested with one written in that shape.
 
 ## Tests
 

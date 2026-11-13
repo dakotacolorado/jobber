@@ -2,11 +2,11 @@
 
 API version 2026-11-12
 
-Runs jobs on self-hosted runners. A **job** is a named script in a repo's `jobs.toml`; a **run** is one execution of it at a commit.
+Runs jobs on a fleet of hosts. A **job** is a named script in a repo's `jobs.toml`; a **run** is one execution of it at a commit.
 
 - **Submit** a run, then follow it: `pending` → `running` → `succeeded`, `failed` or `canceled`.
 - **Read its log** with `GetRunLog`, from any byte offset, while it runs and after.
-- **Runners** (job-runner) pull work through the *Runner protocol* calls. You don't call those.
+- **Hosts** run job-runner, which registers, sends heartbeats and claims runs through the *Host protocol* calls. You don't call those.
 
 **Auth:** `Authorization: Bearer <token>` with the submitters' token, on everything but `GetHealth`.
 
@@ -21,29 +21,28 @@ Runs jobs on self-hosted runners. A **job** is a named script in a repo's `jobs.
 - [GetHealth](#gethealth): Get health
 - [GetRun](#getrun): Get a run
 - [GetRunLog](#getrunlog): Get a run's log
-- [ListRunners](#listrunners): List runners
+- [ListHosts](#listhosts): List hosts
 - [ListRuns](#listruns): List runs
-- [PutRunsWith](#putrunswith): Put run limits
-- [RegisterRunner](#registerrunner): Register a runner
+- [RegisterHost](#registerhost): Register a host
+- [SendHeartbeat](#sendheartbeat): Send a heartbeat
 - [SubmitRun](#submitrun): Submit a run
 
 ## Data types
 
 - [Error](#error)
-- [For](#for)
+- [Free](#free)
 - [Health](#health)
+- [Host](#host)
 - [InvalidRangeError](#invalidrangeerror)
-- [Limits](#limits)
-- [Routine](#routine)
+- [Metrics](#metrics)
+- [Requirements](#requirements)
 - [Run](#run)
-- [Runner](#runner)
-- [RunsWith](#runswith)
 
 ---
 
 ## AppendRunLog
 
-Appends bytes at the log's end (`Content-Range: bytes S-E/*`) and renews the lease; an empty body only renews. Max 256 KiB per call, 64 MiB per run.
+Appends bytes at the log's end (`Content-Range: bytes S-E/*`). Max 256 KiB per call, 64 MiB per run.
 
 ### Request syntax
 
@@ -66,7 +65,7 @@ Type: String. Required: Yes.
 
 **content-range**  
 `bytes S-E/*`  
-Type: String. Pattern: `^bytes \d+-\d+\/(\*|\d+)$`. Required: No.
+Type: String. Pattern: `^bytes \d+-\d+\/(\*|\d+)$`. Required: Yes.
 
 ### Request body
 
@@ -79,9 +78,7 @@ HTTP/1.1 200
 Content-type: application/json
 
 {
-   "size": number,
-   "canceled": boolean,
-   "leaseExpiresAt": "string"
+   "size": number
 }
 ```
 
@@ -91,14 +88,6 @@ Content-type: application/json
 Log size: where the next append starts.  
 Type: Integer.
 
-**canceled**  
-Cancel asked for: stop and complete as `canceled`.  
-Type: Boolean.
-
-**leaseExpiresAt**  
-Lease end (ISO 8601).  
-Type: String.
-
 ### Errors
 
 **ValidationException**  
@@ -106,11 +95,11 @@ The request failed validation.
 HTTP status: 400
 
 **UnauthorizedException**  
-The bearer token is not a runner's own.  
+The bearer token is not a host's own.  
 HTTP status: 401
 
 **AccessDeniedException**  
-The run is another runner's, or the path names another runner.  
+The run is another host's, or the path names another host.  
 HTTP status: 403
 
 **ResourceNotFoundException**  
@@ -133,7 +122,7 @@ HTTP status: 416
 
 ## CancelRun
 
-Ends a pending run now. A running one is stopped by its runner within seconds.
+Ends a pending run now. A running one is stopped by its host within seconds.
 
 ### Request syntax
 
@@ -159,35 +148,21 @@ Content-type: application/json
    "repo": "string",
    "commit": "string",
    "job": "string",
-   "routine": {
-      "repo": "string",
-      "commit": "string",
-      "dir": "string"
-   },
-   "host": "string",
    "args": [ "string" ],
-   "limits": {
+   "requirements": {
+      "os": "linux | macos | windows | ",
+      "arch": "x86_64 | aarch64 | ",
       "memory": number,
       "timeout": number
    },
    "labels": { },
-   "for": {
-      "kind": "batch | change | item | worker",
-      "id": "string"
-   },
    "state": "pending | running | succeeded | failed | canceled",
    "reason": "string",
    "cancelRequested": boolean,
-   "runner": "string",
-   "runsWith": {
-      "memory": number,
-      "timeout": number,
-      "stall": number
-   },
+   "host": "string",
    "exit": number,
    "duration": number,
    "logSize": number,
-   "submittedBy": "string",
    "createdAt": "string",
    "updatedAt": "string",
    "startedAt": "string",
@@ -214,28 +189,17 @@ Type: String. Pattern: `^[0-9a-f]{40}$`.
 A `[jobs.<name>]` in the repo's `jobs.toml`.  
 Type: String. Pattern: `^[a-z0-9][a-z0-9_-]{0,62}$`.
 
-**routine**  
-The routine it runs, if any.  
-Type: [Routine](#routine) object.
-
-**host**  
-The host it must run on, if any.  
-Type: String. Nullable: Yes.
-
 **args**  
 Arguments appended to the job's command.  
 Type: Array of strings.
 
-**limits**  
-Type: [Limits](#limits) object.
+**requirements**  
+What the run needs from its host.  
+Type: [Requirements](#requirements) object.
 
 **labels**  
-Key-value labels. On a run, what its runner must have.  
+Free-form key-value labels.  
 Type: Object.
-
-**for**  
-What it is for, if given.  
-Type: [For](#for) object.
 
 **state**  
 `pending` → `running` → `succeeded`, `failed` or `canceled`.  
@@ -246,16 +210,12 @@ Why it ended, when not plain (e.g. timed out).
 Type: String. Nullable: Yes.
 
 **cancelRequested**  
-Cancel asked for; its runner will stop it.  
+Cancel asked for; its host will stop it.  
 Type: Boolean.
 
-**runner**  
-Runner that claimed it.  
+**host**  
+Host that claimed it.  
 Type: String. Nullable: Yes.
-
-**runsWith**  
-Limits it actually runs with, once its runner says.  
-Type: [RunsWith](#runswith) object.
 
 **exit**  
 Exit code.  
@@ -268,10 +228,6 @@ Type: Number. Nullable: Yes.
 **logSize**  
 Log size in bytes.  
 Type: Integer.
-
-**submittedBy**  
-Who submitted it (`claimed-by`).  
-Type: String. Nullable: Yes.
 
 **createdAt**  
 Submitted at (ISO 8601).  
@@ -290,7 +246,7 @@ Ended at (ISO 8601).
 Type: String. Nullable: Yes.
 
 **leaseExpiresAt**  
-Fails at this time unless its runner checks in.  
+Fails at this time unless its host's heartbeat renews it.  
 Type: String. Nullable: Yes.
 
 ### Errors
@@ -319,19 +275,16 @@ HTTP status: 503
 
 ## ClaimRun
 
-Takes the oldest pending run that fits this runner and marks it `running`. 204 if none fits.
+Takes the oldest pending run whose requirements this host meets and marks it `running`. 204 if none fits.
 
 ### Request syntax
 
 ```http
-POST /runners/{id}/claim HTTP/1.1
+POST /hosts/{id}/claim HTTP/1.1
 Authorization: Bearer token
 Content-type: application/json
 
 {
-   "labels": { },
-   "can": [ "routine | host" ],
-   "hostId": "string",
    "free": {
       "slots": number,
       "memory": number
@@ -342,26 +295,14 @@ Content-type: application/json
 ### URI request parameters
 
 **id**  
-The runner's id.  
+The host's id.  
 Type: String. Required: Yes.
 
 ### Request body
 
-**labels**  
-Labels now. Default: as registered.  
-Type: Object. Required: No.
-
-**can**  
-Extra kinds of run it takes: `routine`, `host`.  
-Type: Array of strings. At most 10 items. Required: No.
-
-**hostId**  
-Host it runs on now.  
-Type: String. Length: 1 to 200. Required: No.
-
 **free**  
-Free capacity now.  
-Type: Object. Required: Yes.
+Capacity free now.  
+Type: [Free](#free) object. Required: Yes.
 
 ### Response syntax
 
@@ -375,35 +316,21 @@ Content-type: application/json
       "repo": "string",
       "commit": "string",
       "job": "string",
-      "routine": {
-         "repo": "string",
-         "commit": "string",
-         "dir": "string"
-      },
-      "host": "string",
       "args": [ "string" ],
-      "limits": {
+      "requirements": {
+         "os": "linux | macos | windows | ",
+         "arch": "x86_64 | aarch64 | ",
          "memory": number,
          "timeout": number
       },
       "labels": { },
-      "for": {
-         "kind": "batch | change | item | worker",
-         "id": "string"
-      },
       "state": "pending | running | succeeded | failed | canceled",
       "reason": "string",
       "cancelRequested": boolean,
-      "runner": "string",
-      "runsWith": {
-         "memory": number,
-         "timeout": number,
-         "stall": number
-      },
+      "host": "string",
       "exit": number,
       "duration": number,
       "logSize": number,
-      "submittedBy": "string",
       "createdAt": "string",
       "updatedAt": "string",
       "startedAt": "string",
@@ -426,7 +353,7 @@ Memory to reserve, in MiB.
 Type: Integer.
 
 **lease**  
-Seconds between check-ins before the run fails.  
+Seconds before the run fails without a heartbeat.  
 Type: Integer.
 
 ### Errors
@@ -436,11 +363,11 @@ The request failed validation.
 HTTP status: 400
 
 **UnauthorizedException**  
-The bearer token is not a runner's own.  
+The bearer token is not a host's own.  
 HTTP status: 401
 
 **AccessDeniedException**  
-The run is another runner's, or the path names another runner.  
+The run is another host's, or the path names another host.  
 HTTP status: 403
 
 ---
@@ -499,35 +426,21 @@ Content-type: application/json
    "repo": "string",
    "commit": "string",
    "job": "string",
-   "routine": {
-      "repo": "string",
-      "commit": "string",
-      "dir": "string"
-   },
-   "host": "string",
    "args": [ "string" ],
-   "limits": {
+   "requirements": {
+      "os": "linux | macos | windows | ",
+      "arch": "x86_64 | aarch64 | ",
       "memory": number,
       "timeout": number
    },
    "labels": { },
-   "for": {
-      "kind": "batch | change | item | worker",
-      "id": "string"
-   },
    "state": "pending | running | succeeded | failed | canceled",
    "reason": "string",
    "cancelRequested": boolean,
-   "runner": "string",
-   "runsWith": {
-      "memory": number,
-      "timeout": number,
-      "stall": number
-   },
+   "host": "string",
    "exit": number,
    "duration": number,
    "logSize": number,
-   "submittedBy": "string",
    "createdAt": "string",
    "updatedAt": "string",
    "startedAt": "string",
@@ -554,28 +467,17 @@ Type: String. Pattern: `^[0-9a-f]{40}$`.
 A `[jobs.<name>]` in the repo's `jobs.toml`.  
 Type: String. Pattern: `^[a-z0-9][a-z0-9_-]{0,62}$`.
 
-**routine**  
-The routine it runs, if any.  
-Type: [Routine](#routine) object.
-
-**host**  
-The host it must run on, if any.  
-Type: String. Nullable: Yes.
-
 **args**  
 Arguments appended to the job's command.  
 Type: Array of strings.
 
-**limits**  
-Type: [Limits](#limits) object.
+**requirements**  
+What the run needs from its host.  
+Type: [Requirements](#requirements) object.
 
 **labels**  
-Key-value labels. On a run, what its runner must have.  
+Free-form key-value labels.  
 Type: Object.
-
-**for**  
-What it is for, if given.  
-Type: [For](#for) object.
 
 **state**  
 `pending` → `running` → `succeeded`, `failed` or `canceled`.  
@@ -586,16 +488,12 @@ Why it ended, when not plain (e.g. timed out).
 Type: String. Nullable: Yes.
 
 **cancelRequested**  
-Cancel asked for; its runner will stop it.  
+Cancel asked for; its host will stop it.  
 Type: Boolean.
 
-**runner**  
-Runner that claimed it.  
+**host**  
+Host that claimed it.  
 Type: String. Nullable: Yes.
-
-**runsWith**  
-Limits it actually runs with, once its runner says.  
-Type: [RunsWith](#runswith) object.
 
 **exit**  
 Exit code.  
@@ -608,10 +506,6 @@ Type: Number. Nullable: Yes.
 **logSize**  
 Log size in bytes.  
 Type: Integer.
-
-**submittedBy**  
-Who submitted it (`claimed-by`).  
-Type: String. Nullable: Yes.
 
 **createdAt**  
 Submitted at (ISO 8601).  
@@ -630,7 +524,7 @@ Ended at (ISO 8601).
 Type: String. Nullable: Yes.
 
 **leaseExpiresAt**  
-Fails at this time unless its runner checks in.  
+Fails at this time unless its host's heartbeat renews it.  
 Type: String. Nullable: Yes.
 
 ### Errors
@@ -640,11 +534,11 @@ The request failed validation.
 HTTP status: 400
 
 **UnauthorizedException**  
-The bearer token is not a runner's own.  
+The bearer token is not a host's own.  
 HTTP status: 401
 
 **AccessDeniedException**  
-The run is another runner's, or the path names another runner.  
+The run is another host's, or the path names another host.  
 HTTP status: 403
 
 **ResourceNotFoundException**  
@@ -724,35 +618,21 @@ Content-type: application/json
    "repo": "string",
    "commit": "string",
    "job": "string",
-   "routine": {
-      "repo": "string",
-      "commit": "string",
-      "dir": "string"
-   },
-   "host": "string",
    "args": [ "string" ],
-   "limits": {
+   "requirements": {
+      "os": "linux | macos | windows | ",
+      "arch": "x86_64 | aarch64 | ",
       "memory": number,
       "timeout": number
    },
    "labels": { },
-   "for": {
-      "kind": "batch | change | item | worker",
-      "id": "string"
-   },
    "state": "pending | running | succeeded | failed | canceled",
    "reason": "string",
    "cancelRequested": boolean,
-   "runner": "string",
-   "runsWith": {
-      "memory": number,
-      "timeout": number,
-      "stall": number
-   },
+   "host": "string",
    "exit": number,
    "duration": number,
    "logSize": number,
-   "submittedBy": "string",
    "createdAt": "string",
    "updatedAt": "string",
    "startedAt": "string",
@@ -779,28 +659,17 @@ Type: String. Pattern: `^[0-9a-f]{40}$`.
 A `[jobs.<name>]` in the repo's `jobs.toml`.  
 Type: String. Pattern: `^[a-z0-9][a-z0-9_-]{0,62}$`.
 
-**routine**  
-The routine it runs, if any.  
-Type: [Routine](#routine) object.
-
-**host**  
-The host it must run on, if any.  
-Type: String. Nullable: Yes.
-
 **args**  
 Arguments appended to the job's command.  
 Type: Array of strings.
 
-**limits**  
-Type: [Limits](#limits) object.
+**requirements**  
+What the run needs from its host.  
+Type: [Requirements](#requirements) object.
 
 **labels**  
-Key-value labels. On a run, what its runner must have.  
+Free-form key-value labels.  
 Type: Object.
-
-**for**  
-What it is for, if given.  
-Type: [For](#for) object.
 
 **state**  
 `pending` → `running` → `succeeded`, `failed` or `canceled`.  
@@ -811,16 +680,12 @@ Why it ended, when not plain (e.g. timed out).
 Type: String. Nullable: Yes.
 
 **cancelRequested**  
-Cancel asked for; its runner will stop it.  
+Cancel asked for; its host will stop it.  
 Type: Boolean.
 
-**runner**  
-Runner that claimed it.  
+**host**  
+Host that claimed it.  
 Type: String. Nullable: Yes.
-
-**runsWith**  
-Limits it actually runs with, once its runner says.  
-Type: [RunsWith](#runswith) object.
 
 **exit**  
 Exit code.  
@@ -833,10 +698,6 @@ Type: Number. Nullable: Yes.
 **logSize**  
 Log size in bytes.  
 Type: Integer.
-
-**submittedBy**  
-Who submitted it (`claimed-by`).  
-Type: String. Nullable: Yes.
 
 **createdAt**  
 Submitted at (ISO 8601).  
@@ -855,7 +716,7 @@ Ended at (ISO 8601).
 Type: String. Nullable: Yes.
 
 **leaseExpiresAt**  
-Fails at this time unless its runner checks in.  
+Fails at this time unless its host's heartbeat renews it.  
 Type: String. Nullable: Yes.
 
 ### Errors
@@ -951,14 +812,14 @@ HTTP status: 503
 
 ---
 
-## ListRunners
+## ListHosts
 
-List runners.
+List hosts.
 
 ### Request syntax
 
 ```http
-GET /runners HTTP/1.1
+GET /hosts HTTP/1.1
 Authorization: Bearer token
 ```
 
@@ -969,14 +830,25 @@ HTTP/1.1 200
 Content-type: application/json
 
 {
-   "runners": [ {
+   "hosts": [ {
       "id": "string",
       "name": "string",
-      "labels": { },
+      "os": "linux | macos | windows",
+      "arch": "x86_64 | aarch64",
       "slots": number,
       "memory": number,
+      "labels": { },
       "version": "string",
-      "hostId": "string",
+      "free": {
+         "slots": number,
+         "memory": number
+      },
+      "metrics": {
+         "cpuLoad": number,
+         "memoryUsed": number,
+         "memoryTotal": number,
+         "diskFree": number
+      },
       "createdAt": "string",
       "lastSeenAt": "string"
    } ]
@@ -985,9 +857,9 @@ Content-type: application/json
 
 ### Response elements
 
-**runners**  
-Runners, most recently seen first.  
-Type: Array of [Runner](#runner) objects.
+**hosts**  
+Hosts, most recently seen first.  
+Type: Array of [Host](#host) objects.
 
 ### Errors
 
@@ -1012,7 +884,7 @@ List runs.
 ### Request syntax
 
 ```http
-GET /runs?state=state&repo=repo&submittedBy=submittedBy&for=for&limit=limit HTTP/1.1
+GET /runs?state=state&repo=repo&label=label&limit=limit HTTP/1.1
 Authorization: Bearer token
 ```
 
@@ -1026,12 +898,8 @@ Type: String. Valid values: `pending` | `running` | `succeeded` | `failed` | `ca
 GitHub repo, `owner/name`.  
 Type: String. Length: 0 to 200. Pattern: `^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$`. Required: No.
 
-**submittedBy**  
-Only runs with this `submittedBy`.  
-Type: String. Length: 1 to 200. Required: No.
-
-**for**  
-Only runs for this `<kind>:<id>`.  
+**label**  
+Only runs with this label, as `key=value`. Repeat to require several.  
 Type: String. Required: No.
 
 **limit**  
@@ -1050,35 +918,21 @@ Content-type: application/json
       "repo": "string",
       "commit": "string",
       "job": "string",
-      "routine": {
-         "repo": "string",
-         "commit": "string",
-         "dir": "string"
-      },
-      "host": "string",
       "args": [ "string" ],
-      "limits": {
+      "requirements": {
+         "os": "linux | macos | windows | ",
+         "arch": "x86_64 | aarch64 | ",
          "memory": number,
          "timeout": number
       },
       "labels": { },
-      "for": {
-         "kind": "batch | change | item | worker",
-         "id": "string"
-      },
       "state": "pending | running | succeeded | failed | canceled",
       "reason": "string",
       "cancelRequested": boolean,
-      "runner": "string",
-      "runsWith": {
-         "memory": number,
-         "timeout": number,
-         "stall": number
-      },
+      "host": "string",
       "exit": number,
       "duration": number,
       "logSize": number,
-      "submittedBy": "string",
       "createdAt": "string",
       "updatedAt": "string",
       "startedAt": "string",
@@ -1110,243 +964,41 @@ HTTP status: 503
 
 ---
 
-## PutRunsWith
+## RegisterHost
 
-Records the memory, timeout and stall limit a run actually got, once its runner has read `jobs.toml`.
-
-### Request syntax
-
-```http
-PUT /runs/{id}/runs-with HTTP/1.1
-Authorization: Bearer token
-Content-type: application/json
-
-{
-   "memory": number,
-   "timeout": number,
-   "stall": number
-}
-```
-
-### URI request parameters
-
-**id**  
-The run's id.  
-Type: String. Required: Yes.
-
-### Request body
-
-**memory**  
-Memory in MiB.  
-Type: Integer. Range: 1 to 1048576. Required: Yes.
-
-**timeout**  
-Timeout in seconds.  
-Type: Integer. Range: 1 to 86400. Required: Yes.
-
-**stall**  
-Seconds without progress before it fails as stalled; null for never.  
-Type: Integer. Range: 1 to 86400. Nullable: Yes. Required: Yes.
-
-### Response syntax
-
-```http
-HTTP/1.1 200
-Content-type: application/json
-
-{
-   "id": "string",
-   "repo": "string",
-   "commit": "string",
-   "job": "string",
-   "routine": {
-      "repo": "string",
-      "commit": "string",
-      "dir": "string"
-   },
-   "host": "string",
-   "args": [ "string" ],
-   "limits": {
-      "memory": number,
-      "timeout": number
-   },
-   "labels": { },
-   "for": {
-      "kind": "batch | change | item | worker",
-      "id": "string"
-   },
-   "state": "pending | running | succeeded | failed | canceled",
-   "reason": "string",
-   "cancelRequested": boolean,
-   "runner": "string",
-   "runsWith": {
-      "memory": number,
-      "timeout": number,
-      "stall": number
-   },
-   "exit": number,
-   "duration": number,
-   "logSize": number,
-   "submittedBy": "string",
-   "createdAt": "string",
-   "updatedAt": "string",
-   "startedAt": "string",
-   "endedAt": "string",
-   "leaseExpiresAt": "string"
-}
-```
-
-### Response elements
-
-**id**  
-The run's id.  
-Type: String.
-
-**repo**  
-GitHub repo, `owner/name`.  
-Type: String. Length: 0 to 200. Pattern: `^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$`.
-
-**commit**  
-Full commit sha to check out.  
-Type: String. Pattern: `^[0-9a-f]{40}$`.
-
-**job**  
-A `[jobs.<name>]` in the repo's `jobs.toml`.  
-Type: String. Pattern: `^[a-z0-9][a-z0-9_-]{0,62}$`.
-
-**routine**  
-The routine it runs, if any.  
-Type: [Routine](#routine) object.
-
-**host**  
-The host it must run on, if any.  
-Type: String. Nullable: Yes.
-
-**args**  
-Arguments appended to the job's command.  
-Type: Array of strings.
-
-**limits**  
-Type: [Limits](#limits) object.
-
-**labels**  
-Key-value labels. On a run, what its runner must have.  
-Type: Object.
-
-**for**  
-What it is for, if given.  
-Type: [For](#for) object.
-
-**state**  
-`pending` → `running` → `succeeded`, `failed` or `canceled`.  
-Type: String. Valid values: `pending` | `running` | `succeeded` | `failed` | `canceled`.
-
-**reason**  
-Why it ended, when not plain (e.g. timed out).  
-Type: String. Nullable: Yes.
-
-**cancelRequested**  
-Cancel asked for; its runner will stop it.  
-Type: Boolean.
-
-**runner**  
-Runner that claimed it.  
-Type: String. Nullable: Yes.
-
-**runsWith**  
-Limits it actually runs with, once its runner says.  
-Type: [RunsWith](#runswith) object.
-
-**exit**  
-Exit code.  
-Type: Integer. Nullable: Yes.
-
-**duration**  
-Seconds it ran.  
-Type: Number. Nullable: Yes.
-
-**logSize**  
-Log size in bytes.  
-Type: Integer.
-
-**submittedBy**  
-Who submitted it (`claimed-by`).  
-Type: String. Nullable: Yes.
-
-**createdAt**  
-Submitted at (ISO 8601).  
-Type: String.
-
-**updatedAt**  
-Last changed at (ISO 8601).  
-Type: String.
-
-**startedAt**  
-Claimed at (ISO 8601).  
-Type: String. Nullable: Yes.
-
-**endedAt**  
-Ended at (ISO 8601).  
-Type: String. Nullable: Yes.
-
-**leaseExpiresAt**  
-Fails at this time unless its runner checks in.  
-Type: String. Nullable: Yes.
-
-### Errors
-
-**ValidationException**  
-The request failed validation.  
-HTTP status: 400
-
-**UnauthorizedException**  
-The bearer token is not a runner's own.  
-HTTP status: 401
-
-**AccessDeniedException**  
-The run is another runner's, or the path names another runner.  
-HTTP status: 403
-
-**ResourceNotFoundException**  
-No run has that id.  
-HTTP status: 404
-
-**ConflictException**  
-It is not running.  
-HTTP status: 409
-
----
-
-## RegisterRunner
-
-Takes the registration token. Returns the runner's own token, once.
+Takes the registration token. Returns the host's own token, once; registering the same name again replaces it.
 
 ### Request syntax
 
 ```http
-POST /runners HTTP/1.1
+POST /hosts HTTP/1.1
 Authorization: Bearer token
 Content-type: application/json
 
 {
    "name": "string",
-   "labels": { },
+   "os": "linux | macos | windows",
+   "arch": "x86_64 | aarch64",
    "slots": number,
    "memory": number,
-   "version": "string",
-   "hostId": "string"
+   "labels": { },
+   "version": "string"
 }
 ```
 
 ### Request body
 
 **name**  
-Display name; not unique.  
+Unique host name. Registering it again keeps its id.  
 Type: String. Length: 1 to 200. Required: Yes.
 
-**labels**  
-Key-value labels. On a run, what its runner must have.  
-Type: Object. Required: No.
+**os**  
+Operating system.  
+Type: String. Valid values: `linux` | `macos` | `windows`. Required: Yes.
+
+**arch**  
+CPU architecture.  
+Type: String. Valid values: `x86_64` | `aarch64`. Required: Yes.
 
 **slots**  
 Runs at once.  
@@ -1356,13 +1008,13 @@ Type: Integer. Range: 1 to 64. Required: Yes.
 Memory for runs, in MiB.  
 Type: Integer. Range: 16 to 1048576. Required: Yes.
 
+**labels**  
+Free-form key-value labels.  
+Type: Object. Required: No.
+
 **version**  
 job-runner version.  
 Type: String. Length: 0 to 100. Nullable: Yes. Required: No.
-
-**hostId**  
-Host name, as worker-host knows it.  
-Type: String. Length: 1 to 200. Nullable: Yes. Required: No.
 
 ### Response syntax
 
@@ -1371,14 +1023,25 @@ HTTP/1.1 201
 Content-type: application/json
 
 {
-   "runner": {
+   "host": {
       "id": "string",
       "name": "string",
-      "labels": { },
+      "os": "linux | macos | windows",
+      "arch": "x86_64 | aarch64",
       "slots": number,
       "memory": number,
+      "labels": { },
       "version": "string",
-      "hostId": "string",
+      "free": {
+         "slots": number,
+         "memory": number
+      },
+      "metrics": {
+         "cpuLoad": number,
+         "memoryUsed": number,
+         "memoryTotal": number,
+         "diskFree": number
+      },
       "createdAt": "string",
       "lastSeenAt": "string"
    },
@@ -1388,9 +1051,9 @@ Content-type: application/json
 
 ### Response elements
 
-**runner**  
-The new runner.  
-Type: [Runner](#runner) object.
+**host**  
+The host.  
+Type: [Host](#host) object.
 
 **token**  
 Its own token, `<id>.<secret>`. Shown only once.  
@@ -1412,16 +1075,99 @@ HTTP status: 503
 
 ---
 
+## SendHeartbeat
+
+Reports free capacity and health, and renews the leases of the runs it lists. Send one at least every 15 seconds.
+
+### Request syntax
+
+```http
+POST /hosts/{id}/heartbeat HTTP/1.1
+Authorization: Bearer token
+Content-type: application/json
+
+{
+   "free": {
+      "slots": number,
+      "memory": number
+   },
+   "metrics": {
+      "cpuLoad": number,
+      "memoryUsed": number,
+      "memoryTotal": number,
+      "diskFree": number
+   },
+   "running": [ "string" ]
+}
+```
+
+### URI request parameters
+
+**id**  
+The host's id.  
+Type: String. Required: Yes.
+
+### Request body
+
+**free**  
+Capacity free now.  
+Type: [Free](#free) object. Required: Yes.
+
+**metrics**  
+The host's health.  
+Type: [Metrics](#metrics) object. Required: Yes.
+
+**running**  
+Runs it is running: their leases are renewed.  
+Type: Array of strings. At most 64 items. Required: Yes.
+
+### Response syntax
+
+```http
+HTTP/1.1 200
+Content-type: application/json
+
+{
+   "cancel": [ "string" ],
+   "lease": number
+}
+```
+
+### Response elements
+
+**cancel**  
+Of those runs, the ones to stop and complete as `canceled`.  
+Type: Array of strings.
+
+**lease**  
+Seconds before a run fails without another heartbeat.  
+Type: Integer.
+
+### Errors
+
+**ValidationException**  
+The request failed validation.  
+HTTP status: 400
+
+**UnauthorizedException**  
+The bearer token is not a host's own.  
+HTTP status: 401
+
+**AccessDeniedException**  
+The run is another host's, or the path names another host.  
+HTTP status: 403
+
+---
+
 ## SubmitRun
 
-Queues a run as `pending` until a runner claims it. The repo isn't checked here: a missing job fails on its runner.
+Queues a run as `pending` until a host that meets its requirements claims it. The repo isn't checked here: a missing job fails on its host.
 
 ### Request syntax
 
 ```http
 POST /runs HTTP/1.1
 Authorization: Bearer token
-claimed-by: string
 Content-type: application/json
 
 {
@@ -1429,29 +1175,15 @@ Content-type: application/json
    "commit": "string",
    "job": "string",
    "args": [ "string" ],
-   "limits": {
+   "requirements": {
+      "os": "linux | macos | windows | ",
+      "arch": "x86_64 | aarch64 | ",
       "memory": number,
       "timeout": number
    },
-   "labels": { },
-   "for": {
-      "kind": "batch | change | item | worker",
-      "id": "string"
-   },
-   "routine": {
-      "repo": "string",
-      "commit": "string",
-      "dir": "string"
-   },
-   "host": "string"
+   "labels": { }
 }
 ```
-
-### Request headers
-
-**claimed-by**  
-Who is submitting; saved as `submittedBy`.  
-Type: String. Length: 1 to 200. Required: No.
 
 ### Request body
 
@@ -1471,24 +1203,13 @@ Type: String. Pattern: `^[a-z0-9][a-z0-9_-]{0,62}$`. Required: Yes.
 Arguments appended to the job's command.  
 Type: Array of strings. At most 50 items. Required: No.
 
-**limits**  
-Type: [Limits](#limits) object. Required: No.
+**requirements**  
+What the run needs from its host.  
+Type: [Requirements](#requirements) object. Required: No.
 
 **labels**  
-Key-value labels. On a run, what its runner must have.  
+Labels to find it by, e.g. what it is for and who asked.  
 Type: Object. Required: No.
-
-**for**  
-What the run is for: filter with `ListRuns?for=<kind>:<id>`.  
-Type: [For](#for) object. Required: No.
-
-**routine**  
-Run a job from another repo's `jobs.toml` against this repo (used by release routines).  
-Type: [Routine](#routine) object. Required: No.
-
-**host**  
-Run on this host itself, outside a container. Default: any runner, in a container.  
-Type: String. Length: 1 to 200. Nullable: Yes. Required: No.
 
 ### Response syntax
 
@@ -1501,35 +1222,21 @@ Content-type: application/json
    "repo": "string",
    "commit": "string",
    "job": "string",
-   "routine": {
-      "repo": "string",
-      "commit": "string",
-      "dir": "string"
-   },
-   "host": "string",
    "args": [ "string" ],
-   "limits": {
+   "requirements": {
+      "os": "linux | macos | windows | ",
+      "arch": "x86_64 | aarch64 | ",
       "memory": number,
       "timeout": number
    },
    "labels": { },
-   "for": {
-      "kind": "batch | change | item | worker",
-      "id": "string"
-   },
    "state": "pending | running | succeeded | failed | canceled",
    "reason": "string",
    "cancelRequested": boolean,
-   "runner": "string",
-   "runsWith": {
-      "memory": number,
-      "timeout": number,
-      "stall": number
-   },
+   "host": "string",
    "exit": number,
    "duration": number,
    "logSize": number,
-   "submittedBy": "string",
    "createdAt": "string",
    "updatedAt": "string",
    "startedAt": "string",
@@ -1556,28 +1263,17 @@ Type: String. Pattern: `^[0-9a-f]{40}$`.
 A `[jobs.<name>]` in the repo's `jobs.toml`.  
 Type: String. Pattern: `^[a-z0-9][a-z0-9_-]{0,62}$`.
 
-**routine**  
-The routine it runs, if any.  
-Type: [Routine](#routine) object.
-
-**host**  
-The host it must run on, if any.  
-Type: String. Nullable: Yes.
-
 **args**  
 Arguments appended to the job's command.  
 Type: Array of strings.
 
-**limits**  
-Type: [Limits](#limits) object.
+**requirements**  
+What the run needs from its host.  
+Type: [Requirements](#requirements) object.
 
 **labels**  
-Key-value labels. On a run, what its runner must have.  
+Free-form key-value labels.  
 Type: Object.
-
-**for**  
-What it is for, if given.  
-Type: [For](#for) object.
 
 **state**  
 `pending` → `running` → `succeeded`, `failed` or `canceled`.  
@@ -1588,16 +1284,12 @@ Why it ended, when not plain (e.g. timed out).
 Type: String. Nullable: Yes.
 
 **cancelRequested**  
-Cancel asked for; its runner will stop it.  
+Cancel asked for; its host will stop it.  
 Type: Boolean.
 
-**runner**  
-Runner that claimed it.  
+**host**  
+Host that claimed it.  
 Type: String. Nullable: Yes.
-
-**runsWith**  
-Limits it actually runs with, once its runner says.  
-Type: [RunsWith](#runswith) object.
 
 **exit**  
 Exit code.  
@@ -1610,10 +1302,6 @@ Type: Number. Nullable: Yes.
 **logSize**  
 Log size in bytes.  
 Type: Integer.
-
-**submittedBy**  
-Who submitted it (`claimed-by`).  
-Type: String. Nullable: Yes.
 
 **createdAt**  
 Submitted at (ISO 8601).  
@@ -1632,7 +1320,7 @@ Ended at (ISO 8601).
 Type: String. Nullable: Yes.
 
 **leaseExpiresAt**  
-Fails at this time unless its runner checks in.  
+Fails at this time unless its host's heartbeat renews it.  
 Type: String. Nullable: Yes.
 
 ### Errors
@@ -1667,19 +1355,19 @@ Type: String. Valid values: `ValidationException` | `UnauthorizedException` | `A
 What went wrong.  
 Type: String. Required: Yes.
 
-## For
+## Free
 
-What it is for, if given.
+Free capacity, as last reported.
 
 ### Contents
 
-**kind**  
-What kind of thing asked for it.  
-Type: String. Valid values: `batch` | `change` | `item` | `worker`. Required: Yes.
+**slots**  
+Free run slots.  
+Type: Integer. Range: 0 to any. Required: Yes.
 
-**id**  
-Its id.  
-Type: String. Pattern: `^\S{1,200}$`. Required: Yes.
+**memory**  
+Free memory for runs, in MiB.  
+Type: Integer. Range: 0 to any. Required: Yes.
 
 ## Health
 
@@ -1697,15 +1385,101 @@ Type: String. Required: Yes.
 Commit it was built from.  
 Type: String. Required: Yes.
 
+## Host
+
+The host.
+
+### Contents
+
+**id**  
+The host's id.  
+Type: String. Required: Yes.
+
+**name**  
+Unique host name.  
+Type: String. Required: Yes.
+
+**os**  
+Operating system.  
+Type: String. Valid values: `linux` | `macos` | `windows`. Required: Yes.
+
+**arch**  
+CPU architecture.  
+Type: String. Valid values: `x86_64` | `aarch64`. Required: Yes.
+
+**slots**  
+Runs at once.  
+Type: Integer. Required: Yes.
+
+**memory**  
+Memory for runs, in MiB.  
+Type: Integer. Required: Yes.
+
+**labels**  
+Free-form key-value labels.  
+Type: Object. Required: Yes.
+
+**version**  
+job-runner version.  
+Type: String. Nullable: Yes. Required: Yes.
+
+**free**  
+Free capacity, as last reported.  
+Type: [Free](#free) object. Required: Yes.
+
+**metrics**  
+Health, as last reported.  
+Type: [Metrics](#metrics) object. Required: Yes.
+
+**createdAt**  
+First registered at (ISO 8601).  
+Type: String. Required: Yes.
+
+**lastSeenAt**  
+Last heartbeat or claim at (ISO 8601).  
+Type: String. Required: Yes.
+
 ## InvalidRangeError
 
 Every error's body.
 
 ### Contents
 
-## Limits
+## Metrics
+
+Health, as last reported.
 
 ### Contents
+
+**cpuLoad**  
+1-minute load average.  
+Type: Number. Range: 0 to any. Required: Yes.
+
+**memoryUsed**  
+Memory in use, in MiB.  
+Type: Integer. Range: 0 to any. Required: Yes.
+
+**memoryTotal**  
+Total memory, in MiB.  
+Type: Integer. Range: 0 to any. Required: Yes.
+
+**diskFree**  
+Free disk where runs work, in MiB.  
+Type: Integer. Range: 0 to any. Required: Yes.
+
+## Requirements
+
+What the run needs from its host.
+
+### Contents
+
+**os**  
+Operating system it needs. Default: any.  
+Type: String. Valid values: `linux` | `macos` | `windows` | `null`. Nullable: Yes. Required: No.
+
+**arch**  
+CPU architecture it needs. Default: any.  
+Type: String. Valid values: `x86_64` | `aarch64` | `null`. Nullable: Yes. Required: No.
 
 **memory**  
 Memory in MiB. Default: `jobs.toml`'s, else 1024.  
@@ -1714,24 +1488,6 @@ Type: Integer. Range: 16 to 1048576. Nullable: Yes. Required: No.
 **timeout**  
 Timeout in seconds. Default: `jobs.toml`'s.  
 Type: Integer. Range: 1 to 86400. Nullable: Yes. Required: No.
-
-## Routine
-
-The routine it runs, if any.
-
-### Contents
-
-**repo**  
-Repo holding the routine.  
-Type: String. Length: 0 to 200. Pattern: `^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$`. Required: Yes.
-
-**commit**  
-Full commit sha of that repo.  
-Type: String. Pattern: `^[0-9a-f]{40}$`. Required: Yes.
-
-**dir**  
-Directory holding the routine's `jobs.toml`.  
-Type: String. Length: 0 to 200. Pattern: `^(?!\.{1,2}(\/|$))[A-Za-z0-9_.-]+(\/(?!\.{1,2}(\/|$))[A-Za-z0-9_.-]+)*$`. Required: Yes.
 
 ## Run
 
@@ -1753,28 +1509,17 @@ Type: String. Pattern: `^[0-9a-f]{40}$`. Required: Yes.
 A `[jobs.<name>]` in the repo's `jobs.toml`.  
 Type: String. Pattern: `^[a-z0-9][a-z0-9_-]{0,62}$`. Required: Yes.
 
-**routine**  
-The routine it runs, if any.  
-Type: [Routine](#routine) object. Required: Yes.
-
-**host**  
-The host it must run on, if any.  
-Type: String. Nullable: Yes. Required: Yes.
-
 **args**  
 Arguments appended to the job's command.  
 Type: Array of strings. Required: Yes.
 
-**limits**  
-Type: [Limits](#limits) object. Required: Yes.
+**requirements**  
+What the run needs from its host.  
+Type: [Requirements](#requirements) object. Required: Yes.
 
 **labels**  
-Key-value labels. On a run, what its runner must have.  
+Free-form key-value labels.  
 Type: Object. Required: Yes.
-
-**for**  
-What it is for, if given.  
-Type: [For](#for) object. Required: Yes.
 
 **state**  
 `pending` → `running` → `succeeded`, `failed` or `canceled`.  
@@ -1785,16 +1530,12 @@ Why it ended, when not plain (e.g. timed out).
 Type: String. Nullable: Yes. Required: Yes.
 
 **cancelRequested**  
-Cancel asked for; its runner will stop it.  
+Cancel asked for; its host will stop it.  
 Type: Boolean. Required: Yes.
 
-**runner**  
-Runner that claimed it.  
+**host**  
+Host that claimed it.  
 Type: String. Nullable: Yes. Required: Yes.
-
-**runsWith**  
-Limits it actually runs with, once its runner says.  
-Type: [RunsWith](#runswith) object. Required: Yes.
 
 **exit**  
 Exit code.  
@@ -1807,10 +1548,6 @@ Type: Number. Nullable: Yes. Required: Yes.
 **logSize**  
 Log size in bytes.  
 Type: Integer. Required: Yes.
-
-**submittedBy**  
-Who submitted it (`claimed-by`).  
-Type: String. Nullable: Yes. Required: Yes.
 
 **createdAt**  
 Submitted at (ISO 8601).  
@@ -1829,66 +1566,6 @@ Ended at (ISO 8601).
 Type: String. Nullable: Yes. Required: Yes.
 
 **leaseExpiresAt**  
-Fails at this time unless its runner checks in.  
+Fails at this time unless its host's heartbeat renews it.  
 Type: String. Nullable: Yes. Required: Yes.
-
-## Runner
-
-The new runner.
-
-### Contents
-
-**id**  
-The runner's id.  
-Type: String. Required: Yes.
-
-**name**  
-Display name; not unique.  
-Type: String. Required: Yes.
-
-**labels**  
-Key-value labels. On a run, what its runner must have.  
-Type: Object. Required: Yes.
-
-**slots**  
-Runs at once.  
-Type: Integer. Required: Yes.
-
-**memory**  
-Memory for runs, in MiB.  
-Type: Integer. Required: Yes.
-
-**version**  
-job-runner version.  
-Type: String. Nullable: Yes. Required: Yes.
-
-**hostId**  
-Host it runs on.  
-Type: String. Nullable: Yes. Required: Yes.
-
-**createdAt**  
-Registered at (ISO 8601).  
-Type: String. Required: Yes.
-
-**lastSeenAt**  
-Last claim at (ISO 8601).  
-Type: String. Required: Yes.
-
-## RunsWith
-
-Limits it actually runs with, once its runner says.
-
-### Contents
-
-**memory**  
-Memory in MiB.  
-Type: Integer. Range: 1 to 1048576. Required: Yes.
-
-**timeout**  
-Timeout in seconds.  
-Type: Integer. Range: 1 to 86400. Required: Yes.
-
-**stall**  
-Seconds without progress before it fails as stalled; null for never.  
-Type: Integer. Range: 1 to 86400. Nullable: Yes. Required: Yes.
 

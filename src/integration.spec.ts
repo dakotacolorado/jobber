@@ -10,7 +10,7 @@ const token = process.env.INTEGRATION_JS_TOKEN;
 const call = (method: string, path: string, body?: unknown, auth = `Bearer ${token}`) =>
   fetch(`${url}${path}`, {
     method,
-    headers: { authorization: auth, "claimed-by": "job-service-integration", ...(body !== undefined && { "content-type": "application/json" }) },
+    headers: { authorization: auth, ...(body !== undefined && { "content-type": "application/json" }) },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
 
@@ -25,8 +25,8 @@ describe.skipIf(!url || !token)("job-service as deployed", () => {
   });
 
   it("submits, shows, lists, reads the log of and cancels a job", async () => {
-    // A label no runner has, so no runner claims it before it is canceled.
-    const draft = { repo: "dakotacolorado/python-template", commit: "0".repeat(40), job: "hello", labels: { integration: "never-claimed" } };
+    // An os no host in the fleet has, so none claims it before it is canceled.
+    const draft = { repo: "dakotacolorado/python-template", commit: "0".repeat(40), job: "hello", requirements: { os: "windows" }, labels: { by: "job-service-integration" } };
     const res = await call("POST", "/runs", draft);
     expect(res.status).toBe(201);
     const job = (await res.json()) as { id: string; state: string };
@@ -48,17 +48,17 @@ describe.skipIf(!url || !token)("job-service as deployed", () => {
 
 const registration = process.env.INTEGRATION_JS_RUNNER_TOKEN;
 
-describe.skipIf(!url || !token || !registration)("job-service's runner API as deployed", () => {
-  it("registers, claims its own job, appends, is told of a cancel, and reports", async () => {
-    const run = crypto.randomUUID();
-    const reg = await call("POST", "/runners", { name: "job-service-integration", slots: 1, memory: 16, labels: { integration: run } }, `Bearer ${registration}`);
+describe.skipIf(!url || !token || !registration)("job-service's host API as deployed", () => {
+  it("registers, claims its own run, appends, hears of a cancel in a heartbeat, and completes", async () => {
+    const name = `job-service-integration-${crypto.randomUUID().slice(0, 8)}`;
+    // A Windows host: no real one is, so only this test's run, which asks for Windows, fits its claim.
+    const reg = await call("POST", "/hosts", { name, os: "windows", arch: "x86_64", slots: 1, memory: 16 }, `Bearer ${registration}`);
     expect(reg.status).toBe(201);
-    const { runner, token: own } = (await reg.json()) as { runner: { id: string }; token: string };
-    expect((await call("POST", `/runners/${runner.id}/claim`, { free: { slots: 1, memory: 16 } }, `Bearer ${token}`)).status).toBe(401);
+    const { host, token: own } = (await reg.json()) as { host: { id: string }; token: string };
+    expect((await call("POST", `/hosts/${host.id}/claim`, { free: { slots: 1, memory: 16 } }, `Bearer ${token}`)).status).toBe(401);
 
-    // 16 MiB and a label of this run's own: no other job on the stage fits this claim.
-    const job = (await (await call("POST", "/runs", { repo: "dakotacolorado/python-template", commit: "0".repeat(40), job: "hello", limits: { memory: 16 }, labels: { integration: run } })).json()) as { id: string };
-    const claim = await call("POST", `/runners/${runner.id}/claim`, { free: { slots: 1, memory: 16 } }, `Bearer ${own}`);
+    const job = (await (await call("POST", "/runs", { repo: "dakotacolorado/python-template", commit: "0".repeat(40), job: "hello", requirements: { os: "windows", memory: 16 } })).json()) as { id: string };
+    const claim = await call("POST", `/hosts/${host.id}/claim`, { free: { slots: 1, memory: 16 } }, `Bearer ${own}`);
     expect(claim.status).toBe(200);
     expect(((await claim.json()) as { run: { id: string } }).run.id).toBe(job.id);
 
@@ -68,17 +68,18 @@ describe.skipIf(!url || !token || !registration)("job-service's runner API as de
         headers: { authorization: `Bearer ${own}`, "content-type": "application/octet-stream", "content-range": `bytes ${start}-${start + text.length - 1}/*` },
         body: text,
       });
-    expect(await (await append("hello\n", 0)).json()).toMatchObject({ size: 6, canceled: false });
+    expect(await (await append("hello\n", 0)).json()).toEqual({ size: 6 });
     expect((await append("gap", 9)).status).toBe(416);
     expect(await (await call("GET", `/runs/${job.id}/log`)).text()).toBe("hello\n");
 
     await call("POST", `/runs/${job.id}/cancel`);
-    expect(await (await append("bye\n", 6)).json()).toMatchObject({ size: 10, canceled: true });
+    const beat = await call("POST", `/hosts/${host.id}/heartbeat`, { free: { slots: 0, memory: 0 }, metrics: { cpuLoad: 0, memoryUsed: 0, memoryTotal: 0, diskFree: 0 }, running: [job.id] }, `Bearer ${own}`);
+    expect(await beat.json()).toMatchObject({ cancel: [job.id] });
     const put = await fetch(`${url}/runs/${job.id}`, {
       method: "PUT",
       headers: { authorization: `Bearer ${own}`, "content-type": "application/json" },
       body: JSON.stringify({ state: "canceled", exit: 143, duration: 1 }),
     });
-    expect(await put.json()).toMatchObject({ state: "canceled", exit: 143, logSize: 10 });
+    expect(await put.json()).toMatchObject({ state: "canceled", exit: 143, logSize: 6 });
   });
 });

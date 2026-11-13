@@ -150,7 +150,8 @@ export function renderApiReference(given: Document): string {
   lines.push("", "## Data types", "", ...Object.keys(schemas).filter((name) => !hidden(name)).sort().map((name) => `- [${name}](#${anchor(name)})`), "");
 
   for (const { path, method, op } of operations) {
-    const success = Object.entries(op.responses).find(([status]) => status.startsWith("2"))!;
+    // ConnectHost succeeds by switching protocols.
+    const success = Object.entries(op.responses).find(([status]) => /^[12]/.test(status))!;
     const params = op.parameters ?? [];
     const query = params.filter((p) => p.in === "query").map((p) => `${p.name}=${p.name}`).join("&");
     const headers = params.filter((p) => p.in === "header").map((p) => `${p.name}: string`);

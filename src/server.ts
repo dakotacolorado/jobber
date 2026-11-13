@@ -1,6 +1,7 @@
 import { JobApi, type Tokens } from "./api.ts";
 import { buildOf, PACKAGE_VERSION } from "./build.ts";
-import { NO_LINK, startScheduler, type Link } from "./scheduler.ts";
+import { Connections } from "./connections.ts";
+import { startScheduler } from "./scheduler.ts";
 import { Store } from "./store.ts";
 import { startTimers } from "./sweep.ts";
 
@@ -8,13 +9,13 @@ export interface Config {
   /** The SQLite file; `:memory:` keeps nothing past the process. */
   db: string;
   tokens: Tokens;
-  /** The hosts the scheduler can hand runs to. Default: none. */
-  link?: Link;
 }
 
 export interface Running {
   api: JobApi;
   store: Store;
+  /** The hosts' connections, for the HTTP server to hand its upgrades to (`attach`). */
+  connections: Connections;
   /** Stops the timers and closes the database. */
   close(): void;
 }
@@ -23,17 +24,25 @@ export interface Running {
 export function start(config: Config): Running {
   const store = Store.open(config.db);
   const build = buildOf();
-  const api = new JobApi(store, config.tokens, {
-    version: PACKAGE_VERSION,
-    commit: build.commit,
-  });
+  const connections = new Connections(store);
+  const api = new JobApi(
+    store,
+    config.tokens,
+    {
+      version: PACKAGE_VERSION,
+      commit: build.commit,
+    },
+    connections,
+  );
   const stop = startTimers(store);
-  const unschedule = startScheduler(store, config.link ?? NO_LINK);
+  const unschedule = startScheduler(store, connections);
   return {
     api,
     store,
+    connections,
     close: () => {
       unschedule();
+      connections.close();
       stop();
       store.close();
     },

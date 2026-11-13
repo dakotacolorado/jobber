@@ -1,9 +1,11 @@
 # job-service
 
 Runs jobs on a fleet of hosts. A **job** is a named script in a repo's
-`jobs.toml`; a **run** is one execution of it at one commit, on a **host** that
-claims it. A run is submitted `pending`, claimed and `running`, and ends
-`succeeded`, `failed` or `canceled` with its exit code. Its log can be read
+`jobs.toml`; a **run** is one execution of it at one commit, on a **host** the
+scheduler places it on. A run is submitted `pending` into a queue ordered by
+`priority`, then age; the scheduler `assigned` it to a host that fits and
+pushes it there; the host takes it and it is `running`; it ends `succeeded`,
+`failed` or `canceled` with its exit code. Its log can be read
 from any offset while it runs and after.
 
 One Node 24 process serves the HTTP API, an MCP server and a page, with
@@ -16,30 +18,39 @@ MCP server's is [`mcp.json`](./mcp.json), rendered in
 [`docs/MCP.md`](./docs/MCP.md) and served at `/docs/mcp`.
 
 ```
-POST /runs               {repo, commit, job, args?, requirements?: {os, arch, memory, timeout}, labels?}  → run, pending
+POST /runs               {repo, commit, job, args?, requirements?: {os, arch, memory, timeout}, labels?, priority?}  → run, pending
 GET  /runs?state=…&repo=…&label=key=value
 GET  /runs/{id}
 GET  /runs/{id}/log      Range: bytes=N-     (Run-State says the run's state)
 POST /runs/{id}/cancel
+POST /runs/{id}/priority {priority}   moves a run not yet ended in the queue
 GET  /hosts              each host with its capacity, free capacity and metrics
 ```
 
-`requirements` is everything a run needs from its host in one place; a host
-claims a run when its os and arch match and its free memory covers the run's
-(1024 MiB when none is given). `labels` describe the run, free-form (what it
+`requirements` is everything a run needs from its host in one place; a run
+fits a host when its os and arch match and the host's free memory covers the
+run's (1024 MiB when none is given). Every second the scheduler takes the
+queue in order and places each run on the fitting connected host with the most
+room, passing over one no host fits; an assignment not taken in 30 s goes back
+to the queue. `labels` describe the run, free-form (what it
 is for, who asked), and `ListRuns` filters by them.
 
 Hosts run job-runner, which calls in (hosts are behind NAT) and is never called:
+it holds a WebSocket open, over which job-service pushes its runs, as
+[`docs/PROTOCOL.md`](./docs/PROTOCOL.md) sets out.
 
 ```
-POST  /hosts                 registration token → host id and its own token (same name again: same id, new token)
-POST  /hosts/{id}/heartbeat  {free, metrics, running: [run ids]} → {cancel: [run ids], ended: [run ids], lease}
-POST  /hosts/{id}/claim      {free: {slots, memory}} → {run, memory, lease}, or 204
-PATCH /runs/{id}/log         Content-Range: bytes S-E/* → {size}
-PUT   /runs/{id}             {state, exit, duration, reason?}
+POST  /hosts                    registration token → host id and its own token (same name again: same id, new token)
+GET   /hosts/{id}/connect       WebSocket: assign/start/drop/cancel pushed; heartbeat/accept/decline sent
+POST  /hosts/{id}/heartbeat     {free, metrics, running: [run ids]} → {cancel, ended, lease}, while not connected
+POST  /hosts/{id}/claim         {free: {slots, memory}} → {run, memory, lease}, or 204: the old pull, until every host connects
+PATCH /runs/{id}/log?attempt=n  Content-Range: bytes S-E/* → {size}
+PUT   /runs/{id}?attempt=n      {state, exit, duration, reason?}
 ```
 
-A claim is a conditional write, so two hosts never get the same run. A
+Every change of a run's state is a conditional write, so two hosts never get
+the same run, and a host runs one only once job-service answers its accept
+with `start`. A
 running run's 60 s lease is renewed by its host's heartbeat, which a host sends
 every few seconds with its free capacity and metrics (CPU load, memory, free
 disk); a timer sweeps every minute and fails a running run whose lease lapsed,

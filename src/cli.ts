@@ -84,6 +84,8 @@ const server = serve({ fetch: running.api.fetch, hostname: host, port }, (info) 
   );
 });
 
+running.connections.attach(server as import("node:http").Server, (authorization, id) => running.api.hostAt(authorization, id));
+
 server.on("error", (err) => {
   running.close();
   fail(`cannot serve on ${host}:${port}: ${err.message}`);

@@ -390,7 +390,7 @@ async function hosts() {
     h(
       "table",
       {},
-      h("thead", {}, h("tr", {}, ["Host", "OS", "Capacity", "Free", "CPU load", "Memory", "Disk free", "Labels", "Version", "Last seen"].map((name) => h("th", {}, name)))),
+      h("thead", {}, h("tr", {}, ["Host", "Connected", "OS", "Capacity", "Free", "CPU load", "Memory", "Disk free", "Labels", "Version", "Last seen"].map((name) => h("th", {}, name)))),
       h(
         "tbody",
         {},
@@ -400,6 +400,7 @@ async function hosts() {
                 "tr",
                 {},
                 h("td", {}, host.name, h("div", { class: "muted mono" }, short(host.id))),
+                h("td", {}, host.connected ? "yes" : h("span", { class: "muted" }, "no")),
                 h("td", {}, `${host.os} ${host.arch}`),
                 h("td", {}, `${host.slots} slots, ${mib(host.memory)}`),
                 h("td", {}, host.free ? `${host.free.slots} slots, ${mib(host.free.memory)}` : ""),
@@ -411,7 +412,7 @@ async function hosts() {
                 h("td", {}, when(host.lastSeenAt)),
               ),
             )
-          : h("tr", {}, h("td", { colspan: 10, class: "muted" }, "No host has registered.")),
+          : h("tr", {}, h("td", { colspan: 11, class: "muted" }, "No host has registered.")),
       ),
     ),
   );

@@ -70,6 +70,7 @@ export const RunSchema = z
     state: State,
     reason: z.string().nullable().describe("Why it ended, when not plain (e.g. timed out)."),
     cancelRequested: z.boolean().describe("Cancel asked for; its host will stop it."),
+    attempt: z.int().min(1).describe("Which try this is, from 1."),
     host: z.string().uuid().nullable().describe("Host it is assigned to or ran on."),
     assignedAt: z.string().nullable().describe("Placed on `host` at (ISO 8601), while `assigned`."),
     exit: z.int().nullable().describe("Exit code."),
@@ -92,6 +93,7 @@ export const ERROR_CODES = {
   409: "ConflictException",
   413: "PayloadTooLargeException",
   416: "InvalidRangeException",
+  426: "UpgradeRequiredException",
   500: "InternalServerException",
   503: "ServiceUnavailableException",
 } as const;
@@ -279,6 +281,7 @@ export const HostSchema = z
     metrics: MetricsSchema.nullable().describe("Health, as last reported."),
     createdAt: z.string().describe("First registered at (ISO 8601)."),
     lastSeenAt: z.string().describe("Last heartbeat or claim at (ISO 8601)."),
+    connected: z.boolean().describe("Holds a connection open now: the scheduler can push runs to it."),
   })
   .openapi("Host");
 
@@ -300,6 +303,11 @@ export const RegisteredSchema = z
     token: z.string().describe("Its own token, `<id>.<secret>`. Shown only once."),
   })
   .openapi("RegisterHostResponse");
+
+/** Which attempt a host's write is for: one naming another than the run's current attempt is refused with 409. */
+export const AttemptQuery = z.object({
+  attempt: z.coerce.number().int().min(1).optional().describe("The attempt it was started on. Refused with 409 if the run has moved on."),
+});
 
 export const HeartbeatSchema = z
   .object({
@@ -408,12 +416,13 @@ export const appendRoute = createRoute({
   description: "Appends bytes at the log's end (`Content-Range: bytes S-E/*`). Max 256 KiB per call, 64 MiB per run.",
   request: {
     params: IdParam,
+    query: AttemptQuery,
     headers: z.object({ "content-range": z.string().regex(/^bytes \d+-\d+\/(\*|\d+)$/).describe("`bytes S-E/*`") }),
     body: { content: { "application/octet-stream": { schema: z.string().openapi({ format: "binary" }) } }, description: "The log's next bytes." },
   },
   responses: {
     200: json(AppendedSchema, "Stored."),
-    409: fails(409, "The run is not running: it ended, perhaps by its lease lapsing."),
+    409: fails(409, "The run is not running, or not on that attempt: it ended, perhaps by its lease lapsing."),
     413: fails(413, "Over 256 KiB, or the log would pass 64 MiB."),
     416: json(InvalidRangeSchema, `${ERROR_CODES[416]}: The append does not start at the log's end: resend from \`size\`.`),
     ...HOST_FAILS,
@@ -428,6 +437,34 @@ export const reportRoute = createRoute({
   operationId: "CompleteRun",
   summary: "Complete a run",
   description: "Records how a run ended. Retrying with the same result is safe.",
-  request: { params: IdParam, body: json(ReportSchema, "How it ended.") },
-  responses: { 200: json(RunSchema, "The run, ended."), 409: fails(409, "It is not running, or ended otherwise."), ...HOST_FAILS, ...MISSING },
+  request: { params: IdParam, query: AttemptQuery, body: json(ReportSchema, "How it ended.") },
+  responses: { 200: json(RunSchema, "The run, ended."), 409: fails(409, "It is not running, not on that attempt, or ended otherwise."), ...HOST_FAILS, ...MISSING },
+});
+
+// --- the host connection: what a host sends over it, as PROTOCOL.md describes ---
+
+const RunningAttempt = z.object({ id: z.string().uuid(), attempt: z.int().min(1) });
+
+export const HostMessage = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("heartbeat"), free: FreeSchema, metrics: MetricsSchema, running: z.array(RunningAttempt).max(64) }),
+  z.object({ type: z.literal("accept"), run: z.string().uuid(), attempt: z.int().min(1) }),
+  z.object({ type: z.literal("decline"), run: z.string().uuid(), attempt: z.int().min(1), reason: z.string().max(2000).default("") }),
+]);
+
+export type HostMessage = z.infer<typeof HostMessage>;
+
+export const connectRoute = createRoute({
+  ...hostAuth,
+  method: "get",
+  path: "/hosts/{id}/connect",
+  operationId: "ConnectHost",
+  summary: "Connect a host",
+  description:
+    "Opens the WebSocket over which job-service pushes runs to the host and the host sends heartbeats and takes them. Its messages are in `docs/PROTOCOL.md`. A request that is not an upgrade gets 426.",
+  request: { params: HostIdParam },
+  responses: {
+    101: { description: "Switched to the WebSocket." },
+    426: fails(426, "Not a WebSocket upgrade."),
+    ...HOST_FAILS,
+  },
 });

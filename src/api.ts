@@ -27,6 +27,7 @@ import {
 import { LOCAL_URL, mcpServer, type Call } from "./mcp.ts";
 import * as routes from "./schema.ts";
 import { ERROR_CODES, type ErrorStatus } from "./schema.ts";
+import { NO_LINK, type Link } from "./scheduler.ts";
 import type { Store, StoredHost } from "./store.ts";
 
 export const SPEC_PATH = "/openapi.json";
@@ -63,7 +64,7 @@ const hash = (secret: string) => createHash("sha256").update(secret).digest("hex
 
 const same = (a: string, b: string) => timingSafeEqual(Buffer.from(hash(a)), Buffer.from(hash(b)));
 
-const publicHost = ({ tokenHash: _, ...host }: StoredHost): Host => host;
+const publicHost = ({ tokenHash: _, ...host }: StoredHost, connected: boolean): Host & { connected: boolean } => ({ ...host, connected });
 
 export class JobApi {
   readonly hono: OpenAPIHono;
@@ -71,11 +72,14 @@ export class JobApi {
   private readonly store: Store;
   private readonly tokens: Tokens;
   private readonly about: About;
+  private readonly link: Link;
 
-  constructor(store: Store, tokens: Tokens, about: About) {
+  /** `link` reaches the connected hosts: `ListHosts` says which, and a cancel reaches a running run's host through it at once. */
+  constructor(store: Store, tokens: Tokens, about: About, link: Link = NO_LINK) {
     this.store = store;
     this.tokens = tokens;
     this.about = about;
+    this.link = link;
     this.hono = new OpenAPIHono({
       defaultHook: (result, c) => (result.success ? undefined : fail(c, 400, issues(result.error))),
     });
@@ -109,7 +113,12 @@ export class JobApi {
 
   /** The host whose own token the request carries: 401 for any other token. */
   private caller(c: Context): StoredHost {
-    const given = /^Bearer ([0-9a-f-]{36})\.(.+)$/.exec(c.req.header("authorization") ?? "");
+    return this.hostOf(c.req.header("authorization"));
+  }
+
+  /** The host whose own token `authorization` carries: 401 for any other. */
+  hostOf(authorization: string | undefined): StoredHost {
+    const given = /^Bearer ([0-9a-f-]{36})\.(.+)$/.exec(authorization ?? "");
     const host = given ? this.store.host(given[1]!) : null;
     const ok = host && given && timingSafeEqual(Buffer.from(hash(given[2]!)), Buffer.from(host.tokenHash));
     if (!ok) throw new RequestError("not a host's token", 401);
@@ -118,7 +127,12 @@ export class JobApi {
 
   /** The calling host, which must be the one the path names. */
   private pathHost(c: Context, id: string): StoredHost {
-    const host = this.caller(c);
+    return this.hostAt(c.req.header("authorization"), id);
+  }
+
+  /** The host `authorization` carries the token of, which must be host `id`: 401 or 403 otherwise. */
+  hostAt(authorization: string | undefined, id: string): StoredHost {
+    const host = this.hostOf(authorization);
     if (host.id !== id) throw new RequestError("not this host's token", 403);
     return host;
   }
@@ -168,7 +182,7 @@ export class JobApi {
       const next = canceled(run);
       // A running run that ends meanwhile is answered as it ended.
       if (run.state === "pending" || run.state === "assigned") this.store.update(next, run.updatedAt);
-      else this.store.requestCancel(run.id, next.updatedAt);
+      else if (this.store.requestCancel(run.id, next.updatedAt)) this.link.cancel(run.host!, run);
       return c.json(this.found(run.id), 200);
     });
 
@@ -194,13 +208,14 @@ export class JobApi {
         tokenHash: hash(secret),
       };
       this.store.putHost(host);
-      return c.json({ host: publicHost(host), token: `${host.id}.${secret}` }, 201);
+      return c.json({ host: publicHost(host, new Set(this.link.connected()).has(host.id)), token: `${host.id}.${secret}` }, 201);
     });
 
     app.openapi(routes.hostsRoute, (c) => {
+      const connected = new Set(this.link.connected());
       const hosts = this.store
         .hosts()
-        .map(publicHost)
+        .map((h) => publicHost(h, connected.has(h.id)))
         .sort((a, b) => b.lastSeenAt.localeCompare(a.lastSeenAt));
       return c.json({ hosts }, 200);
     });
@@ -210,8 +225,14 @@ export class JobApi {
       const { free, metrics, running } = c.req.valid("json");
       const at = now();
       this.store.seen(host.id, at, { free, metrics });
-      const { cancel, ended } = this.store.renew(host.id, running, leaseFrom(at), at);
+      const { cancel, ended } = this.store.renew(host.id, running.map((id) => ({ id })), leaseFrom(at), at);
       return c.json({ cancel, ended, lease: LEASE_SECONDS }, 200);
+    });
+
+    // An upgrade is taken by `Connections` before it reaches here.
+    app.openapi(routes.connectRoute, (c) => {
+      this.pathHost(c, c.req.valid("param").id);
+      throw new RequestError("GET /hosts/{id}/connect opens a WebSocket: send it as an upgrade", 426);
     });
 
     app.openapi(routes.claimRoute, (c) => {
@@ -239,7 +260,7 @@ export class JobApi {
       const bytes = new Uint8Array(await c.req.arrayBuffer());
       // Read after the body: another append may have landed while it arrived.
       const run = this.found(id);
-      ownRunning(run, host.id);
+      ownRunning(run, host.id, c.req.valid("query").attempt);
       const range = c.req.valid("header")["content-range"];
       const [start, end] = range.slice("bytes ".length).split("/")[0]!.split("-").map(Number) as [number, number];
       if (end - start + 1 !== bytes.length) throw new RequestError(`Content-Range says ${end - start + 1} bytes; the body has ${bytes.length}`, 400);
@@ -257,8 +278,9 @@ export class JobApi {
       const host = this.caller(c);
       const run = this.found(c.req.valid("param").id);
       const report = c.req.valid("json");
-      if (run.host === host.id && run.state !== "running" && sameEnd(run, report)) return c.json(run, 200);
-      ownRunning(run, host.id);
+      const attempt = c.req.valid("query").attempt;
+      if (run.host === host.id && run.state !== "running" && (attempt ?? run.attempt) === run.attempt && sameEnd(run, report)) return c.json(run, 200);
+      ownRunning(run, host.id, attempt);
       const next = finished(run, report);
       this.store.update(next, run.updatedAt);
       return c.json(next, 200);

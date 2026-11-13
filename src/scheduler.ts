@@ -7,10 +7,12 @@ export interface Link {
   connected(): Iterable<string>;
   /** Hands `run`, just assigned to `host`, to that host. */
   assign(host: string, run: Run): void;
+  /** Tells `host` that `run`, running there, is to be stopped. */
+  cancel(host: string, run: Run): void;
 }
 
 /** No host reachable: the scheduler places nothing. */
-export const NO_LINK: Link = { connected: () => [], assign: () => {} };
+export const NO_LINK: Link = { connected: () => [], assign: () => {}, cancel: () => {} };
 
 /**
  * Returns every assignment not taken in time to the queue, then places queued

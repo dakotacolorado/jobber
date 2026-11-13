@@ -15,7 +15,7 @@ describe("openapi.json", () => {
 
   it("names every operation in AWS's VerbNoun form, with a summary that starts with the same verb", async () => {
     for (const op of await operations()) {
-      expect(op.operationId).toMatch(/^(Get|List|Submit|Update|Cancel|Register|Claim|Append|Send|Complete)[A-Z][A-Za-z]+$/);
+      expect(op.operationId).toMatch(/^(Get|List|Submit|Update|Cancel|Register|Connect|Claim|Append|Send|Complete)[A-Z][A-Za-z]+$/);
       expect(op.summary.split(" ")[0]).toBe(op.operationId.match(/^[A-Z][a-z]+/)![0]);
     }
   });
@@ -34,7 +34,7 @@ describe("openapi.json", () => {
   it("names each error answer for its exception, as `<code>: <cause>`", async () => {
     for (const op of await operations()) {
       for (const [status, { description }] of Object.entries(op.responses)) {
-        if (!status.startsWith("2")) expect(`${op.operationId} ${status} ${description}`).toMatch(new RegExp(`^${op.operationId} ${status} ${ERROR_CODES[Number(status) as keyof typeof ERROR_CODES]}: .`));
+        if (Number(status) >= 400) expect(`${op.operationId} ${status} ${description}`).toMatch(new RegExp(`^${op.operationId} ${status} ${ERROR_CODES[Number(status) as keyof typeof ERROR_CODES]}: .`));
       }
     }
   });

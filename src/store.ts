@@ -164,18 +164,22 @@ export class Store {
 
   /**
    * Renews the lease of each of `ids` still running on `host`, and answers
-   * those of them a cancel was asked for.
+   * those a cancel was asked for and those no longer running there.
    */
-  renew(host: string, ids: string[], lease: string, at: string): string[] {
+  renew(host: string, ids: string[], lease: string, at: string): { cancel: string[]; ended: string[] } {
     return this.transaction(() => {
       const cancel: string[] = [];
+      const ended: string[] = [];
       for (const id of ids) {
         const stored = this.run(id);
-        if (!stored || stored.state !== "running" || stored.host !== host) continue;
+        if (!stored || stored.state !== "running" || stored.host !== host) {
+          ended.push(id);
+          continue;
+        }
         this.update({ ...stored, leaseExpiresAt: lease, updatedAt: at > stored.updatedAt ? at : stored.updatedAt }, stored.updatedAt);
         if (stored.cancelRequested) cancel.push(id);
       }
-      return cancel;
+      return { cancel, ended };
     });
   }
 

@@ -289,6 +289,7 @@ export const HeartbeatSchema = z
 export const HeartbeatAnswerSchema = z
   .object({
     cancel: z.array(z.string().uuid()).describe("Of those runs, the ones to stop and complete as `canceled`."),
+    ended: z.array(z.string().uuid()).describe("Of those runs, the ones no longer running on this host (e.g. failed by a lapsed lease): stop them, without completing them."),
     lease: z.int().describe("Seconds before a run fails without another heartbeat."),
   })
   .openapi("SendHeartbeatResponse");

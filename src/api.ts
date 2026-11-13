@@ -202,8 +202,8 @@ export class JobApi {
       const { free, metrics, running } = c.req.valid("json");
       const at = now();
       this.store.seen(host.id, at, { free, metrics });
-      const cancel = this.store.renew(host.id, running, leaseFrom(at), at);
-      return c.json({ cancel, lease: LEASE_SECONDS }, 200);
+      const { cancel, ended } = this.store.renew(host.id, running, leaseFrom(at), at);
+      return c.json({ cancel, ended, lease: LEASE_SECONDS }, 200);
     });
 
     app.openapi(routes.claimRoute, (c) => {

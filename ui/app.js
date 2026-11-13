@@ -1,7 +1,7 @@
 // jobber's page: runs by state, a run and its log, a form to submit one, and the hosts, over the API.
 // Every element is made with `h`, which sets text, never HTML, so nothing a run or its log says is run.
 
-import { SUMMARY, TAGLINE } from "./banner.js";
+import { LETTERS, MARK_PIXELS, SUMMARY, TAGLINE } from "./banner.js";
 
 const TOKEN_KEY = "jobber.token";
 const STATES = ["pending", "assigned", "running", "succeeded", "failed", "canceled"];
@@ -27,6 +27,55 @@ function h(tag, props = {}, ...children) {
 }
 
 const token = () => localStorage.getItem(TOKEN_KEY);
+
+/** Where this page is served, as `https://host:8445/`: the base of the API and the MCP server too. */
+const base = () => `${location.origin}${location.pathname}`;
+
+/** The mark drawn from banner.ts's pixel grid, a square a pixel, so it is the terminal's mark. */
+function pixelMark() {
+  const NS = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(NS, "svg");
+  svg.setAttribute("viewBox", `0 0 ${MARK_PIXELS[0].length} ${MARK_PIXELS.length}`);
+  svg.setAttribute("shape-rendering", "crispEdges");
+  svg.setAttribute("fill", "currentColor");
+  svg.setAttribute("aria-hidden", "true");
+  MARK_PIXELS.forEach((row, y) =>
+    [...row].forEach((pixel, x) => {
+      if (pixel !== "#") return;
+      const rect = document.createElementNS(NS, "rect");
+      for (const [key, value] of Object.entries({ x, y, width: 1, height: 1 })) rect.setAttribute(key, String(value));
+      svg.append(rect);
+    }),
+  );
+  return svg;
+}
+
+/** The block-letter name with the mark beside it, as honed's and waypoint's pages open. */
+function wordmark(small = false) {
+  return h("a", { class: `wordmark${small ? " small" : ""}`, href: "#/", "aria-label": "jobber" }, h("pre", { "aria-hidden": "true" }, LETTERS), pixelMark());
+}
+
+function landing(small) {
+  return h(
+    "div",
+    { class: "landing" },
+    wordmark(small),
+    h("p", { class: "tagline" }, TAGLINE),
+    h("p", { class: "muted" }, SUMMARY),
+    h(
+      "p",
+      { class: "endpoints muted" },
+      "API ",
+      h("code", {}, `${base()}runs`),
+      " · MCP ",
+      h("code", {}, `${base()}mcp`),
+      " · docs: ",
+      h("a", { href: "./docs/api", target: "_blank" }, "API"),
+      ", ",
+      h("a", { href: "./docs/mcp", target: "_blank" }, "MCP"),
+    ),
+  );
+}
 
 class ApiError extends Error {
   constructor(status, body) {
@@ -131,9 +180,7 @@ function signIn() {
     h(
       "div",
       { class: "signin" },
-      h("h1", {}, "jobber"),
-      h("p", { class: "tagline" }, TAGLINE),
-      h("p", { class: "muted" }, `${SUMMARY} The API is at `, h("code", {}, `${location.origin}/runs`), ", the MCP server at ", h("code", {}, `${location.origin}/mcp`), "."),
+      landing(false),
       form,
     ),
   );
@@ -190,6 +237,7 @@ async function runs(params) {
   draw(list);
   bar.append(count);
   main.replaceChildren(
+    landing(true),
     bar,
     h(
       "table",

@@ -27,6 +27,7 @@ What the server tells an agent when it connects:
 > - A run is submitted pending, claimed and running, and ends succeeded, failed or canceled with its exit code.
 > - A run's log is read from a byte offset: get_run_log answers the bytes from offset, the log's size, and the run's state, so call it again from offset + the bytes read until the state has ended.
 > - Label runs to find them again (e.g. {"item": "28af81bc", "by": "agent-7"}); list_runs filters by label as key=value.
+> - Pending runs are taken highest priority first, then oldest; give priority when submitting, or move a run with update_run_priority.
 > - cancel_run ends a pending run at once; a running one is stopped by its host shortly after.
 > - Every tool takes the submitters' token this server was connected with. The host protocol (register, heartbeat, claim, append, complete) is job-runner's, not tools.
 
@@ -39,11 +40,12 @@ What the server tells an agent when it connects:
 | [`get_run`](#get_run) | Get a run | yes |
 | [`get_run_log`](#get_run_log) | Read a run's log | yes |
 | [`cancel_run`](#cancel_run) | Cancel a run |  |
+| [`update_run_priority`](#update_run_priority) | Update run priority |  |
 | [`list_hosts`](#list_hosts) | List hosts | yes |
 
 ### submit_run
 
-Queues a run as `pending` until a host that meets its requirements claims it. The repo isn't checked here: a missing job fails on its host.
+Queues a run as `pending`, by `priority` then age, until a host that meets its requirements takes it. The repo isn't checked here: a missing job fails on its host.
 
 | Input | Type | Required | |
 | --- | --- | --- | --- |
@@ -57,6 +59,7 @@ Queues a run as `pending` until a host that meets its requirements claims it. Th
 | `requirements.memory` | integer or null |  | Memory in MiB. Default: `jobs.toml`'s, else 1024. |
 | `requirements.timeout` | integer or null |  | Timeout in seconds. Default: `jobs.toml`'s. |
 | `labels` | object |  | Labels to find it by, e.g. what it is for and who asked. |
+| `priority` | integer |  | Higher is placed first; equal ones oldest first. -1000 to 1000. Default: 0. |
 
 ### list_runs
 
@@ -93,6 +96,15 @@ Ends a pending run now. A running one is stopped by its host within seconds.
 | Input | Type | Required | |
 | --- | --- | --- | --- |
 | `id` | string | yes | The run's id. |
+
+### update_run_priority
+
+Moves a run not yet ended up or down the queue. A running one keeps its host.
+
+| Input | Type | Required | |
+| --- | --- | --- | --- |
+| `id` | string | yes | The run's id. |
+| `priority` | integer | yes | Higher is placed first; equal ones oldest first. -1000 to 1000. |
 
 ### list_hosts
 

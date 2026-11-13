@@ -8,6 +8,7 @@ export const INSTRUCTIONS = `job-service runs jobs on a fleet of hosts: a job is
 - A run is submitted pending, claimed and running, and ends succeeded, failed or canceled with its exit code.
 - A run's log is read from a byte offset: get_run_log answers the bytes from offset, the log's size, and the run's state, so call it again from offset + the bytes read until the state has ended.
 - Label runs to find them again (e.g. {"item": "28af81bc", "by": "agent-7"}); list_runs filters by label as key=value.
+- Pending runs are taken highest priority first, then oldest; give priority when submitting, or move a run with update_run_priority.
 - cancel_run ends a pending run at once; a running one is stopped by its host shortly after.
 - Every tool takes the submitters' token this server was connected with. The host protocol (register, heartbeat, claim, append, complete) is job-runner's, not tools.`;
 
@@ -114,6 +115,14 @@ export function mcpServer(version: string, call: Call): McpServer {
     { id: RunId },
     async ({ id }) => answer(await call("POST", `/runs/${id}/cancel`)),
     { destructive: true },
+  );
+
+  tool(
+    "update_run_priority",
+    "Update run priority",
+    routes.priorityRoute.description!,
+    { id: RunId, ...routes.PrioritySchema.shape },
+    async ({ id, priority }) => answer(await call("POST", `/runs/${id}/priority`, { body: { priority } })),
   );
 
   tool(

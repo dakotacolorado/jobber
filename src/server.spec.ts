@@ -83,6 +83,7 @@ describe("the timers", () => {
       args: [],
       requirements: { os: null, arch: null, memory: null, timeout: null },
       labels: {},
+      priority: 0,
       state: "running",
       reason: null,
       cancelRequested: false,

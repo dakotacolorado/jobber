@@ -1,10 +1,10 @@
 {
-  "instructions": "job-service runs jobs on a fleet of hosts: a job is a named script in a repo's jobs.toml, a run one execution of it at one commit, claimed by a host that meets its requirements (os, arch, memory).\n\n- A run is submitted pending, claimed and running, and ends succeeded, failed or canceled with its exit code.\n- A run's log is read from a byte offset: get_run_log answers the bytes from offset, the log's size, and the run's state, so call it again from offset + the bytes read until the state has ended.\n- Label runs to find them again (e.g. {\"item\": \"28af81bc\", \"by\": \"agent-7\"}); list_runs filters by label as key=value.\n- cancel_run ends a pending run at once; a running one is stopped by its host shortly after.\n- Every tool takes the submitters' token this server was connected with. The host protocol (register, heartbeat, claim, append, complete) is job-runner's, not tools.",
+  "instructions": "job-service runs jobs on a fleet of hosts: a job is a named script in a repo's jobs.toml, a run one execution of it at one commit, claimed by a host that meets its requirements (os, arch, memory).\n\n- A run is submitted pending, claimed and running, and ends succeeded, failed or canceled with its exit code.\n- A run's log is read from a byte offset: get_run_log answers the bytes from offset, the log's size, and the run's state, so call it again from offset + the bytes read until the state has ended.\n- Label runs to find them again (e.g. {\"item\": \"28af81bc\", \"by\": \"agent-7\"}); list_runs filters by label as key=value.\n- Pending runs are taken highest priority first, then oldest; give priority when submitting, or move a run with update_run_priority.\n- cancel_run ends a pending run at once; a running one is stopped by its host shortly after.\n- Every tool takes the submitters' token this server was connected with. The host protocol (register, heartbeat, claim, append, complete) is job-runner's, not tools.",
   "tools": [
     {
       "name": "submit_run",
       "title": "Submit a run",
-      "description": "Queues a run as `pending` until a host that meets its requirements claims it. The repo isn't checked here: a missing job fails on its host.",
+      "description": "Queues a run as `pending`, by `priority` then age, until a host that meets its requirements takes it. The repo isn't checked here: a missing job fails on its host.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "type": "object",
@@ -122,6 +122,13 @@
               "type": "string",
               "pattern": "^[A-Za-z0-9]([A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?$"
             }
+          },
+          "priority": {
+            "default": 0,
+            "description": "Higher is placed first; equal ones oldest first. -1000 to 1000. Default: 0.",
+            "type": "integer",
+            "minimum": -1000,
+            "maximum": 1000
           }
         },
         "required": [
@@ -276,6 +283,40 @@
       "annotations": {
         "readOnlyHint": false,
         "destructiveHint": true
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      }
+    },
+    {
+      "name": "update_run_priority",
+      "title": "Update run priority",
+      "description": "Moves a run not yet ended up or down the queue. A running one keeps its host.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "description": "The run's id."
+          },
+          "priority": {
+            "type": "integer",
+            "minimum": -1000,
+            "maximum": 1000,
+            "description": "Higher is placed first; equal ones oldest first. -1000 to 1000."
+          }
+        },
+        "required": [
+          "id",
+          "priority"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false
       },
       "execution": {
         "taskSupport": "forbidden"

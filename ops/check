@@ -1,27 +1,49 @@
 #!/bin/sh
-# check [REPO COMMIT JOB]: run on a host after ops/deploy and ops/runner.
+# check [REPO COMMIT JOB [N]]: run on a host after ops/deploy and ops/runner.
 # Submits a run (default: dakotacolorado/python-template's hello at its
 # main) to this host's job-service at its public address, follows its log,
 # and exits with the run's exit: 0 once it ends `succeeded`. Then lists the
-# hosts, which name the one that ran it.
+# hosts, which name the one that ran it, with what each offers. With N, submits
+# N such runs together, waits for them all, and says which ran at the same
+# time: 0 if all succeeded and every one overlapped the others.
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 . "$here/common"
 repo=${1:-dakotacolorado/python-template}
 commit=${2:-$(git ls-remote "https://github.com/$repo.git" refs/heads/main | cut -f1)}
 job=${3:-hello}
+n=${4:-1}
 # The token goes to node by its environment, never on a command line.
-JS_TOKEN=$(token AUTH_TOKEN) exec "$node" --input-type=module - "$url" "$repo" "$commit" "$job" <<'JS'
-const [url, repo, commit, job] = process.argv.slice(2);
+JS_TOKEN=$(token AUTH_TOKEN) exec "$node" --input-type=module - "$url" "$repo" "$commit" "$job" "$n" <<'JS'
+const [url, repo, commit, job, n] = process.argv.slice(2);
 const headers = { authorization: `Bearer ${process.env.JS_TOKEN}` };
 const call = async (method, path, body, extra = {}) => {
   const res = await fetch(url + path, { method, headers: { ...headers, ...extra, ...(body && { "content-type": "application/json" }) }, body: body && JSON.stringify(body) });
   if (!res.ok && res.status !== 206) throw new Error(`${method} ${path}: ${res.status} ${await res.text()}`);
   return res;
 };
+const ended = ["succeeded", "failed", "canceled"];
+const hosts = async () => {
+  for (const h of (await (await call("GET", "/hosts")).json()).hosts)
+    console.log(`check: host ${h.id} ${h.name} (${h.os} ${h.arch}), version ${h.version}, offers ${h.capacity.cpu} CPU and ${h.capacity.memory} MiB, free ${h.free ? `${h.free.cpu} CPU and ${h.free.memory} MiB` : "?"}, load ${h.metrics?.cpuLoad ?? "?"} of ${h.metrics?.cpus ?? "?"} CPUs, last seen ${h.lastSeenAt}`);
+};
+if (Number(n) > 1) {
+  const runs = await Promise.all(Array.from({ length: Number(n) }, async () => (await call("POST", "/runs", { repo, commit, job, labels: { by: "job-service-check" } })).json()));
+  console.log(`check: ${runs.length} runs of ${repo} ${job} at ${commit}, on ${url}: ${runs.map((r) => r.id).join(" ")}`);
+  let done;
+  for (;;) {
+    done = await Promise.all(runs.map(async (r) => (await call("GET", `/runs/${r.id}`)).json()));
+    if (done.every((r) => ended.includes(r.state))) break;
+    await new Promise((ok) => setTimeout(ok, 1000));
+  }
+  for (const r of done) console.log(`check: run ${r.id} ${r.state}, exit ${r.exit}, on host ${r.host}, from ${r.startedAt} to ${r.endedAt}`);
+  const together = done.every((a) => done.every((b) => a.startedAt < b.endedAt && b.startedAt < a.endedAt));
+  console.log(`check: ${together ? "all ran at the same time" : "not all ran at the same time"}`);
+  await hosts();
+  process.exit(done.every((r) => r.state === "succeeded") && together ? 0 : 1);
+}
 const run = await (await call("POST", "/runs", { repo, commit, job, labels: { by: "job-service-check" } })).json();
 console.log(`check: run ${run.id} of ${repo} ${job} at ${commit}, on ${url}`);
-const ended = ["succeeded", "failed", "canceled"];
 let offset = 0;
 for (;;) {
   const res = await call("GET", `/runs/${run.id}/log`, undefined, { range: `bytes=${offset}-` });
@@ -34,6 +56,6 @@ for (;;) {
 }
 const end = await (await call("GET", `/runs/${run.id}`)).json();
 console.log(`check: run ${end.id} ${end.state}, exit ${end.exit}, ${end.logSize} bytes of log, on host ${end.host}`);
-for (const h of (await (await call("GET", "/hosts")).json()).hosts) console.log(`check: host ${h.id} ${h.name} (${h.os} ${h.arch}), version ${h.version}, load ${h.metrics?.cpuLoad ?? "?"}, last seen ${h.lastSeenAt}`);
+await hosts();
 process.exit(end.state === "succeeded" ? 0 : (end.exit || 1));
 JS

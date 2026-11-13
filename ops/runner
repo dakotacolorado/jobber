@@ -1,16 +1,20 @@
 #!/bin/sh
-# runner STAGE BINARY [MEMORY]: run on a host after ops/deploy. Installs a
+# runner STAGE BINARY RESERVE_CPU RESERVE_MIB: run on a host after ops/deploy. Installs a
 # second job-runner, beside the host's own (which stays on the AWS
 # job-service until cutover), registered with this host's job-service:
 # BINARY (a job-runner with the `api = "hosts"` mode) as
 # ~/.local/share/routines/job-runner-local/job-runner, its config in
 # ~/.config/job-runner-local/, its identity in ~/.local/state/job-runner-local/,
 # its checkouts in ~/.local/share/job-runner-local/, its jobs in its own
-# jobslocal.slice (MEMORY MiB, default 1024, one at a time), and
-# job-runner-local.service. Rerun to upgrade: it keeps its identity.
+# jobslocal.slice, and job-runner-local.service. It measures the machine's
+# CPUs and memory each time it starts and offers jobs that less RESERVE_CPU
+# CPUs and RESERVE_MIB MiB, kept back for everything else on the host (the
+# AWS job-runner's jobs.slice, the services, agents, a desktop); the slice is
+# sized to what it offers. Rerun to upgrade or to change the reserve: it
+# keeps its identity, and registers its capacity and version again.
 set -eu
-[ $# -ge 2 ] || { echo "usage: runner STAGE BINARY [MEMORY]" >&2; exit 2; }
-stage=$1 binary=$2 memory=${3:-1024}
+[ $# -eq 4 ] || { echo "usage: runner STAGE BINARY RESERVE_CPU RESERVE_MIB" >&2; exit 2; }
+stage=$1 binary=$2 reserve_cpu=$3 reserve_memory=$4
 here=$(cd "$(dirname "$0")" && pwd)
 . "$here/common"
 name=job-runner-local
@@ -35,17 +39,17 @@ state_file = "$HOME/.local/state/$name/runner.json"
 work_dir = "$HOME/.local/share/$name"
 name = "$host_id"
 host_id = "$host_id"
-slots = 1
-memory = $memory
-build_memory = $memory
+# Kept back from jobs: the rest of what job-runner measures, it offers them.
+reserve = { cpu = $reserve_cpu, memory = $reserve_memory }
 git_credential_helper = "!gh auth git-credential"
 cgroup_parent = "jobslocal.slice"
 
 [slice]
-memory_max = "${memory}M"
 cpu_weight = 20
 CONF
-"$bin" --config "$rconf/config.toml" --slice-unit >"$units/jobslocal.slice"
+"$bin" --config "$rconf/config.toml" --slice-unit >"$units/jobslocal.slice.new"
+mv "$units/jobslocal.slice.new" "$units/jobslocal.slice"
+echo "runner: jobslocal.slice: $(grep -E '^(MemoryMax|CPUQuota)=' "$units/jobslocal.slice" | tr '\n' ' ')"
 cat >"$units/$name.service" <<UNIT
 [Unit]
 Description=job-runner for this host's own job-service ($stage), in jobslocal.slice

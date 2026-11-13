@@ -9,7 +9,7 @@ import { PACKAGE_VERSION } from "./build.ts";
 import { start, type Running } from "./server.ts";
 import { Store } from "./store.ts";
 
-const USAGE = `jobber v${PACKAGE_VERSION}: submit code to run on whatever computers you have available.
+const USAGE = `jobber v${PACKAGE_VERSION}: submit code to run on whatever computers you have.
 
 Usage:
   jobber [serve] [options]   run the server

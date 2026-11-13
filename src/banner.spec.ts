@@ -7,7 +7,7 @@ const info = { version: "1.2.3", url: "http://127.0.0.1:4500", publicUrl: "https
 
 describe("banner", () => {
   it("carries the person's tagline verbatim", () => {
-    expect(TAGLINE).toBe("Submit code to run on whatever computers you have available.");
+    expect(TAGLINE).toBe("Submit code to run on whatever computers you have.");
   });
 
   it("sets the mark beside the letters, a row of text for each two of pixels", () => {

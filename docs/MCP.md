@@ -9,7 +9,7 @@ Streamable HTTP at `/mcp`, stateless, answering JSON. Every request takes the su
   "mcpServers": {
     "jobber": {
       "type": "http",
-      "url": "https://dakotajp-lenovo-laptop.tail90863a.ts.net:8445/mcp",
+      "url": "https://jobber.example.ts.net/mcp",
       "headers": {
         "Authorization": "Bearer <AUTH_TOKEN>"
       }

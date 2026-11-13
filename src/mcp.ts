@@ -13,8 +13,8 @@ export const INSTRUCTIONS = `jobber runs code on whatever computers you have, it
 - cancel_run ends a pending or assigned run at once; a running one is stopped by its host shortly after.
 - Every tool takes the submitters' token this server was connected with. The host protocol (register, connect, heartbeat, append, complete) is jobber-host's, not tools.`;
 
-/** The address the MCP docs give, prod's, HTTPS as every deployed address is; served, the address they were reached at replaces it. */
-export const DOCS_URL = "https://dakotajp-lenovo-laptop.tail90863a.ts.net:8445";
+/** The address the MCP docs give, a placeholder; served, the address they were reached at replaces it. */
+export const DOCS_URL = "https://jobber.example.ts.net";
 
 /** Sends one API request as the MCP request's caller, and gives its status, headers and body. */
 export type Call = (method: string, path: string, init?: { body?: unknown; headers?: Record<string, string> }) => Promise<Response>;

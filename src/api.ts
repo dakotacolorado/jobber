@@ -336,7 +336,7 @@ export class JobApi {
     this.hono.get("/ui/mark.svg", (c) => c.body(MARK_ICON, 200, { "content-type": "image/svg+xml; charset=utf-8" }));
     this.hono.get("/docs/api", page("docs/index.html", "text/html"));
     this.hono.get("/mcp.json", page("mcp.json", "application/json"));
-    // The docs' example address is prod's; served, they give the address they were reached at.
+    // The docs' example address is a placeholder; served, they give the address they were reached at.
     this.hono.get("/docs/mcp", (c) => {
       const url = new URL(c.req.url);
       const proto = c.req.header("x-forwarded-proto") ?? url.protocol.slice(0, -1);

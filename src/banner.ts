@@ -1,4 +1,4 @@
-/** jobber's mark: its name in block letters beside the mark, one job fanning out to the computers that run it. */
+/** jobber's mark: its name in block letters beside the mark, stacked shipping containers: runs, each in its own image. */
 
 const LETTERS = [
   "     ██╗ ██████╗ ██████╗ ██████╗ ███████╗██████╗",
@@ -10,22 +10,23 @@ const LETTERS = [
 ];
 
 /**
- * The mark on an 18 by 12 grid: a filled square, the job, sends three lines
- * out to three open boxes, the computers that run it. The last row is blank so
- * a terminal, drawing two rows a character, gives it as many rows as the letters.
+ * The mark on an 18 by 12 grid: three shipping containers, ribbed, one
+ * stacked on two, the runs each going out in its own image. The first and last
+ * rows are blank so a terminal, drawing two rows a character, gives it as many
+ * rows as the letters, the containers centred on them.
  */
 export const MARK_PIXELS = [
-  "..............####",
-  "............###..#",
-  "..........##..####",
-  "#####...##........",
-  "#####.##......####",
-  "###############..#",
-  "#####.##......####",
-  "#####...##........",
-  "..........##..####",
-  "............###..#",
-  "..............####",
+  "..................",
+  "....##########....",
+  "....#.#.##.#.#....",
+  "....#.#.##.#.#....",
+  "....##########....",
+  "..................",
+  "########..########",
+  "#.#..#.#..#.#..#.#",
+  "#.#..#.#..#.#..#.#",
+  "#.#..#.#..#.#..#.#",
+  "########..########",
   "..................",
 ];
 
@@ -56,18 +57,17 @@ export const MARK_PIXEL_SVG = `<svg xmlns="http://www.w3.org/2000/svg" aria-hidd
   [...row].flatMap((pixel, x) => (pixel === "#" ? [`<rect x="${x}" y="${y}" width="1" height="1"/>`] : [])),
 ).join("")}</svg>`;
 
-/** The mark drawn smooth, for small sizes: `ink` fills the job and strokes the lines and computers, `ground` fills the computers. */
-const smoothMark = (ink: string, ground: string, style = "") =>
-  `<svg xmlns="http://www.w3.org/2000/svg" aria-hidden="true" viewBox="0 0 40 24">${style}<g fill="none" stroke="${ink}" stroke-width="2" stroke-linejoin="round"><path d="M9 12L29 4M9 12H29M9 12L29 20"/>${[
-    4, 12, 20,
-  ]
-    .map((y) => `<rect x="29" y="${y - 3}" width="10" height="6" rx="1" fill="${ground}"/>`)
-    .join("")}<rect x="1" y="7" width="10" height="10" rx="1.5" fill="${ink}"/></g></svg>`;
+/** The mark drawn smooth, for small sizes: `ink` strokes each container and its ribs, `ground` fills them. */
+const smoothMark = (ink: string, ground: string, style = "") => {
+  const box = (x: number, y: number, w: number, h: number, ribs: number[]) =>
+    `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="1" fill="${ground}"/>` + ribs.map((r) => `<path d="M${x + r} ${y + 2.5}V${y + h - 2.5}"/>`).join("");
+  return `<svg xmlns="http://www.w3.org/2000/svg" aria-hidden="true" viewBox="0 0 40 24">${style}<g fill="none" stroke="${ink}" stroke-width="2" stroke-linejoin="round">${box(10, 1, 20, 9, [5, 10, 15])}${box(1, 14, 17, 9, [4.5, 8.5, 12.5])}${box(22, 14, 17, 9, [4.5, 8.5, 12.5])}</g></svg>`;
+};
 
 /** The smooth mark in the page's colors, for its header. */
 export const MARK_SVG = smoothMark("currentColor", "var(--panel)");
 
-/** The smooth mark on its own, as the page's favicon: violet, its computers the tab's light or dark. */
+/** The smooth mark on its own, as the page's favicon: violet, its containers filled the tab's light or dark. */
 export const MARK_ICON = smoothMark(
   "var(--ink)",
   "var(--ground)",

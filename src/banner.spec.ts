@@ -14,7 +14,7 @@ describe("banner", () => {
     expect(MARK_PIXELS).toHaveLength(12);
     expect(new Set(MARK_PIXELS.map((row) => row.length))).toEqual(new Set([18]));
     expect(WORDMARK.split("\n")).toHaveLength(6);
-    expect(WORDMARK.split("\n")[0]).toMatch(/^ {5}██╗ ██████╗.*  +▄▄█▀▀█$/);
+    expect(WORDMARK.split("\n")[0]).toMatch(/^ {5}██╗ ██████╗.*  +▄{10}$/);
   });
 
   it("says what jobber is and where its page, API and MCP are, at the public address", () => {

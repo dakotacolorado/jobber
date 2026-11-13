@@ -1,9 +1,13 @@
-# Sourced by ops/ scripts: where job-service lives on a host, and how to reach it.
-app=job-service
+# Sourced by ops/ scripts: where jobber lives on a host, and how to reach it.
+app=jobber
 port=4500
 https_port=8445
-conf=$HOME/.config/job-service
-data=$HOME/.local/share/job-service
+conf=$HOME/.config/jobber
+data=$HOME/.local/share/jobber
+# Where it lived as job-service, which the first deploy moves it from.
+old_app=job-service
+old_conf=$HOME/.config/job-service
+old_data=$HOME/.local/share/job-service
 routines=$HOME/.local/share/routines
 units=$HOME/.config/systemd/user
 

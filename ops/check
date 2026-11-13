@@ -1,7 +1,7 @@
 #!/bin/sh
 # check [REPO COMMIT JOB [N]]: run on a host after ops/deploy and ops/runner.
 # Submits a run (default: dakotacolorado/python-template's hello at its
-# main) to this host's job-service at its public address, follows its log,
+# main) to this host's jobber at its public address, follows its log,
 # and exits with the run's exit: 0 once it ends `succeeded`. Then lists the
 # hosts, which name the one that ran it, with what each offers. With N, submits
 # N such runs together, waits for them all, and says which ran at the same
@@ -28,7 +28,7 @@ const hosts = async () => {
     console.log(`check: host ${h.id} ${h.name} (${h.os} ${h.arch}), version ${h.version}, offers ${h.capacity.cpu} CPU and ${h.capacity.memory} MiB, free ${h.free ? `${h.free.cpu} CPU and ${h.free.memory} MiB` : "?"}, load ${h.metrics?.cpuLoad ?? "?"} of ${h.metrics?.cpus ?? "?"} CPUs, last seen ${h.lastSeenAt}`);
 };
 if (Number(n) > 1) {
-  const runs = await Promise.all(Array.from({ length: Number(n) }, async () => (await call("POST", "/runs", { repo, commit, job, labels: { by: "job-service-check" } })).json()));
+  const runs = await Promise.all(Array.from({ length: Number(n) }, async () => (await call("POST", "/runs", { repo, commit, job, labels: { by: "jobber-check" } })).json()));
   console.log(`check: ${runs.length} runs of ${repo} ${job} at ${commit}, on ${url}: ${runs.map((r) => r.id).join(" ")}`);
   let done;
   for (;;) {
@@ -42,7 +42,7 @@ if (Number(n) > 1) {
   await hosts();
   process.exit(done.every((r) => r.state === "succeeded") && together ? 0 : 1);
 }
-const run = await (await call("POST", "/runs", { repo, commit, job, labels: { by: "job-service-check" } })).json();
+const run = await (await call("POST", "/runs", { repo, commit, job, labels: { by: "jobber-check" } })).json();
 console.log(`check: run ${run.id} of ${repo} ${job} at ${commit}, on ${url}`);
 let offset = 0;
 for (;;) {

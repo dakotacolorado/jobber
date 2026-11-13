@@ -589,6 +589,14 @@
             },
             "description": "Of those runs, the ones to stop and complete as `canceled`."
           },
+          "ended": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Of those runs, the ones no longer running on this host (e.g. failed by a lapsed lease): stop them, without completing them."
+          },
           "lease": {
             "type": "integer",
             "description": "Seconds before a run fails without another heartbeat."
@@ -596,6 +604,7 @@
         },
         "required": [
           "cancel",
+          "ended",
           "lease"
         ]
       },

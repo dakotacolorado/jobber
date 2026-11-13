@@ -191,7 +191,7 @@ describe("SendHeartbeat", () => {
     for (const id of [mine.id, theirs.id]) force(store, { ...store.run(id)!, leaseExpiresAt: old });
     const res = await heartbeat(h, [mine.id, theirs.id], { slots: 0, memory: 1024 });
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ cancel: [], lease: LEASE_SECONDS });
+    expect(await res.json()).toEqual({ cancel: [], ended: [theirs.id], lease: LEASE_SECONDS });
     expect(store.run(mine.id)!.leaseExpiresAt! > new Date().toISOString()).toBe(true);
     expect(store.run(theirs.id)!.leaseExpiresAt).toBe(old);
     expect((await hosts()).find((each) => each.id === h.host.id)).toMatchObject({ free: { slots: 0, memory: 1024 }, metrics: METRICS });
@@ -207,7 +207,20 @@ describe("SendHeartbeat", () => {
     expect(await (await call("POST", `/runs/${run.id}/cancel`, TOKEN)).json()).toMatchObject({ state: "running", cancelRequested: true });
     expect(await (await heartbeat(h, [run.id, keep.id])).json()).toMatchObject({ cancel: [run.id] });
     expect(await (await complete(run.id, h.token, { state: "canceled", exit: 143 })).json()).toMatchObject({ state: "canceled", reason: "canceled while running" });
-    expect(await (await heartbeat(h, [run.id, keep.id])).json()).toMatchObject({ cancel: [] });
+    expect(await (await heartbeat(h, [run.id, keep.id])).json()).toMatchObject({ cancel: [], ended: [run.id] });
+  });
+
+  it("answers which listed runs have ended, so the host stops one whose lease lapsed", async () => {
+    const { store, register, submit, claim, heartbeat } = setup();
+    const h = await register();
+    await submit();
+    const run = ((await (await claim(h)).json()) as Claim).run;
+    force(store, { ...store.run(run.id)!, leaseExpiresAt: new Date(Date.now() - 1000).toISOString() });
+    expect(await sweep(store)).toBe(1);
+    const gone = "00000000-0000-4000-8000-000000000000";
+    expect(await (await heartbeat(h, [run.id, gone])).json()).toEqual({ cancel: [], ended: [run.id, gone], lease: LEASE_SECONDS });
+    // A failed run's lease is not renewed: it stays failed.
+    expect(store.run(run.id)!.state).toBe("failed");
   });
 
   it("refuses metrics that are missing", async () => {

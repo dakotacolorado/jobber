@@ -33,7 +33,7 @@ Hosts run job-runner, which calls in (hosts are behind NAT) and is never called:
 
 ```
 POST  /hosts                 registration token → host id and its own token (same name again: same id, new token)
-POST  /hosts/{id}/heartbeat  {free, metrics, running: [run ids]} → {cancel: [run ids], lease}
+POST  /hosts/{id}/heartbeat  {free, metrics, running: [run ids]} → {cancel: [run ids], ended: [run ids], lease}
 POST  /hosts/{id}/claim      {free: {slots, memory}} → {run, memory, lease}, or 204
 PATCH /runs/{id}/log         Content-Range: bytes S-E/* → {size}
 PUT   /runs/{id}             {state, exit, duration, reason?}

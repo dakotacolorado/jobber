@@ -1129,6 +1129,7 @@ Content-type: application/json
 
 {
    "cancel": [ "string" ],
+   "ended": [ "string" ],
    "lease": number
 }
 ```
@@ -1137,6 +1138,10 @@ Content-type: application/json
 
 **cancel**  
 Of those runs, the ones to stop and complete as `canceled`.  
+Type: Array of strings.
+
+**ended**  
+Of those runs, the ones no longer running on this host (e.g. failed by a lapsed lease): stop them, without completing them.  
 Type: Array of strings.
 
 **lease**  

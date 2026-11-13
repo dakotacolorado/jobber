@@ -19,4 +19,4 @@ TRAIN.md
 .integrator-prompt.md
 .integrator-log.txt
 dist/
-.job-service-dev.db*
+.jobber-dev.db*

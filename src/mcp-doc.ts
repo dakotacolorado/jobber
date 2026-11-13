@@ -48,7 +48,7 @@ export async function mcpDocument(): Promise<McpDocument> {
   return { instructions: INSTRUCTIONS, tools: result.tools };
 }
 
-const CONFIG = { mcpServers: { "job-service": { type: "http", url: `${LOCAL_URL}/mcp`, headers: { Authorization: "Bearer <AUTH_TOKEN>" } } } };
+const CONFIG = { mcpServers: { "jobber": { type: "http", url: `${LOCAL_URL}/mcp`, headers: { Authorization: "Bearer <AUTH_TOKEN>" } } } };
 const ABOUT =
   "Streamable HTTP at `/mcp`, stateless, answering JSON. Every request takes the submitters' bearer token (`AUTH_TOKEN`), as the API does: each tool is one API request made with it, so it is refused, recorded and answered as that request would be. " +
   "A refusal comes back as the tool's error, in the API's words.";
@@ -76,7 +76,7 @@ function table(schema: JsonSchema, prefix = ""): string[] {
 /** `docs/MCP.md`: the server's instructions, then each tool and its input. */
 export function renderMcp(doc: McpDocument): string {
   const lines = [
-    "# job-service's MCP server",
+    "# jobber's MCP server",
     "",
     "<!-- Generated from src/mcp.ts by `npm run spec`; do not edit. -->",
     "",
@@ -137,7 +137,7 @@ export function renderMcpHtml(doc: McpDocument): string {
   const index = doc.tools.map((tool) => `<li><a href="#${esc(tool.name)}"><code>${esc(tool.name)}</code></a> ${esc(tool.title ?? "")}</li>`).join("");
   const config = esc(JSON.stringify(CONFIG, null, 2));
   return `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>job-service MCP server</title>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>jobber MCP server</title>
 <!-- Generated from src/mcp.ts by \`npm run spec\`; do not edit. -->
 <style>
 body{font:14px/1.5 system-ui,sans-serif;max-width:960px;margin:0 auto;padding:24px;color:#1d1d1b}
@@ -145,7 +145,7 @@ code,pre{font-family:ui-monospace,monospace;font-size:13px}pre,blockquote{backgr
 blockquote{white-space:pre-wrap;margin:0}table{border-collapse:collapse;width:100%;margin:8px 0 20px}td,th{border:1px solid #e3e2dc;padding:4px 8px;text-align:left;vertical-align:top}
 .ro{font-size:11px;border:1px solid #1e7a3a;color:#1e7a3a;border-radius:4px;padding:0 6px;font-weight:normal}section{border-top:1px solid #e3e2dc;padding-top:6px}
 </style></head><body>
-<h1>job-service's MCP server</h1>
+<h1>jobber's MCP server</h1>
 <p>${inline(ABOUT)} The contract is <a href="../mcp.json"><code>mcp.json</code></a>; the API's is <a href="./api">here</a>.</p>
 <pre>${config}</pre>
 <h2>Instructions</h2><p>What the server tells an agent when it connects:</p><blockquote>${esc(doc.instructions)}</blockquote>

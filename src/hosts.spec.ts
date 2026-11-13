@@ -315,7 +315,7 @@ describe("a database from before hosts", () => {
       args: [],
       limits: { memory: 256, timeout: null },
       labels: {},
-      for: { kind: "worker", id: "job-service-check" },
+      for: { kind: "worker", id: "jobber-check" },
       state: "succeeded",
       reason: null,
       cancelRequested: false,
@@ -324,14 +324,14 @@ describe("a database from before hosts", () => {
       exit: 0,
       duration: 2,
       logSize: 0,
-      submittedBy: "job-service-check",
+      submittedBy: "jobber-check",
       createdAt: at,
       updatedAt: at,
       startedAt: at,
       endedAt: at,
       leaseExpiresAt: null,
     };
-    db.prepare("INSERT INTO runs VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(old.id, old.state, old.repo, old.submittedBy, "worker:job-service-check", at, at, JSON.stringify(old));
+    db.prepare("INSERT INTO runs VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(old.id, old.state, old.repo, old.submittedBy, "worker:jobber-check", at, at, JSON.stringify(old));
     const runner = { id: old.runner, name: "dakotas-hp-laptop-local", labels: {}, slots: 2, memory: 4096, version: "87a0b47", hostId: "dakotas-hp-laptop", createdAt: at, lastSeenAt: at, tokenHash: "ab" };
     db.prepare("INSERT INTO runners VALUES (?, ?)").run(runner.id, JSON.stringify(runner));
 
@@ -339,11 +339,11 @@ describe("a database from before hosts", () => {
     const run = store.run(old.id)!;
     expect(run).toMatchObject({
       requirements: { os: null, arch: null, memory: 256, timeout: null },
-      labels: { worker: "job-service-check", by: "job-service-check" },
+      labels: { worker: "jobber-check", by: "jobber-check" },
       host: runner.id,
     });
     for (const gone of ["limits", "for", "routine", "runsWith", "submittedBy", "runner"]) expect(run).not.toHaveProperty(gone);
-    expect(store.runs({ labels: [["worker", "job-service-check"]], limit: 10 }).map((r) => r.id)).toEqual([old.id]);
+    expect(store.runs({ labels: [["worker", "jobber-check"]], limit: 10 }).map((r) => r.id)).toEqual([old.id]);
     expect(store.hosts()).toEqual([
       { ...runner, name: "dakotas-hp-laptop", os: "linux", arch: "x86_64", free: null, metrics: null, hostId: undefined, ...{} },
     ].map(({ hostId: _, ...h }) => h));

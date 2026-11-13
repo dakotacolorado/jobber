@@ -18,14 +18,14 @@ afterEach(() => {
 });
 
 function temp() {
-  const dir = mkdtempSync(join(tmpdir(), "job-service-cli-"));
+  const dir = mkdtempSync(join(tmpdir(), "jobber-cli-"));
   dirs.push(dir);
   return dir;
 }
 
 /** Starts the server on a port the OS picks; answers its address once it says it listens. */
-function serve(db: string, env: Record<string, string>): Promise<{ url: string; out: () => string }> {
-  const child = spawn(process.execPath, [CLI, "--port", "0", "--db", db], { env: { ...clean(), ...env } });
+function serve(db: string, env: Record<string, string>, args = ["--port", "0", "--db", db]): Promise<{ url: string; out: () => string }> {
+  const child = spawn(process.execPath, [CLI, ...args], { env: { ...clean(), ...env } });
   children.push(child);
   let out = "";
   return new Promise((ready, fail) => {
@@ -39,7 +39,7 @@ function serve(db: string, env: Record<string, string>): Promise<{ url: string; 
   });
 }
 
-describe("job-service serve", () => {
+describe("jobber serve", () => {
   it("serves the API on the database it is given, with the tokens in its environment", async () => {
     const dir = temp();
     const { url } = await serve(join(dir, "db", "js.db"), { AUTH_TOKEN: "a", RUNNER_TOKEN: "r" });
@@ -56,7 +56,37 @@ describe("job-service serve", () => {
   });
 });
 
-describe("job-service serve, to a host", () => {
+describe("jobber's settings", () => {
+  it("takes its port, address and database from JOBBER_PORT, JOBBER_HOST and JOBBER_DB", async () => {
+    const db = join(temp(), "jobber.db");
+    const { out } = await serve(db, { JOBBER_PORT: "0", JOBBER_HOST: "127.0.0.1", JOBBER_DB: db }, []);
+    expect(existsSync(db)).toBe(true);
+    expect(out()).not.toContain("deprecated");
+  });
+
+  it("still takes the JOB_SERVICE_* names it had before, and says which JOBBER_* to set", async () => {
+    const db = join(temp(), "old.db");
+    const { out } = await serve(db, { JOB_SERVICE_PORT: "0", JOB_SERVICE_HOST: "127.0.0.1", JOB_SERVICE_DB: db }, []);
+    expect(existsSync(db)).toBe(true);
+    for (const name of ["PORT", "HOST", "DB"]) await expect.poll(out).toContain(`JOB_SERVICE_${name} is deprecated: set JOBBER_${name} instead`);
+  });
+
+  it("prefers JOBBER_* to the old name when both are set", async () => {
+    const db = join(temp(), "new.db");
+    await serve(db, { JOBBER_PORT: "0", JOBBER_DB: db, JOB_SERVICE_DB: join(temp(), "old.db") }, []);
+    expect(existsSync(db)).toBe(true);
+  });
+
+  it("describes jobber in --help", () => {
+    const done = spawnSync(process.execPath, [CLI, "--help"], { env: clean(), encoding: "utf8" });
+    expect(done.status).toBe(0);
+    expect(done.stdout).toMatch(/^jobber v\S+: submit code to run on whatever computers you have available\./);
+    expect(done.stdout).toContain("JOBBER_PORT");
+    expect(done.stdout).not.toContain("job-service");
+  });
+});
+
+describe("jobber serve, to a host", () => {
   it("takes the host's WebSocket and answers its heartbeat over it", async () => {
     const { url } = await serve(join(temp(), "js.db"), { AUTH_TOKEN: "a", RUNNER_TOKEN: "r" });
     const registered = await fetch(`${url}/hosts`, {
@@ -74,17 +104,17 @@ describe("job-service serve, to a host", () => {
   });
 });
 
-describe("job-service serve on a port already taken", () => {
+describe("jobber serve on a port already taken", () => {
   it("says so and exits 1", async () => {
     const { url } = await serve(join(temp(), "a.db"), {});
     const port = new URL(url).port;
     const done = spawnSync(process.execPath, [CLI, "--port", port, "--db", join(temp(), "b.db")], { env: clean(), encoding: "utf8", timeout: 10_000 });
     expect(done.status).toBe(1);
-    expect(done.stderr).toContain(`job-service: cannot serve on 127.0.0.1:${port}`);
+    expect(done.stderr).toContain(`jobber: cannot serve on 127.0.0.1:${port}`);
   });
 });
 
-describe("job-service backup", () => {
+describe("jobber backup", () => {
   it("copies the database to the file it names", () => {
     const dir = temp();
     const store = Store.open(join(dir, "js.db"));

@@ -1,7 +1,7 @@
-// job-service's page: runs by state, a run and its log, a form to submit one, and the hosts, over the API.
+// jobber's page: runs by state, a run and its log, a form to submit one, and the hosts, over the API.
 // Every element is made with `h`, which sets text, never HTML, so nothing a run or its log says is run.
 
-const TOKEN_KEY = "job-service.token";
+const TOKEN_KEY = "jobber.token";
 const STATES = ["pending", "assigned", "running", "succeeded", "failed", "canceled"];
 const ENDED = ["succeeded", "failed", "canceled"];
 /** How often a run's page asks for more of its log, and the runs list for changes. */
@@ -43,7 +43,7 @@ async function request(method, path, { body, headers = {} } = {}) {
   if (res.status === 401) {
     localStorage.removeItem(TOKEN_KEY);
     route();
-    throw new ApiError(401, { message: "That is not this job-service's submitters' token." });
+    throw new ApiError(401, { message: "That is not this jobber's submitters' token." });
   }
   return res;
 }
@@ -120,7 +120,7 @@ function signIn() {
       },
     },
     h("h2", {}, "Sign in"),
-    h("p", { class: "muted" }, "Paste this host's submitters' token: AUTH_TOKEN in ~/.config/job-service/env. It stays in this browser."),
+    h("p", { class: "muted" }, "Paste this host's submitters' token: AUTH_TOKEN in ~/.config/jobber/env. It stays in this browser."),
     input,
     box,
     h("div", { class: "row" }, h("button", { class: "primary", type: "submit" }, "Sign in")),
@@ -129,7 +129,7 @@ function signIn() {
     h(
       "div",
       { class: "signin" },
-      h("h1", {}, "job-service"),
+      h("h1", {}, "jobber"),
       h("p", { class: "muted" }, "Runs jobs on a fleet of hosts. The API is at ", h("code", {}, `${location.origin}/runs`), ", the MCP server at ", h("code", {}, `${location.origin}/mcp`), "."),
       form,
     ),

@@ -6,7 +6,7 @@ import type { Link } from "./scheduler.ts";
 import { ERROR_CODES, HostMessage, type ErrorStatus } from "./schema.ts";
 import type { Store, StoredHost } from "./store.ts";
 
-/** What job-service sends a host over its connection, as `docs/PROTOCOL.md` describes. */
+/** What jobber sends a host over its connection, as `docs/PROTOCOL.md` describes. */
 export type ServiceMessage =
   | { type: "assign"; run: Run; attempt: number; memory: number; lease: number }
   | { type: "start"; run: string; attempt: number; lease: number }
@@ -31,7 +31,7 @@ interface Connection {
 }
 
 /**
- * The hosts holding a WebSocket open to job-service, one each: the
+ * The hosts holding a WebSocket open to jobber, one each: the
  * scheduler's `Link`. A host takes an assignment by accepting it, and it is
  * `running` there only once the answer is `start`, so an assignment resent
  * after a reconnect is never run twice.
@@ -82,7 +82,7 @@ export class Connections implements Link {
 
   /** Closes every connection. */
   close(): void {
-    for (const { socket } of this.open.values()) socket.close(1001, "job-service is stopping");
+    for (const { socket } of this.open.values()) socket.close(1001, "jobber is stopping");
     this.open.clear();
     this.server.close();
   }

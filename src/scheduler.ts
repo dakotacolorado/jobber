@@ -1,7 +1,7 @@
 import { due, expired, fresh, freeOn, now, RequestError, schedule, assigned, type Run } from "./domain.ts";
 import type { Store } from "./store.ts";
 
-/** The hosts job-service can reach now, and how it hands one a run. */
+/** The hosts jobber can reach now, and how it hands one a run. */
 export interface Link {
   /** Ids of the hosts holding a connection open, ready for work. */
   connected(): Iterable<string>;

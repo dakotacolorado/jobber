@@ -30,9 +30,9 @@ function on(running: Running) {
 
 describe("a database on disk", () => {
   it("keeps a run, its log and its host across a restart", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "job-service-"));
+    const dir = mkdtempSync(join(tmpdir(), "jobber-"));
     dirs.push(dir);
-    const db = join(dir, "job-service.db");
+    const db = join(dir, "jobber.db");
 
     const first = start({ db, tokens });
     const call = on(first);

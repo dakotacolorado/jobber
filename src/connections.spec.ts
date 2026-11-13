@@ -172,6 +172,34 @@ describe("a host's connection", () => {
     expect(store.run(waiting.id)!.state).toBe("running");
   });
 
+  it("offers again, on a new connection's first heartbeat, a run started there that the host does not list", async () => {
+    const { register, peer, submit, schedule } = await setup();
+    const a = await register("a");
+    const one = await peer(a.host.id, a.token);
+    one.heartbeat();
+    await one.next("heartbeat");
+    const lost = await submit();
+    const kept = await submit({ priority: 1 });
+    schedule();
+    await one.next("assign", 2);
+    one.send({ type: "accept", run: kept.id, attempt: 1 });
+    one.send({ type: "accept", run: lost.id, attempt: 1 });
+    await one.next("start", 2);
+
+    // The host never read `lost`'s start: it lists only `kept`.
+    const two = await peer(a.host.id, a.token);
+    two.heartbeat([{ id: kept.id, attempt: 1 }]);
+    await two.next("heartbeat");
+    const again = await two.next("assign");
+    expect(again.run).toMatchObject({ id: lost.id, state: "running" });
+    two.send({ type: "accept", run: lost.id, attempt: 1 });
+    expect(await two.next("start")).toMatchObject({ run: lost.id, attempt: 1 });
+    // Later heartbeats offer nothing more.
+    two.heartbeat([{ id: kept.id, attempt: 1 }, { id: lost.id, attempt: 1 }]);
+    await two.next("heartbeat", 2);
+    expect(two.got.filter((m) => m.type === "assign")).toHaveLength(1);
+  });
+
   it("drops an accept for a run no longer assigned there, and requeues a declined one", async () => {
     const { register, peer, submit, schedule, store, call } = await setup();
     const a = await register("a");

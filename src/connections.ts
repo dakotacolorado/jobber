@@ -127,8 +127,14 @@ export class Connections implements Link {
       case "heartbeat": {
         this.store.seen(host, at, { free: message.free, metrics: message.metrics });
         const { cancel, ended } = this.store.renew(host, message.running, leaseFrom(at), at);
-        connection.ready = true;
-        return this.send(host, { type: "heartbeat", cancel, ended, lease: LEASE_SECONDS });
+        this.send(host, { type: "heartbeat", cancel, ended, lease: LEASE_SECONDS });
+        if (!connection.ready) {
+          connection.ready = true;
+          // A run started here whose `start` the last connection lost: the host does not run it, so it is offered again.
+          const listed = new Set(message.running.map((r) => `${r.id}/${r.attempt}`));
+          for (const run of this.store.inState("running")) if (run.host === host && !listed.has(`${run.id}/${run.attempt}`)) this.assign(host, run);
+        }
+        return;
       }
       case "accept": {
         const run = this.store.run(message.run);

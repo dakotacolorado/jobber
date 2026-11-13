@@ -46,12 +46,14 @@ Every message either way is one JSON text frame, an object with a `type`.
   `decline`. An assignment neither accepted nor declined within 30 seconds
   goes back to the queue. An `assign` for a run and attempt the host already
   runs is answered `accept` again (and its `start` ignored): that is a resend
-  after a reconnect, not a second run.
+  after a reconnect, not a second run. One for a run still running here on an
+  earlier attempt is declined, until that attempt stops.
 - `start`: `{"type": "start", "run": "<id>", "attempt": n, "lease":
   seconds}`. The run is `running` here: start it, its lease running from now.
 - `drop`: `{"type": "drop", "run": "<id>", "attempt": n, "reason": "…"}`.
   The run is no longer this host's (canceled, or its assignment expired and
-  it went to another): do not run it.
+  it went to another): do not run it, or, if it already runs, stop it without
+  completing it.
 - `cancel`: `{"type": "cancel", "run": "<id>", "attempt": n}`. `CancelRun`
   was called on a run running here: stop it and complete it `canceled`.
 - `heartbeat`: `{"type": "heartbeat", "cancel": ["<id>"], "ended": ["<id>"],
@@ -67,6 +69,9 @@ Runs already started keep running, their logs and completions over HTTP as
 ever. Reconnect with backoff (1s, doubling to 30s, with jitter). While
 disconnected, send heartbeats by `SendHeartbeat` over HTTP (`running` as
 ids) so the runs' leases hold. On reconnecting, the service resends every
-assignment still waiting for this host, so none is lost. An `accept` for an
+assignment still waiting for this host, so none is lost; and, on the first
+heartbeat, an `assign` for each run `running` here that the heartbeat does not
+list (its `start` was lost with the connection), which the host accepts and
+runs on `start`. An `accept` for an
 attempt already running here is answered `start` again, which the host
 ignores for an attempt it runs, so none runs twice.

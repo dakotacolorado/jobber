@@ -27,7 +27,6 @@ import {
 import { LOCAL_URL, mcpServer, type Call } from "./mcp.ts";
 import * as routes from "./schema.ts";
 import { ERROR_CODES, type ErrorStatus } from "./schema.ts";
-import type { Skill } from "./skill.ts";
 import type { Store, StoredRunner } from "./store.ts";
 
 export const SPEC_PATH = "/openapi.json";
@@ -71,13 +70,11 @@ export class JobApi {
 
   private readonly store: Store;
   private readonly tokens: Tokens;
-  private readonly skill: () => Skill;
   private readonly about: About;
 
-  constructor(store: Store, tokens: Tokens, skill: () => Skill, about: About) {
+  constructor(store: Store, tokens: Tokens, about: About) {
     this.store = store;
     this.tokens = tokens;
-    this.skill = skill;
     this.about = about;
     this.hono = new OpenAPIHono({
       defaultHook: (result, c) => (result.success ? undefined : fail(c, 400, issues(result.error))),
@@ -103,7 +100,6 @@ export class JobApi {
     const submitter = bearer(this.tokens.submitter);
     // A runner writes a run with PUT and PATCH, under its own token, checked by the route.
     const submitterReads = (c: Context, next: Next) => (["PUT", "PATCH"].includes(c.req.method) ? next() : submitter(c, next));
-    this.hono.use("/skill", submitter);
     this.hono.use("/mcp", submitter);
     this.hono.use("/runs", submitter);
     this.hono.use("/runs/*", submitterReads);
@@ -130,8 +126,6 @@ export class JobApi {
     const app = this.hono;
 
     app.openapi(routes.healthRoute, (c) => c.json({ ok: true as const, ...this.about }, 200));
-
-    app.openapi(routes.skillRoute, (c) => c.json(this.skill(), 200));
 
     app.openapi(routes.submitRoute, (c) => {
       const run = submitted(c.req.valid("json"), c.req.valid("header")["claimed-by"] ?? null);
@@ -328,7 +322,7 @@ export class JobApi {
         { name: "Runs", description: "Submit, follow and cancel runs." },
         { name: "Runners", description: "See the runners." },
         { name: "Runner protocol", description: "Called by job-runner, not by you." },
-        { name: "Platform", description: "Health, and the client worker-service installs." },
+        { name: "Platform", description: "Health." },
       ],
     });
   }

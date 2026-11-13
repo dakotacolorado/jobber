@@ -23,7 +23,7 @@ version=$("$node" -p "require('$src/package.json').version")+$(printf %.7s "$com
 dest=$routines/$app/versions/$version
 if [ ! -d "$dest" ]; then
   mkdir -p "$dest.partial"
-  cp -R "$src/dist" "$src/skill" "$src/docs" "$src/ui" "$src/mcp.json" "$src/package.json" "$src/package-lock.json" "$dest.partial/"
+  cp -R "$src/dist" "$src/docs" "$src/ui" "$src/mcp.json" "$src/package.json" "$src/package-lock.json" "$dest.partial/"
   (cd "$dest.partial" && npm ci --omit=dev --no-audit --no-fund) >&2
   mv "$dest.partial" "$dest"
 fi

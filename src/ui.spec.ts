@@ -7,7 +7,7 @@ const TOKEN = "submitter-secret";
 const file = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
 describe("the page", () => {
-  const api = new JobApi(Store.open(":memory:"), { submitter: TOKEN, registration: null }, () => ({ key: "jobs", version: 0, commit: "x", files: [] }), {
+  const api = new JobApi(Store.open(":memory:"), { submitter: TOKEN, registration: null }, {
     version: "0",
     commit: "x",
   });

@@ -98,15 +98,9 @@ cutover, with its own config, identity, checkouts and `jobslocal.slice`.
 
 ## Client
 
-`skill/bin/jobs` is the client a worker calls it with, served by `GET /skill`
-with the reference it is generated from:
-
-```sh
-JS_URL=… JS_TOKEN=… skill/bin/jobs submit dakotacolorado/python-template <sha> hello
-skill/bin/jobs log <id> -f      # follows it, then exits with the run's exit code
-                                # (75 if job-service stays unreachable; a dropped call is retried and resumed)
-skill/bin/jobs cancel <id>
-```
+Agents call it through its MCP server at `/mcp`, with the submitters' token
+(see [`docs/MCP.md`](./docs/MCP.md)); scripts call the HTTP API directly, as
+`ops/check` does. There is no separate client to install.
 
 ## Develop
 

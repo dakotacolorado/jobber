@@ -20,7 +20,7 @@
     },
     {
       "name": "Platform",
-      "description": "Health, and the client worker-service installs."
+      "description": "Health."
     }
   ],
   "components": {
@@ -60,87 +60,6 @@
           "version",
           "commit"
         ]
-      },
-      "Skill": {
-        "type": "object",
-        "properties": {
-          "key": {
-            "type": "string",
-            "description": "Skill name."
-          },
-          "version": {
-            "type": "integer",
-            "description": "Commit count of the deployed tree."
-          },
-          "commit": {
-            "type": "string",
-            "description": "Deployed commit."
-          },
-          "files": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/SkillFile"
-            },
-            "description": "The skill's files."
-          }
-        },
-        "required": [
-          "key",
-          "version",
-          "commit",
-          "files"
-        ]
-      },
-      "SkillFile": {
-        "type": "object",
-        "properties": {
-          "path": {
-            "type": "string",
-            "description": "Path in the worker's Claude folder."
-          },
-          "content": {
-            "type": "string",
-            "description": "File contents."
-          },
-          "executable": {
-            "type": "boolean",
-            "description": "Install as executable."
-          }
-        },
-        "required": [
-          "path",
-          "content",
-          "executable"
-        ]
-      },
-      "Error": {
-        "type": "object",
-        "properties": {
-          "code": {
-            "type": "string",
-            "enum": [
-              "ValidationException",
-              "UnauthorizedException",
-              "AccessDeniedException",
-              "ResourceNotFoundException",
-              "ConflictException",
-              "PayloadTooLargeException",
-              "InvalidRangeException",
-              "InternalServerException",
-              "ServiceUnavailableException"
-            ],
-            "description": "Exception name."
-          },
-          "message": {
-            "type": "string",
-            "description": "What went wrong."
-          }
-        },
-        "required": [
-          "code",
-          "message"
-        ],
-        "description": "Every error's body."
       },
       "Run": {
         "type": "object",
@@ -414,6 +333,35 @@
           "stall"
         ],
         "description": "Limits it actually runs with, once its runner says."
+      },
+      "Error": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "enum": [
+              "ValidationException",
+              "UnauthorizedException",
+              "AccessDeniedException",
+              "ResourceNotFoundException",
+              "ConflictException",
+              "PayloadTooLargeException",
+              "InvalidRangeException",
+              "InternalServerException",
+              "ServiceUnavailableException"
+            ],
+            "description": "Exception name."
+          },
+          "message": {
+            "type": "string",
+            "description": "What went wrong."
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "description": "Every error's body."
       },
       "SubmitRunInput": {
         "type": "object",
@@ -844,53 +792,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Health"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/skill": {
-      "get": {
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "tags": [
-          "Platform"
-        ],
-        "operationId": "GetSkill",
-        "summary": "Get the jobs skill",
-        "description": "For worker-service: the `jobs` client it installs in every worker session.",
-        "responses": {
-          "200": {
-            "description": "The skill's files.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Skill"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "UnauthorizedException: The bearer token is missing or is not the submitters'.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "ServiceUnavailableException: The service has no submitters' token configured.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
                 }
               }
             }

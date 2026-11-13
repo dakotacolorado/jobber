@@ -13,15 +13,20 @@ or platform behaviour not visible in the source.
 ## Contract
 
 `src/schema.ts` is the source of `openapi.json`, its AWS-layout reference
-(`docs/API.md`, by `src/api-doc.ts`), Redoc's page of it (`docs/index.html`,
-served at `/docs/api`, as waypoint's is) and the skill's `reference/api.md`. Name an operation
-VerbNoun as AWS does, describe every field, and answer errors as
-`{code, message}` with the status's exception name (`ERROR_CODES`): tests
-hold all three. Paths and successful shapes are job-runner's contract; `src/mcp.ts`, whose
-tools are the API operations the submitters' token calls, of `mcp.json`,
-`docs/MCP.md` and `docs/mcp.html`. The pre-commit hook regenerates them all
-(`npm run spec`); a test fails if any drifts. The page is `ui/`, served as
-it is, with no build: it makes every element as text, never HTML. job-runner follows these shapes; change them with it.
+(`docs/API.md`, by `src/api-doc.ts`) and Redoc's page of it
+(`docs/index.html`, served at `/docs/api`, as waypoint's is). `src/mcp.ts`,
+whose tools are the API operations the submitters' token calls, is the
+source of `mcp.json`, `docs/MCP.md` and `docs/mcp.html`. The MCP server is
+the client: there is no other. The pre-commit hook regenerates all of them
+(`npm run spec`); a test fails if any drifts.
+
+Name an operation VerbNoun as AWS does, keep summaries to a few words,
+describe every field, and answer errors as `{code, message}` with the
+status's exception name (`ERROR_CODES`): tests hold all of it. Paths and
+successful shapes are job-runner's contract: change them with it.
+
+The page is `ui/`, served as it is, with no build: it makes every element
+as text, never HTML.
 
 How a run moves between states is `src/domain.ts`, as pure functions: keep
 every transition there, tested, and let the store only refuse a write that lost

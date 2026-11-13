@@ -137,21 +137,6 @@ export const RunSchema = z
   })
   .openapi("Run");
 
-const SkillFileSchema = z.object({
-  path: z.string().describe("Path in the worker's Claude folder."),
-  content: z.string().describe("File contents."),
-  executable: z.boolean().describe("Install as executable."),
-}).openapi("SkillFile");
-
-export const SkillSchema = z
-  .object({
-    key: z.string().describe("Skill name."),
-    version: z.int().describe("Commit count of the deployed tree."),
-    commit: z.string().describe("Deployed commit."),
-    files: z.array(SkillFileSchema).describe("The skill's files."),
-  })
-  .openapi("Skill");
-
 /** Each status's exception, as an AWS API names it. */
 export const ERROR_CODES = {
   400: "ValidationException",
@@ -217,17 +202,6 @@ export const healthRoute = createRoute({
       "Service is up.",
     ),
   },
-});
-
-export const skillRoute = createRoute({
-  security: [{ bearerAuth: [] }],
-  tags: ["Platform"],
-  method: "get",
-  path: "/skill",
-  operationId: "GetSkill",
-  summary: "Get the jobs skill",
-  description: "For worker-service: the `jobs` client it installs in every worker session.",
-  responses: { 200: json(SkillSchema, "The skill's files."), 401: FAILS[401], 503: FAILS[503] },
 });
 
 export const submitRoute = createRoute({

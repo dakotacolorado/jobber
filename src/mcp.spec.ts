@@ -11,7 +11,7 @@ const REGISTRATION = "registration";
 const COMMIT = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
 function setup() {
-  const api = new JobApi(Store.open(":memory:"), { submitter: TOKEN, registration: REGISTRATION }, () => ({ key: "jobs", version: 0, commit: "x", files: [] }), {
+  const api = new JobApi(Store.open(":memory:"), { submitter: TOKEN, registration: REGISTRATION }, {
     version: "0.1.0",
     commit: "x",
   });

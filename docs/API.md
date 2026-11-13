@@ -21,7 +21,6 @@ Runs jobs on self-hosted runners. A **job** is a named script in a repo's `jobs.
 - [GetHealth](#gethealth): Get health
 - [GetRun](#getrun): Get a run
 - [GetRunLog](#getrunlog): Get a run's log
-- [GetSkill](#getskill): Get the jobs skill
 - [ListRunners](#listrunners): List runners
 - [ListRuns](#listruns): List runs
 - [PutRunsWith](#putrunswith): Put run limits
@@ -39,8 +38,6 @@ Runs jobs on self-hosted runners. A **job** is a named script in a repo's `jobs.
 - [Run](#run)
 - [Runner](#runner)
 - [RunsWith](#runswith)
-- [Skill](#skill)
-- [SkillFile](#skillfile)
 
 ---
 
@@ -947,65 +944,6 @@ HTTP status: 404
 **InvalidRangeException**  
 N is past the end of the log.  
 HTTP status: 416
-
-**ServiceUnavailableException**  
-The service has no submitters' token configured.  
-HTTP status: 503
-
----
-
-## GetSkill
-
-For worker-service: the `jobs` client it installs in every worker session.
-
-### Request syntax
-
-```http
-GET /skill HTTP/1.1
-Authorization: Bearer token
-```
-
-### Response syntax
-
-```http
-HTTP/1.1 200
-Content-type: application/json
-
-{
-   "key": "string",
-   "version": number,
-   "commit": "string",
-   "files": [ {
-      "path": "string",
-      "content": "string",
-      "executable": boolean
-   } ]
-}
-```
-
-### Response elements
-
-**key**  
-Skill name.  
-Type: String.
-
-**version**  
-Commit count of the deployed tree.  
-Type: Integer.
-
-**commit**  
-Deployed commit.  
-Type: String.
-
-**files**  
-The skill's files.  
-Type: Array of [SkillFile](#skillfile) objects.
-
-### Errors
-
-**UnauthorizedException**  
-The bearer token is missing or is not the submitters'.  
-HTTP status: 401
 
 **ServiceUnavailableException**  
 The service has no submitters' token configured.  
@@ -1953,40 +1891,4 @@ Type: Integer. Range: 1 to 86400. Required: Yes.
 **stall**  
 Seconds without progress before it fails as stalled; null for never.  
 Type: Integer. Range: 1 to 86400. Nullable: Yes. Required: Yes.
-
-## Skill
-
-### Contents
-
-**key**  
-Skill name.  
-Type: String. Required: Yes.
-
-**version**  
-Commit count of the deployed tree.  
-Type: Integer. Required: Yes.
-
-**commit**  
-Deployed commit.  
-Type: String. Required: Yes.
-
-**files**  
-The skill's files.  
-Type: Array of [SkillFile](#skillfile) objects. Required: Yes.
-
-## SkillFile
-
-### Contents
-
-**path**  
-Path in the worker's Claude folder.  
-Type: String. Required: Yes.
-
-**content**  
-File contents.  
-Type: String. Required: Yes.
-
-**executable**  
-Install as executable.  
-Type: Boolean. Required: Yes.
 

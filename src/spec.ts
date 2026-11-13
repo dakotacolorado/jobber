@@ -3,7 +3,6 @@ import { fileURLToPath } from "node:url";
 import { renderApiReference, type Document } from "./api-doc.ts";
 import { JobApi, SPEC_PATH } from "./api.ts";
 import { mcpDocument, renderMcp, renderMcpHtml } from "./mcp-doc.ts";
-import { REFERENCE_FILE, renderReference } from "./skill.ts";
 import { Store } from "./store.ts";
 
 /**
@@ -24,7 +23,7 @@ export const MCP_PAGE = at("docs/mcp.html");
 /** Fetched through the app, so the file cannot differ from what is served. */
 export async function openApiDocument(): Promise<Document> {
   const store = Store.open(":memory:");
-  const api = new JobApi(store, { submitter: null, registration: null }, () => ({ key: "jobs", version: 0, commit: "x", files: [] }), {
+  const api = new JobApi(store, { submitter: null, registration: null }, {
     version: "0",
     commit: "x",
   });
@@ -36,11 +35,10 @@ export async function openApiDocument(): Promise<Document> {
 if (import.meta.main) {
   const doc = await openApiDocument();
   writeFileSync(SPEC_FILE, `${JSON.stringify(doc, null, 2)}\n`);
-  writeFileSync(REFERENCE_FILE, renderReference(doc as Parameters<typeof renderReference>[0]));
   writeFileSync(API_DOC, renderApiReference(doc));
   const mcp = await mcpDocument();
   writeFileSync(MCP_FILE, `${JSON.stringify(mcp, null, 2)}\n`);
   writeFileSync(MCP_DOC, renderMcp(mcp));
   writeFileSync(MCP_PAGE, renderMcpHtml(mcp));
-  console.log(`wrote ${SPEC_FILE}, ${API_DOC}, ${REFERENCE_FILE}, ${MCP_FILE}, ${MCP_DOC} and ${MCP_PAGE}`);
+  console.log(`wrote ${SPEC_FILE}, ${API_DOC}, ${MCP_FILE}, ${MCP_DOC} and ${MCP_PAGE}`);
 }

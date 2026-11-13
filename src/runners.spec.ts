@@ -19,7 +19,7 @@ type Claim = { run: Run; memory: number; lease: number };
 
 function setup() {
   const store = Store.open(":memory:");
-  const api = new JobApi(store, { submitter: TOKEN, registration: REGISTRATION }, () => ({ key: "jobs", version: 0, commit: "x", files: [] }), ABOUT);
+  const api = new JobApi(store, { submitter: TOKEN, registration: REGISTRATION }, ABOUT);
   const call = (method: string, path: string, auth: string, body?: unknown, headers: Record<string, string> = {}) =>
     api.fetch(
       new Request(`http://local${path}`, {

@@ -32,7 +32,7 @@ const SPEC_TOKEN = "spec";
 /** The MCP server's tools, listed through the app as a client would, so the file cannot differ from what is served. */
 export async function mcpDocument(): Promise<McpDocument> {
   const store = Store.open(":memory:");
-  const api = new JobApi(store, { submitter: SPEC_TOKEN, registration: null }, () => ({ key: "jobs", version: 0, commit: "x", files: [] }), {
+  const api = new JobApi(store, { submitter: SPEC_TOKEN, registration: null }, {
     version: "0",
     commit: "x",
   });

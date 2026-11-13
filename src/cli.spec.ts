@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import WebSocket from "ws";
 import { Store } from "./store.ts";
 
 const CLI = fileURLToPath(new URL("./cli.ts", import.meta.url));
@@ -52,6 +53,24 @@ describe("job-service serve", () => {
     const { url, out } = await serve(join(temp(), "js.db"), {});
     expect(out()).toContain("AUTH_TOKEN and RUNNER_TOKEN not set");
     expect((await fetch(`${url}/runs`, { headers: { authorization: "Bearer a" } })).status).toBe(503);
+  });
+});
+
+describe("job-service serve, to a host", () => {
+  it("takes the host's WebSocket and answers its heartbeat over it", async () => {
+    const { url } = await serve(join(temp(), "js.db"), { AUTH_TOKEN: "a", RUNNER_TOKEN: "r" });
+    const registered = await fetch(`${url}/hosts`, {
+      method: "POST",
+      headers: { authorization: "Bearer r", "content-type": "application/json" },
+      body: JSON.stringify({ name: "h", os: "linux", arch: "x86_64", slots: 1, memory: 1024 }),
+    });
+    const { host, token } = (await registered.json()) as { host: { id: string }; token: string };
+    const socket = new WebSocket(`${url.replace("http", "ws")}/hosts/${host.id}/connect`, { headers: { authorization: `Bearer ${token}` } });
+    await new Promise((open) => socket.once("open", open));
+    const answer = new Promise<string>((got) => socket.once("message", (data) => got(data.toString())));
+    socket.send(JSON.stringify({ type: "heartbeat", free: { slots: 1, memory: 1024 }, metrics: { cpuLoad: 0, memoryUsed: 0, memoryTotal: 0, diskFree: 0 }, running: [] }));
+    expect(JSON.parse(await answer)).toEqual({ type: "heartbeat", cancel: [], ended: [], lease: 60 });
+    socket.close();
   });
 });
 

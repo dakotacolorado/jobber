@@ -18,6 +18,7 @@ Runs jobs on a fleet of hosts. A **job** is a named script in a repo's `jobs.tom
 - [CancelRun](#cancelrun): Cancel a run
 - [ClaimRun](#claimrun): Claim a run
 - [CompleteRun](#completerun): Complete a run
+- [ConnectHost](#connecthost): Connect a host
 - [GetHealth](#gethealth): Get health
 - [GetRun](#getrun): Get a run
 - [GetRunLog](#getrunlog): Get a run's log
@@ -48,7 +49,7 @@ Appends bytes at the log's end (`Content-Range: bytes S-E/*`). Max 256 KiB per c
 ### Request syntax
 
 ```http
-PATCH /runs/{id}/log HTTP/1.1
+PATCH /runs/{id}/log?attempt=attempt HTTP/1.1
 Authorization: Bearer token
 content-range: string
 Content-type: application/octet-stream
@@ -61,6 +62,12 @@ The log's next bytes.
 **id**  
 The run's id.  
 Type: String. Required: Yes.
+
+### Query parameters
+
+**attempt**  
+The attempt it was started on. Refused with 409 if the run has moved on.  
+Type: Integer. Range: 1 to any. Required: No.
 
 ### Request headers
 
@@ -108,7 +115,7 @@ No run has that id.
 HTTP status: 404
 
 **ConflictException**  
-The run is not running: it ended, perhaps by its lease lapsing.  
+The run is not running, or not on that attempt: it ended, perhaps by its lease lapsing.  
 HTTP status: 409
 
 **PayloadTooLargeException**  
@@ -161,6 +168,7 @@ Content-type: application/json
    "state": "pending | assigned | running | succeeded | failed | canceled",
    "reason": "string",
    "cancelRequested": boolean,
+   "attempt": number,
    "host": "string",
    "assignedAt": "string",
    "exit": number,
@@ -219,6 +227,10 @@ Type: String. Nullable: Yes.
 **cancelRequested**  
 Cancel asked for; its host will stop it.  
 Type: Boolean.
+
+**attempt**  
+Which try this is, from 1.  
+Type: Integer. Range: 1 to any.
 
 **host**  
 Host it is assigned to or ran on.  
@@ -339,6 +351,7 @@ Content-type: application/json
       "state": "pending | assigned | running | succeeded | failed | canceled",
       "reason": "string",
       "cancelRequested": boolean,
+      "attempt": number,
       "host": "string",
       "assignedAt": "string",
       "exit": number,
@@ -392,7 +405,7 @@ Records how a run ended. Retrying with the same result is safe.
 ### Request syntax
 
 ```http
-PUT /runs/{id} HTTP/1.1
+PUT /runs/{id}?attempt=attempt HTTP/1.1
 Authorization: Bearer token
 Content-type: application/json
 
@@ -409,6 +422,12 @@ Content-type: application/json
 **id**  
 The run's id.  
 Type: String. Required: Yes.
+
+### Query parameters
+
+**attempt**  
+The attempt it was started on. Refused with 409 if the run has moved on.  
+Type: Integer. Range: 1 to any. Required: No.
 
 ### Request body
 
@@ -451,6 +470,7 @@ Content-type: application/json
    "state": "pending | assigned | running | succeeded | failed | canceled",
    "reason": "string",
    "cancelRequested": boolean,
+   "attempt": number,
    "host": "string",
    "assignedAt": "string",
    "exit": number,
@@ -509,6 +529,10 @@ Type: String. Nullable: Yes.
 **cancelRequested**  
 Cancel asked for; its host will stop it.  
 Type: Boolean.
+
+**attempt**  
+Which try this is, from 1.  
+Type: Integer. Range: 1 to any.
 
 **host**  
 Host it is assigned to or ran on.  
@@ -569,8 +593,57 @@ No run has that id.
 HTTP status: 404
 
 **ConflictException**  
-It is not running, or ended otherwise.  
+It is not running, not on that attempt, or ended otherwise.  
 HTTP status: 409
+
+---
+
+## ConnectHost
+
+Opens the WebSocket over which job-service pushes runs to the host and the host sends heartbeats and takes them. Its messages are in `docs/PROTOCOL.md`. A request that is not an upgrade gets 426.
+
+### Request syntax
+
+```http
+GET /hosts/{id}/connect HTTP/1.1
+Authorization: Bearer token
+```
+
+### URI request parameters
+
+**id**  
+The host's id.  
+Type: String. Required: Yes.
+
+### Response syntax
+
+```http
+HTTP/1.1 101
+```
+
+Switched to the WebSocket.
+
+### Errors
+
+**Switched to the WebSocket.**  
+  
+HTTP status: 101
+
+**ValidationException**  
+The request failed validation.  
+HTTP status: 400
+
+**UnauthorizedException**  
+The bearer token is not a host's own.  
+HTTP status: 401
+
+**AccessDeniedException**  
+The run is another host's, or the path names another host.  
+HTTP status: 403
+
+**UpgradeRequiredException**  
+Not a WebSocket upgrade.  
+HTTP status: 426
 
 ---
 
@@ -653,6 +726,7 @@ Content-type: application/json
    "state": "pending | assigned | running | succeeded | failed | canceled",
    "reason": "string",
    "cancelRequested": boolean,
+   "attempt": number,
    "host": "string",
    "assignedAt": "string",
    "exit": number,
@@ -711,6 +785,10 @@ Type: String. Nullable: Yes.
 **cancelRequested**  
 Cancel asked for; its host will stop it.  
 Type: Boolean.
+
+**attempt**  
+Which try this is, from 1.  
+Type: Integer. Range: 1 to any.
 
 **host**  
 Host it is assigned to or ran on.  
@@ -883,7 +961,8 @@ Content-type: application/json
          "diskFree": number
       },
       "createdAt": "string",
-      "lastSeenAt": "string"
+      "lastSeenAt": "string",
+      "connected": boolean
    } ]
 }
 ```
@@ -963,6 +1042,7 @@ Content-type: application/json
       "state": "pending | assigned | running | succeeded | failed | canceled",
       "reason": "string",
       "cancelRequested": boolean,
+      "attempt": number,
       "host": "string",
       "assignedAt": "string",
       "exit": number,
@@ -1078,7 +1158,8 @@ Content-type: application/json
          "diskFree": number
       },
       "createdAt": "string",
-      "lastSeenAt": "string"
+      "lastSeenAt": "string",
+      "connected": boolean
    },
    "token": "string"
 }
@@ -1279,6 +1360,7 @@ Content-type: application/json
    "state": "pending | assigned | running | succeeded | failed | canceled",
    "reason": "string",
    "cancelRequested": boolean,
+   "attempt": number,
    "host": "string",
    "assignedAt": "string",
    "exit": number,
@@ -1337,6 +1419,10 @@ Type: String. Nullable: Yes.
 **cancelRequested**  
 Cancel asked for; its host will stop it.  
 Type: Boolean.
+
+**attempt**  
+Which try this is, from 1.  
+Type: Integer. Range: 1 to any.
 
 **host**  
 Host it is assigned to or ran on.  
@@ -1445,6 +1531,7 @@ Content-type: application/json
    "state": "pending | assigned | running | succeeded | failed | canceled",
    "reason": "string",
    "cancelRequested": boolean,
+   "attempt": number,
    "host": "string",
    "assignedAt": "string",
    "exit": number,
@@ -1503,6 +1590,10 @@ Type: String. Nullable: Yes.
 **cancelRequested**  
 Cancel asked for; its host will stop it.  
 Type: Boolean.
+
+**attempt**  
+Which try this is, from 1.  
+Type: Integer. Range: 1 to any.
 
 **host**  
 Host it is assigned to or ran on.  
@@ -1578,7 +1669,7 @@ Every error's body.
 
 **code**  
 Exception name.  
-Type: String. Valid values: `ValidationException` | `UnauthorizedException` | `AccessDeniedException` | `ResourceNotFoundException` | `ConflictException` | `PayloadTooLargeException` | `InvalidRangeException` | `InternalServerException` | `ServiceUnavailableException`. Required: Yes.
+Type: String. Valid values: `ValidationException` | `UnauthorizedException` | `AccessDeniedException` | `ResourceNotFoundException` | `ConflictException` | `PayloadTooLargeException` | `InvalidRangeException` | `UpgradeRequiredException` | `InternalServerException` | `ServiceUnavailableException`. Required: Yes.
 
 **message**  
 What went wrong.  
@@ -1667,6 +1758,10 @@ Type: String. Required: Yes.
 **lastSeenAt**  
 Last heartbeat or claim at (ISO 8601).  
 Type: String. Required: Yes.
+
+**connected**  
+Holds a connection open now: the scheduler can push runs to it.  
+Type: Boolean. Required: Yes.
 
 ## InvalidRangeError
 
@@ -1765,6 +1860,10 @@ Type: String. Nullable: Yes. Required: Yes.
 **cancelRequested**  
 Cancel asked for; its host will stop it.  
 Type: Boolean. Required: Yes.
+
+**attempt**  
+Which try this is, from 1.  
+Type: Integer. Range: 1 to any. Required: Yes.
 
 **host**  
 Host it is assigned to or ran on.  

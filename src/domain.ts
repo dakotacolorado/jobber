@@ -82,6 +82,8 @@ export interface Run extends RunDraft {
   reason: string | null;
   /** Set by `CancelRun` on a running run, for its host to stop it. */
   cancelRequested: boolean;
+  /** Which try this is, from 1: a host's writes name the attempt it was started on, and one naming another is refused. */
+  attempt: number;
   /** The host it is assigned to or ran on. */
   host: string | null;
   /** When the scheduler placed it on `host`: it goes back to the queue unless taken within `ASSIGN_SECONDS`. */
@@ -100,7 +102,7 @@ export interface Run extends RunDraft {
 }
 
 export class RequestError extends Error {
-  readonly status: 400 | 401 | 403 | 404 | 409 | 413 | 416;
+  readonly status: 400 | 401 | 403 | 404 | 409 | 413 | 416 | 426;
 
   constructor(message: string, status: RequestError["status"]) {
     super(message);
@@ -143,6 +145,7 @@ export function submitted(draft: RunDraft, at = now()): Run {
     state: "pending",
     reason: null,
     cancelRequested: false,
+    attempt: 1,
     host: null,
     assignedAt: null,
     exit: null,
@@ -314,9 +317,10 @@ export function schedule(queue: Run[], hosts: Candidate[]): { run: Run; host: st
   return placed;
 }
 
-/** Only the run's own host writes to it, and only while it runs. */
-export function ownRunning(run: Run, host: string): void {
+/** Only the run's own host writes to it, only while it runs, and, when it names one, only to the attempt it runs. */
+export function ownRunning(run: Run, host: string, attempt?: number): void {
   if (run.host !== host) throw new RequestError(`run ${run.id} is not this host's`, 403);
+  if (attempt !== undefined && attempt !== run.attempt) throw new RequestError(`run ${run.id} is on attempt ${run.attempt}, not ${attempt}`, 409);
   if (run.state !== "running") throw new RequestError(`run ${run.id} is ${run.state}, not running${run.reason ? `: ${run.reason}` : ""}`, 409);
 }
 

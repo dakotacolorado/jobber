@@ -1,12 +1,15 @@
 # job-service
 
 Runs jobs on a fleet of hosts: a job is a named script in a repo's
-`jobs.toml`, a run one execution of it at one commit, on a host that claims it
-and keeps it alive with heartbeats. Keep the model this simple: a run's
+`jobs.toml`, a run one execution of it at one commit, on a host the scheduler
+pushes it to, which keeps it alive with heartbeats. Keep the model this simple: a run's
 `requirements` and `labels`, hosts with capacity and metrics, nothing of any
 one caller's (no release routines, no work-tracker kinds). One Node 24 process
-(`src/cli.ts`) serving HTTP, its data in one SQLite file (`src/store.ts`), its
-lease sweep and log prune as in-process timers (`src/sweep.ts`).
+(`src/cli.ts`) serving HTTP and the hosts' WebSockets (`src/connections.ts`),
+its data in one SQLite file (`src/store.ts`), its scheduler
+(`src/scheduler.ts`), lease sweep and log prune as in-process timers
+(`src/sweep.ts`). Placing runs on hosts (`schedule`) is a pure function in
+`src/domain.ts`; the host connection's messages are `docs/PROTOCOL.md`.
 
 Keep it fact-dense: the code carries the facts. Prefer a mechanism to a
 comment: a type, a test or a thrown error cannot rot. Comment only for a limit

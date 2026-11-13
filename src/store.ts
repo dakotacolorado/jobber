@@ -169,16 +169,17 @@ export class Store {
   }
 
   /**
-   * Renews the lease of each of `ids` still running on `host`, and answers
-   * those a cancel was asked for and those no longer running there.
+   * Renews the lease of each of `runs` still running on `host`, on the
+   * attempt given, if one is, and answers those a cancel was asked for and
+   * those no longer running there.
    */
-  renew(host: string, ids: string[], lease: string, at: string): { cancel: string[]; ended: string[] } {
+  renew(host: string, runs: { id: string; attempt?: number }[], lease: string, at: string): { cancel: string[]; ended: string[] } {
     return this.transaction(() => {
       const cancel: string[] = [];
       const ended: string[] = [];
-      for (const id of ids) {
+      for (const { id, attempt } of runs) {
         const stored = this.run(id);
-        if (!stored || stored.state !== "running" || stored.host !== host) {
+        if (!stored || stored.state !== "running" || stored.host !== host || (attempt !== undefined && attempt !== stored.attempt)) {
           ended.push(id);
           continue;
         }
@@ -252,8 +253,9 @@ export class Store {
   }
 }
 
-/** Gives each run stored before a field was added that field's default: `priority` 0, `assignedAt` null. */
+/** Gives each run stored before a field was added that field's default: `priority` 0, `assignedAt` null, `attempt` 1. */
 export function backfill(db: DatabaseSync): void {
+  db.exec("UPDATE runs SET record = json_set(record, '$.attempt', 1) WHERE record ->> '$.attempt' IS NULL");
   db.exec("UPDATE runs SET record = json_set(record, '$.priority', 0) WHERE record ->> '$.priority' IS NULL");
   db.exec("UPDATE runs SET record = json_set(record, '$.assignedAt', json('null')) WHERE json_type(record, '$.assignedAt') IS NULL");
 }

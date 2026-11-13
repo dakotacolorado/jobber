@@ -111,7 +111,7 @@ function fleet() {
   };
   const sent: [string, Run][] = [];
   const reachable = new Set<string>();
-  const link: Link = { connected: () => reachable, assign: (h, r) => sent.push([h, r]) };
+  const link: Link = { connected: () => reachable, assign: (h, r) => void sent.push([h, r]), cancel: () => {} };
   return { store, host, sent, reachable, link };
 }
 

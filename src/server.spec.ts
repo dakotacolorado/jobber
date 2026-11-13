@@ -89,6 +89,7 @@ describe("the timers", () => {
       cancelRequested: false,
       host: "22222222-2222-4222-8222-222222222222",
       assignedAt: null,
+      attempt: 1,
       exit: null,
       duration: null,
       logSize: 0,

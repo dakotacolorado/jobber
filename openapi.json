@@ -139,6 +139,11 @@
             "type": "boolean",
             "description": "Cancel asked for; its host will stop it."
           },
+          "attempt": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Which try this is, from 1."
+          },
           "host": {
             "type": "string",
             "nullable": true,
@@ -200,6 +205,7 @@
           "state",
           "reason",
           "cancelRequested",
+          "attempt",
           "host",
           "assignedAt",
           "exit",
@@ -270,6 +276,7 @@
               "ConflictException",
               "PayloadTooLargeException",
               "InvalidRangeException",
+              "UpgradeRequiredException",
               "InternalServerException",
               "ServiceUnavailableException"
             ],
@@ -462,6 +469,10 @@
           "lastSeenAt": {
             "type": "string",
             "description": "Last heartbeat or claim at (ISO 8601)."
+          },
+          "connected": {
+            "type": "boolean",
+            "description": "Holds a connection open now: the scheduler can push runs to it."
           }
         },
         "required": [
@@ -476,7 +487,8 @@
           "free",
           "metrics",
           "createdAt",
-          "lastSeenAt"
+          "lastSeenAt",
+          "connected"
         ],
         "description": "The host."
       },
@@ -1115,6 +1127,17 @@
             "description": "The run's id.",
             "name": "id",
             "in": "path"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "The attempt it was started on. Refused with 409 if the run has moved on."
+            },
+            "required": false,
+            "description": "The attempt it was started on. Refused with 409 if the run has moved on.",
+            "name": "attempt",
+            "in": "query"
           }
         ],
         "requestBody": {
@@ -1179,7 +1202,7 @@
             }
           },
           "409": {
-            "description": "ConflictException: It is not running, or ended otherwise.",
+            "description": "ConflictException: It is not running, not on that attempt, or ended otherwise.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1344,6 +1367,17 @@
           },
           {
             "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "The attempt it was started on. Refused with 409 if the run has moved on."
+            },
+            "required": false,
+            "description": "The attempt it was started on. Refused with 409 if the run has moved on.",
+            "name": "attempt",
+            "in": "query"
+          },
+          {
+            "schema": {
               "type": "string",
               "pattern": "^bytes \\d+-\\d+\\/(\\*|\\d+)$",
               "description": "`bytes S-E/*`"
@@ -1417,7 +1451,7 @@
             }
           },
           "409": {
-            "description": "ConflictException: The run is not running: it ended, perhaps by its lease lapsing.",
+            "description": "ConflictException: The run is not running, or not on that attempt: it ended, perhaps by its lease lapsing.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1829,6 +1863,79 @@
           },
           "403": {
             "description": "AccessDeniedException: The run is another host's, or the path names another host.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/hosts/{id}/connect": {
+      "get": {
+        "security": [
+          {
+            "hostAuth": []
+          }
+        ],
+        "tags": [
+          "Host protocol"
+        ],
+        "operationId": "ConnectHost",
+        "summary": "Connect a host",
+        "description": "Opens the WebSocket over which job-service pushes runs to the host and the host sends heartbeats and takes them. Its messages are in `docs/PROTOCOL.md`. A request that is not an upgrade gets 426.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "The host's id."
+            },
+            "required": true,
+            "description": "The host's id.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "101": {
+            "description": "Switched to the WebSocket."
+          },
+          "400": {
+            "description": "ValidationException: The request failed validation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "UnauthorizedException: The bearer token is not a host's own.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "AccessDeniedException: The run is another host's, or the path names another host.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "426": {
+            "description": "UpgradeRequiredException: Not a WebSocket upgrade.",
             "content": {
               "application/json": {
                 "schema": {

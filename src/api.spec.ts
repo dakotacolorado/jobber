@@ -26,7 +26,7 @@ function setup() {
       }),
     );
   const submit = async (over: Record<string, unknown> = {}) => {
-    const res = await call("POST", "/runs", { repo: "dakotacolorado/python-template", commit: COMMIT, job: "hello", ...over }, { "claimed-by": "agent-1" });
+    const res = await call("POST", "/runs", { repo: "dakotacolorado/python-template", commit: COMMIT, job: "hello", ...over });
     expect(res.status).toBe(201);
     return (await res.json()) as Run;
   };
@@ -34,49 +34,34 @@ function setup() {
 }
 
 describe("POST /runs", () => {
-  it("stores a pending job with what was submitted, and defaults for what was not", async () => {
+  it("stores a pending run with what was submitted, and defaults for what was not", async () => {
     const { submit, call } = setup();
-    const job = await submit({ args: ["--n", "3"], limits: { memory: 256 }, labels: { arch: "x86_64" } });
-    expect(job).toMatchObject({
+    const run = await submit({ args: ["--n", "3"], requirements: { memory: 256, os: "linux" }, labels: { item: "28af81bc", by: "agent-1" } });
+    expect(run).toMatchObject({
       repo: "dakotacolorado/python-template",
       commit: COMMIT,
       job: "hello",
       args: ["--n", "3"],
-      limits: { memory: 256, timeout: null },
-      labels: { arch: "x86_64" },
+      requirements: { os: "linux", arch: null, memory: 256, timeout: null },
+      labels: { item: "28af81bc", by: "agent-1" },
       state: "pending",
-      runner: null,
-      runsWith: null,
+      host: null,
       exit: null,
       logSize: 0,
-      submittedBy: "agent-1",
     });
-    expect(await (await call("GET", `/runs/${job.id}`)).json()).toEqual(job);
-    expect(await submit()).toMatchObject({ args: [], limits: { memory: null, timeout: null }, labels: {} });
-  });
-
-  it("stores and serves a routine beside its target, and null without one", async () => {
-    const { submit, call } = setup();
-    const routine = { repo: "dakotacolorado/release-routines", commit: "862d32fbe2a988fb533215c156cf058191ec54b9", dir: "dakotacolorado/honed" };
-    const job = await submit({ repo: "dakotacolorado/honed", routine });
-    expect(job).toMatchObject({ repo: "dakotacolorado/honed", commit: COMMIT, job: "hello", routine });
-    expect(await (await call("GET", `/runs/${job.id}`)).json()).toEqual(job);
-    expect(await submit()).toMatchObject({ routine: null, host: null });
-    expect((await submit({ host: "dakotas-hp-laptop" })).host).toBe("dakotas-hp-laptop");
+    expect(await (await call("GET", `/runs/${run.id}`)).json()).toEqual(run);
+    expect(await submit()).toMatchObject({ args: [], requirements: { os: null, arch: null, memory: null, timeout: null }, labels: {} });
   });
 
   it.each([
-    ["a routine dir that climbs out", { routine: { repo: "o/r", commit: COMMIT, dir: "o/../x" } }],
-    ["a routine dir that is absolute", { routine: { repo: "o/r", commit: COMMIT, dir: "/o/b" } }],
-    ["an empty host", { host: "" }],
-    ["a routine at a short commit", { routine: { repo: "o/r", commit: "4b825dc", dir: "o/b" } }],
-    ["a routine with no dir", { routine: { repo: "o/r", commit: COMMIT } }],
+    ["an os it does not know", { requirements: { os: "plan9" } }],
+    ["an arch it does not know", { requirements: { arch: "mips" } }],
     ["a short commit", { commit: "4b825dc" }],
     ["a repo that is not owner/name", { repo: "python-template" }],
     ["a job name with a space", { job: "hello world" }],
     ["no job", { job: undefined }],
-    ["memory that is not whole MiB", { limits: { memory: 1.5 } }],
-    ["a negative timeout", { limits: { timeout: -1 } }],
+    ["memory that is not whole MiB", { requirements: { memory: 1.5 } }],
+    ["a negative timeout", { requirements: { timeout: -1 } }],
     ["a label with a space", { labels: { "a b": "c" } }],
     ["args that are not strings", { args: [1] }],
   ])("refuses %s with 400", async (_, over) => {
@@ -93,46 +78,26 @@ describe("POST /runs", () => {
   });
 });
 
-describe("what a run was for", () => {
-  it("is recorded as submitted, null when not said, and lists runs by it", async () => {
+describe("labels", () => {
+  it("list runs by one label or several, newest first, with the other filters", async () => {
     const { submit, call } = setup();
-    const item = { kind: "item", id: "28af81bc-6a9a-4189-ad1f-8fd9de51308a" };
-    const a = await submit({ for: item });
-    const b = await submit({ for: { kind: "worker", id: "d03e1824-3c95ed51" } });
-    const none = await submit();
-    expect(a.for).toEqual(item);
-    expect(none.for).toBeNull();
-    const list = async (q: string) => ((await (await call("GET", `/runs?${q}`)).json()) as { runs: Run[] }).runs.map((j) => j.id);
-    expect(await list(`for=item:${item.id}`)).toEqual([a.id]);
-    expect(await list("for=worker:d03e1824-3c95ed51")).toEqual([b.id]);
-    expect(await list("for=batch:nothing")).toEqual([]);
-    expect(await list(`for=item:${item.id}&state=running`)).toEqual([]);
-    expect(await list(`for=item:${item.id}&state=pending`)).toEqual([a.id]);
-  });
-
-  it("refuses a kind it does not know, and an id with spaces", async () => {
-    const { call } = setup();
-    const body = { repo: "dakotacolorado/python-template", commit: COMMIT, job: "hello" };
-    expect((await call("POST", "/runs", { ...body, for: { kind: "epic", id: "x" } })).status).toBe(400);
-    expect((await call("POST", "/runs", { ...body, for: { kind: "item", id: "a b" } })).status).toBe(400);
-    expect((await call("GET", "/runs?for=epic:x")).status).toBe(400);
-    expect((await call("GET", "/runs?for=item")).status).toBe(400);
-  });
-});
-
-describe("runs by who submitted them", () => {
-  it("lists only that submitter's, newest first, with the other filters", async () => {
-    const { submit, call } = setup();
-    const a = await submit();
+    const a = await submit({ labels: { item: "28af81bc", by: "agent-1" } });
     // Two submits in one millisecond share a createdAt, and newest-first would not tell them apart.
     await new Promise((res) => setTimeout(res, 3));
-    const b = await submit({ job: "build" });
-    const other = (await (await call("POST", "/runs", { repo: "dakotacolorado/python-template", commit: COMMIT, job: "hello" }, { "claimed-by": "agent-2" })).json()) as Run;
-    const list = async (q: string) => ((await (await call("GET", `/runs?${q}`)).json()) as { runs: Run[] }).runs.map((j) => j.id);
-    expect(await list("submittedBy=agent-1")).toEqual([b.id, a.id]);
-    expect(await list("submittedBy=agent-2")).toEqual([other.id]);
-    expect(await list("submittedBy=agent-1&state=running")).toEqual([]);
-    expect(await list("submittedBy=nobody")).toEqual([]);
+    const b = await submit({ labels: { item: "28af81bc", by: "agent-2" } });
+    await submit();
+    const list = async (q: string) => ((await (await call("GET", `/runs?${q}`)).json()) as { runs: Run[] }).runs.map((r) => r.id);
+    expect(await list("label=item=28af81bc")).toEqual([b.id, a.id]);
+    expect(await list("label=item=28af81bc&label=by=agent-1")).toEqual([a.id]);
+    expect(await list("label=item=other")).toEqual([]);
+    expect(await list("label=item=28af81bc&state=running")).toEqual([]);
+  });
+
+  it("refuses a label that is not key=value, and keys or values with spaces", async () => {
+    const { call } = setup();
+    expect((await call("GET", "/runs?label=item")).status).toBe(400);
+    expect((await call("GET", "/runs?label==x")).status).toBe(400);
+    expect((await call("POST", "/runs", { repo: "a/b", commit: COMMIT, job: "hello", labels: { "a b": "c" } })).status).toBe(400);
   });
 });
 
@@ -235,10 +200,10 @@ describe("POST /runs/{id}/cancel", () => {
     expect((await call("POST", `/runs/${job.id}/cancel`)).status).toBe(409);
   });
 
-  it("marks a running job for its runner to stop, leaving it running", async () => {
+  it("marks a running run for its host to stop, leaving it running", async () => {
     const { store, submit, call } = setup();
     const job = await submit();
-    force(store, { ...job, state: "running", runner: "11111111-1111-4111-8111-111111111111" });
+    force(store, { ...job, state: "running", host: "11111111-1111-4111-8111-111111111111" });
     const res = await call("POST", `/runs/${job.id}/cancel`);
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ state: "running", cancelRequested: true, endedAt: null });

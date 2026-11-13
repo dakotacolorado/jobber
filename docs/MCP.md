@@ -2,7 +2,7 @@
 
 <!-- Generated from src/mcp.ts by `npm run spec`; do not edit. -->
 
-Streamable HTTP at `/mcp`, stateless, answering JSON. Every request takes the submitters' bearer token (`AUTH_TOKEN`), as the API does, and may send `claimed-by`: each tool is one API request made with them, so it is refused, recorded and answered as that request would be. A refusal comes back as the tool's error, in the API's words.
+Streamable HTTP at `/mcp`, stateless, answering JSON. Every request takes the submitters' bearer token (`AUTH_TOKEN`), as the API does: each tool is one API request made with it, so it is refused, recorded and answered as that request would be. A refusal comes back as the tool's error, in the API's words.
 
 ```json
 {
@@ -22,12 +22,13 @@ Streamable HTTP at `/mcp`, stateless, answering JSON. Every request takes the su
 
 What the server tells an agent when it connects:
 
-> job-service runs jobs: a job is a named script in a repo's jobs.toml, a run one execution of it at one commit, claimed by a runner whose labels and free memory fit.
+> job-service runs jobs on a fleet of hosts: a job is a named script in a repo's jobs.toml, a run one execution of it at one commit, claimed by a host that meets its requirements (os, arch, memory).
 >
 > - A run is submitted pending, claimed and running, and ends succeeded, failed or canceled with its exit code.
 > - A run's log is read from a byte offset: get_run_log answers the bytes from offset, the log's size, and the run's state, so call it again from offset + the bytes read until the state has ended.
-> - cancel_run ends a pending run at once; a running one is canceled by its runner shortly after.
-> - Every tool takes the submitters' token this server was connected with. Registering runners and their claims and reports are the runner protocol, not tools.
+> - Label runs to find them again (e.g. {"item": "28af81bc", "by": "agent-7"}); list_runs filters by label as key=value.
+> - cancel_run ends a pending run at once; a running one is stopped by its host shortly after.
+> - Every tool takes the submitters' token this server was connected with. The host protocol (register, heartbeat, claim, append, complete) is job-runner's, not tools.
 
 ## Tools
 
@@ -38,11 +39,11 @@ What the server tells an agent when it connects:
 | [`get_run`](#get_run) | Get a run | yes |
 | [`get_run_log`](#get_run_log) | Read a run's log | yes |
 | [`cancel_run`](#cancel_run) | Cancel a run |  |
-| [`list_runners`](#list_runners) | List runners | yes |
+| [`list_hosts`](#list_hosts) | List hosts | yes |
 
 ### submit_run
 
-Queues a run as `pending` until a runner claims it. The repo isn't checked here: a missing job fails on its runner.
+Queues a run as `pending` until a host that meets its requirements claims it. The repo isn't checked here: a missing job fails on its host.
 
 | Input | Type | Required | |
 | --- | --- | --- | --- |
@@ -50,13 +51,12 @@ Queues a run as `pending` until a runner claims it. The repo isn't checked here:
 | `commit` | string | yes | Full commit sha to check out. |
 | `job` | string | yes | A `[jobs.<name>]` in the repo's `jobs.toml`. |
 | `args` | string[] |  | Arguments appended to the job's command. |
-| `limits` | object |  |  |
-| `limits.memory` | integer or null |  | Memory in MiB. Default: `jobs.toml`'s, else 1024. |
-| `limits.timeout` | integer or null |  | Timeout in seconds. Default: `jobs.toml`'s. |
-| `labels` | object |  | Key-value labels. On a run, what its runner must have. |
-| `for` | object or null |  | What the run is for: filter with `ListRuns?for=<kind>:<id>`. |
-| `routine` | object or null |  | Run a job from another repo's `jobs.toml` against this repo (used by release routines). |
-| `host` | string or null |  | Run on this host itself, outside a container. Default: any runner, in a container. |
+| `requirements` | object |  | What the run needs from its host. |
+| `requirements.os` | `linux`, `macos`, `windows` or null |  | Operating system it needs. Default: any. |
+| `requirements.arch` | `x86_64`, `aarch64` or null |  | CPU architecture it needs. Default: any. |
+| `requirements.memory` | integer or null |  | Memory in MiB. Default: `jobs.toml`'s, else 1024. |
+| `requirements.timeout` | integer or null |  | Timeout in seconds. Default: `jobs.toml`'s. |
+| `labels` | object |  | Labels to find it by, e.g. what it is for and who asked. |
 
 ### list_runs
 
@@ -66,8 +66,7 @@ Returns runs matching every filter given, newest first.
 | --- | --- | --- | --- |
 | `state` | `pending`, `running`, `succeeded`, `failed`, `canceled` |  | `pending` → `running` → `succeeded`, `failed` or `canceled`. |
 | `repo` | string |  | GitHub repo, `owner/name`. |
-| `submittedBy` | string |  | Only runs with this `submittedBy`. |
-| `for` | string |  | Only runs for this `<kind>:<id>`. |
+| `label` | string or string[] |  | Only runs with this label, as `key=value`. Repeat to require several. |
 | `limit` | integer |  | Max results. Default: 100. |
 
 ### get_run
@@ -89,14 +88,14 @@ Returns the log from byte `offset`, at most 1 MiB, with the log's size so far an
 
 ### cancel_run
 
-Ends a pending run now. A running one is stopped by its runner within seconds.
+Ends a pending run now. A running one is stopped by its host within seconds.
 
 | Input | Type | Required | |
 | --- | --- | --- | --- |
 | `id` | string | yes | The run's id. |
 
-### list_runners
+### list_hosts
 
-Returns every registered runner, most recently seen first, with its labels and host.
+Returns every host in the fleet, most recently seen first, with its capacity, free capacity and health.
 
 No input.

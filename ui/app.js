@@ -1,4 +1,4 @@
-// job-service's page: runs by state, a run and its log, a form to submit one, and the runners, over the API.
+// job-service's page: runs by state, a run and its log, a form to submit one, and the hosts, over the API.
 // Every element is made with `h`, which sets text, never HTML, so nothing a run or its log says is run.
 
 const TOKEN_KEY = "job-service.token";
@@ -64,7 +64,13 @@ const show = (box, err) => {
 };
 const state = (run) => h("span", { class: `state ${run.state}` }, run.state, run.cancelRequested && !ENDED.includes(run.state) ? " · cancel asked" : "");
 const repoAt = (run) => [run.repo, h("span", { class: "muted mono" }, ` @${run.commit.slice(0, 7)}`)];
-const forOf = (run) => (run.for ? `${run.for.kind}:${run.for.id}` : "");
+const pairs = (labels) => Object.entries(labels).map(([k, v]) => `${k}=${v}`);
+/** A run's labels, each a link to the runs that share it. */
+const labelLinks = (labels) =>
+  pairs(labels).flatMap((pair, i) => [i ? " " : "", h("a", { class: "mono label", href: `#/?label=${encodeURIComponent(pair)}` }, pair)]);
+/** What a run asked for, in a few words: `linux x86_64, 256 MiB, 60 s`. */
+const needs = (r) =>
+  [r.os, r.arch, r.memory !== null && `${r.memory} MiB`, r.timeout !== null && `${r.timeout} s`].filter(Boolean).join(", ") || "any host";
 function took(run) {
   if (run.duration !== null) return `${run.duration.toFixed(1)} s`;
   if (run.startedAt && !run.endedAt) return `${Math.round((Date.now() - Date.parse(run.startedAt)) / 1000)} s so far`;
@@ -124,7 +130,7 @@ function signIn() {
       "div",
       { class: "signin" },
       h("h1", {}, "job-service"),
-      h("p", { class: "muted" }, "Runs of jobs, claimed by runners. The API is at ", h("code", {}, `${location.origin}/runs`), ", the MCP server at ", h("code", {}, `${location.origin}/mcp`), "."),
+      h("p", { class: "muted" }, "Runs jobs on a fleet of hosts. The API is at ", h("code", {}, `${location.origin}/runs`), ", the MCP server at ", h("code", {}, `${location.origin}/mcp`), "."),
       form,
     ),
   );
@@ -133,7 +139,7 @@ function signIn() {
 
 async function runs(params) {
   const live = current();
-  const filters = { state: params.get("state") ?? "", repo: params.get("repo") ?? "", submittedBy: params.get("submittedBy") ?? "", for: params.get("for") ?? "" };
+  const filters = { state: params.get("state") ?? "", repo: params.get("repo") ?? "", label: params.get("label") ?? "" };
   const query = new URLSearchParams(Object.entries(filters).filter(([, value]) => value));
   query.set("limit", params.get("limit") ?? "100");
   const load = () => api("GET", `/runs?${query}`);
@@ -152,8 +158,7 @@ async function runs(params) {
     { class: "filters" },
     h("select", { onchange: (e) => set("state", e.target.value) }, h("option", { value: "" }, "Every state"), STATES.map((each) => h("option", { value: each, selected: each === filters.state }, each))),
     text("repo", "owner/name"),
-    text("submittedBy", "submitted by"),
-    text("for", "for kind:id"),
+    text("label", "label key=value"),
     h("button", { onclick: () => (location.hash = "#/") }, "Clear"),
   );
   const count = h("span", { class: "muted" });
@@ -170,13 +175,12 @@ async function runs(params) {
               h("td", {}, state(run), run.exit !== null ? h("span", { class: "muted" }, ` exit ${run.exit}`) : ""),
               h("td", {}, repoAt(run)),
               h("td", { class: "mono" }, run.job, run.args.length ? h("span", { class: "muted" }, ` ${run.args.join(" ")}`) : ""),
-              h("td", {}, run.submittedBy ?? ""),
-              h("td", { class: "mono" }, forOf(run)),
+              h("td", {}, labelLinks(run.labels)),
               h("td", {}, when(run.createdAt)),
               h("td", {}, took(run)),
             ),
           )
-        : [h("tr", {}, h("td", { colspan: 8, class: "muted" }, "No runs."))]),
+        : [h("tr", {}, h("td", { colspan: 7, class: "muted" }, "No runs."))]),
     );
   };
   draw(list);
@@ -186,7 +190,7 @@ async function runs(params) {
     h(
       "table",
       {},
-      h("thead", {}, h("tr", {}, ["Run", "State", "Repo", "Job", "Submitted by", "For", "Submitted", "Took"].map((name) => h("th", {}, name)))),
+      h("thead", {}, h("tr", {}, ["Run", "State", "Repo", "Job", "Labels", "Submitted", "Took"].map((name) => h("th", {}, name)))),
       body,
     ),
   );
@@ -207,14 +211,10 @@ async function runPage(id) {
       ["Repo", repoAt(run)],
       ["Commit", h("span", { class: "mono" }, run.commit)],
       ["Job", h("span", { class: "mono" }, [run.job, ...run.args].join(" "))],
-      run.routine && ["Routine", `${run.routine.repo} @${run.routine.commit.slice(0, 7)} ${run.routine.dir}`],
-      run.host && ["Host", run.host],
-      ["Labels", Object.entries(run.labels).map(([k, v]) => `${k}=${v}`).join(", ") || "none"],
-      ["Limits", `memory ${run.limits.memory === null ? "from jobs.toml" : `${run.limits.memory} MiB`}, timeout ${run.limits.timeout === null ? "from jobs.toml" : `${run.limits.timeout} s`}`],
-      run.runsWith && ["Runs with", `memory ${run.runsWith.memory} MiB, timeout ${run.runsWith.timeout} s, stall ${run.runsWith.stall ?? "never"}${run.runsWith.stall ? " s" : ""}`],
-      ["Runner", run.runner ? h("a", { href: "#/runners", class: "mono" }, short(run.runner)) : "not yet claimed"],
-      ["Submitted", `${when(run.createdAt)}${run.submittedBy ? ` by ${run.submittedBy}` : ""}`],
-      run.for && ["For", h("a", { class: "mono", href: `#/?for=${encodeURIComponent(forOf(run))}` }, forOf(run))],
+      ["Needs", needs(run.requirements)],
+      ["Labels", run.labels && Object.keys(run.labels).length ? labelLinks(run.labels) : "none"],
+      ["Host", run.host ? h("a", { href: "#/hosts", class: "mono" }, short(run.host)) : "not yet claimed"],
+      ["Submitted", when(run.createdAt)],
       run.startedAt && ["Started", when(run.startedAt)],
       run.endedAt && ["Ended", `${when(run.endedAt)}${run.duration !== null ? `, after ${run.duration.toFixed(1)} s` : ""}`],
       run.exit !== null && ["Exit", String(run.exit)],
@@ -298,10 +298,12 @@ function newRun(params) {
   const commit = input("commit", { placeholder: "the full 40-character sha", required: true, pattern: "[0-9a-f]{40}", class: "mono" });
   const job = input("job", { placeholder: "a [jobs.<name>] in its jobs.toml", required: true });
   const args = h("textarea", { placeholder: "one argument a line" });
-  const labels = h("textarea", { placeholder: "key=value, one a line: what a runner must have" });
+  const labels = h("textarea", { placeholder: "key=value, one a line: what it is for, who asked" });
+  const choose = (options) => h("select", {}, h("option", { value: "" }, "any"), options.map((each) => h("option", { value: each }, each)));
+  const os = choose(["linux", "macos", "windows"]);
+  const arch = choose(["x86_64", "aarch64"]);
   const memory = input("memory", { type: "number", min: 16, placeholder: "jobs.toml's" });
   const timeout = input("timeout", { type: "number", min: 1, placeholder: "jobs.toml's" });
-  const host = input("host", { placeholder: "any runner that fits" });
   const box = errorBox();
   main.replaceChildren(
     h(
@@ -311,7 +313,7 @@ function newRun(params) {
         onsubmit: async (e) => {
           e.preventDefault();
           try {
-            const pairs = lines(labels).map((line) => {
+            const given = lines(labels).map((line) => {
               const at = line.indexOf("=");
               if (at < 1) throw new Error(`"${line}" is not key=value`);
               return [line.slice(0, at).trim(), line.slice(at + 1).trim()];
@@ -321,9 +323,13 @@ function newRun(params) {
               commit: commit.value.trim(),
               job: job.value.trim(),
               args: lines(args),
-              labels: Object.fromEntries(pairs),
-              limits: { memory: memory.value ? Number(memory.value) : null, timeout: timeout.value ? Number(timeout.value) : null },
-              host: host.value.trim() || null,
+              labels: Object.fromEntries(given),
+              requirements: {
+                os: os.value || null,
+                arch: arch.value || null,
+                memory: memory.value ? Number(memory.value) : null,
+                timeout: timeout.value ? Number(timeout.value) : null,
+              },
             });
             location.hash = `#/run/${run.id}`;
           } catch (err) {
@@ -332,48 +338,55 @@ function newRun(params) {
         },
       },
       h("h1", {}, "Submit a run"),
-      h("p", { class: "muted" }, "Stored pending until a runner whose labels and free memory fit claims it. Nothing is checked against the repo here: a job missing from jobs.toml fails on its runner, saying so in its log."),
+      h("p", { class: "muted" }, "Stored pending until a host that meets its requirements claims it. Nothing is checked against the repo here: a job missing from jobs.toml fails on its host, saying so in its log."),
       h("label", {}, "Repo"), repo,
       h("label", {}, "Commit"), commit,
       h("label", {}, "Job"), job,
       h("label", {}, "Arguments"), args,
-      h("div", { class: "grid2" }, h("div", {}, h("label", {}, "Memory, MiB"), memory), h("div", {}, h("label", {}, "Timeout, s"), timeout)),
+      h("h2", { class: "section" }, "Requirements"),
+      h("div", { class: "grid4" },
+        h("div", {}, h("label", {}, "OS"), os),
+        h("div", {}, h("label", {}, "Arch"), arch),
+        h("div", {}, h("label", {}, "Memory, MiB"), memory),
+        h("div", {}, h("label", {}, "Timeout, s"), timeout)),
       h("label", {}, "Labels"), labels,
-      h("label", {}, "Host"), host,
       box,
       h("div", { class: "row" }, h("button", { class: "primary", type: "submit" }, "Submit")),
     ),
   );
 }
 
-async function runners() {
+const mib = (n) => (n >= 1024 ? `${(n / 1024).toFixed(1)} GiB` : `${n} MiB`);
+
+async function hosts() {
   current();
-  const { runners: list } = await api("GET", "/runners");
+  const { hosts: list } = await api("GET", "/hosts");
   main.replaceChildren(
     h(
       "table",
       {},
-      h("thead", {}, h("tr", {}, ["Runner", "Name", "Host", "Labels", "Slots", "Memory", "Version", "Registered", "Last seen"].map((name) => h("th", {}, name)))),
+      h("thead", {}, h("tr", {}, ["Host", "OS", "Capacity", "Free", "CPU load", "Memory", "Disk free", "Labels", "Version", "Last seen"].map((name) => h("th", {}, name)))),
       h(
         "tbody",
         {},
         list.length
-          ? list.map((runner) =>
+          ? list.map((host) =>
               h(
                 "tr",
                 {},
-                h("td", { class: "mono" }, short(runner.id)),
-                h("td", {}, runner.name),
-                h("td", {}, runner.hostId ?? ""),
-                h("td", { class: "mono" }, Object.entries(runner.labels).map(([k, v]) => `${k}=${v}`).join(", ")),
-                h("td", {}, runner.slots),
-                h("td", {}, `${runner.memory} MiB`),
-                h("td", {}, runner.version ?? ""),
-                h("td", {}, when(runner.createdAt)),
-                h("td", {}, when(runner.lastSeenAt)),
+                h("td", {}, host.name, h("div", { class: "muted mono" }, short(host.id))),
+                h("td", {}, `${host.os} ${host.arch}`),
+                h("td", {}, `${host.slots} slots, ${mib(host.memory)}`),
+                h("td", {}, host.free ? `${host.free.slots} slots, ${mib(host.free.memory)}` : ""),
+                h("td", {}, host.metrics ? host.metrics.cpuLoad.toFixed(2) : ""),
+                h("td", {}, host.metrics ? `${mib(host.metrics.memoryUsed)} of ${mib(host.metrics.memoryTotal)}` : ""),
+                h("td", {}, host.metrics ? mib(host.metrics.diskFree) : ""),
+                h("td", { class: "mono" }, pairs(host.labels).join(", ")),
+                h("td", {}, host.version ?? ""),
+                h("td", {}, when(host.lastSeenAt)),
               ),
             )
-          : h("tr", {}, h("td", { colspan: 9, class: "muted" }, "No runner has registered.")),
+          : h("tr", {}, h("td", { colspan: 10, class: "muted" }, "No host has registered.")),
       ),
     ),
   );
@@ -388,7 +401,7 @@ async function route() {
     const run = /^\/run\/([0-9a-f-]{36})$/.exec(path ?? "");
     if (run) await runPage(run[1]);
     else if (path === "/new") newRun(params);
-    else if (path === "/runners") await runners();
+    else if (path === "/hosts") await hosts();
     else await runs(params);
   } catch (err) {
     if (err instanceof ApiError && err.status === 401) return;

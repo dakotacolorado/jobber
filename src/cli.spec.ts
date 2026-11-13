@@ -69,12 +69,12 @@ describe("job-service backup", () => {
   it("copies the database to the file it names", () => {
     const dir = temp();
     const store = Store.open(join(dir, "js.db"));
-    store.createRunner({ id: "r1", name: "h", labels: {}, slots: 1, memory: 16, version: null, hostId: null, createdAt: "t", lastSeenAt: "t", tokenHash: "x" });
+    store.putHost({ id: "h1", name: "h", os: "linux", arch: "x86_64", labels: {}, slots: 1, memory: 16, version: null, free: null, metrics: null, createdAt: "t", lastSeenAt: "t", tokenHash: "x" });
     const done = spawnSync(process.execPath, [CLI, "backup", join(dir, "copy.db"), "--db", join(dir, "js.db")], { env: clean(), encoding: "utf8" });
     store.close();
     expect(done.status, done.stderr).toBe(0);
     const copy = Store.open(join(dir, "copy.db"));
-    expect(copy.runners().map((r) => r.id)).toEqual(["r1"]);
+    expect(copy.hosts().map((h) => h.id)).toEqual(["h1"]);
     copy.close();
   });
 });

@@ -16,18 +16,17 @@ import {
   newId,
   now,
   ownRunning,
-  parseFor,
+  parseLabel,
   RequestError,
   sameEnd,
-  stamp,
   submitted,
+  type Host,
   type Run,
-  type Runner,
 } from "./domain.ts";
 import { LOCAL_URL, mcpServer, type Call } from "./mcp.ts";
 import * as routes from "./schema.ts";
 import { ERROR_CODES, type ErrorStatus } from "./schema.ts";
-import type { Store, StoredRunner } from "./store.ts";
+import type { Store, StoredHost } from "./store.ts";
 
 export const SPEC_PATH = "/openapi.json";
 
@@ -35,20 +34,20 @@ export const SPEC_PATH = "/openapi.json";
 export const API_VERSION = "2026-11-12";
 
 /** The API's overview, at the top of its reference. Markdown. */
-export const OVERVIEW = `Runs jobs on self-hosted runners. A **job** is a named script in a repo's \`jobs.toml\`; a **run** is one execution of it at a commit.
+export const OVERVIEW = `Runs jobs on a fleet of hosts. A **job** is a named script in a repo's \`jobs.toml\`; a **run** is one execution of it at a commit.
 
 - **Submit** a run, then follow it: \`pending\` → \`running\` → \`succeeded\`, \`failed\` or \`canceled\`.
 - **Read its log** with \`GetRunLog\`, from any byte offset, while it runs and after.
-- **Runners** (job-runner) pull work through the *Runner protocol* calls. You don't call those.
+- **Hosts** run job-runner, which registers, sends heartbeats and claims runs through the *Host protocol* calls. You don't call those.
 
 **Auth:** \`Authorization: Bearer <token>\` with the submitters' token, on everything but \`GetHealth\`.
 
 **Errors:** \`{code, message}\`, where \`code\` is an AWS-style exception name such as \`ValidationException\` or \`ResourceNotFoundException\`.`;
 
 export interface Tokens {
-  /** Submitters': submit, read and cancel runs, list runners. Null: every such call answers 503. */
+  /** Submitters': submit, read and cancel runs, list hosts. Null: every such call answers 503. */
   submitter: string | null;
-  /** Registers runners, and nothing else: each runner then calls with a token of its own. */
+  /** Registers hosts, and nothing else: each host then calls with a token of its own. */
   registration: string | null;
 }
 
@@ -63,7 +62,7 @@ const hash = (secret: string) => createHash("sha256").update(secret).digest("hex
 
 const same = (a: string, b: string) => timingSafeEqual(Buffer.from(hash(a)), Buffer.from(hash(b)));
 
-const publicRunner = ({ tokenHash: _, ...runner }: StoredRunner): Runner => runner;
+const publicHost = ({ tokenHash: _, ...host }: StoredHost): Host => host;
 
 export class JobApi {
   readonly hono: OpenAPIHono;
@@ -98,22 +97,29 @@ export class JobApi {
       await next();
     };
     const submitter = bearer(this.tokens.submitter);
-    // A runner writes a run with PUT and PATCH, under its own token, checked by the route.
+    // A host writes a run with PUT and PATCH, under its own token, checked by the route.
     const submitterReads = (c: Context, next: Next) => (["PUT", "PATCH"].includes(c.req.method) ? next() : submitter(c, next));
     this.hono.use("/mcp", submitter);
     this.hono.use("/runs", submitter);
     this.hono.use("/runs/*", submitterReads);
-    this.hono.on("POST", "/runners", bearer(this.tokens.registration));
-    this.hono.on("GET", "/runners", submitter);
+    this.hono.on("POST", "/hosts", bearer(this.tokens.registration));
+    this.hono.on("GET", "/hosts", submitter);
   }
 
-  /** The runner whose own token the request carries: 401 for any other token. */
-  private caller(c: Context): StoredRunner {
+  /** The host whose own token the request carries: 401 for any other token. */
+  private caller(c: Context): StoredHost {
     const given = /^Bearer ([0-9a-f-]{36})\.(.+)$/.exec(c.req.header("authorization") ?? "");
-    const runner = given ? this.store.runner(given[1]!) : null;
-    const ok = runner && given && timingSafeEqual(Buffer.from(hash(given[2]!)), Buffer.from(runner.tokenHash));
-    if (!ok) throw new RequestError("not a runner's token", 401);
-    return runner;
+    const host = given ? this.store.host(given[1]!) : null;
+    const ok = host && given && timingSafeEqual(Buffer.from(hash(given[2]!)), Buffer.from(host.tokenHash));
+    if (!ok) throw new RequestError("not a host's token", 401);
+    return host;
+  }
+
+  /** The calling host, which must be the one the path names. */
+  private pathHost(c: Context, id: string): StoredHost {
+    const host = this.caller(c);
+    if (host.id !== id) throw new RequestError("not this host's token", 403);
+    return host;
   }
 
   private found(id: string): Run {
@@ -128,15 +134,15 @@ export class JobApi {
     app.openapi(routes.healthRoute, (c) => c.json({ ok: true as const, ...this.about }, 200));
 
     app.openapi(routes.submitRoute, (c) => {
-      const run = submitted(c.req.valid("json"), c.req.valid("header")["claimed-by"] ?? null);
+      const run = submitted(c.req.valid("json"));
       this.store.create(run);
       return c.json(run, 201);
     });
 
     app.openapi(routes.listRoute, (c) => {
-      const { state, repo, submittedBy, for: f, limit } = c.req.valid("query");
-      const runs = this.store.runs({ state, repo, submittedBy, ...(f !== undefined && { for: parseFor(f) }), limit });
-      return c.json({ runs }, 200);
+      const { state, repo, label, limit } = c.req.valid("query");
+      const labels = (label === undefined ? [] : [label].flat()).map(parseLabel);
+      return c.json({ runs: this.store.runs({ state, repo, labels, limit }) }, 200);
     });
 
     app.openapi(routes.getRoute, (c) => c.json(this.found(c.req.valid("param").id), 200));
@@ -169,27 +175,44 @@ export class JobApi {
       const draft = c.req.valid("json");
       const secret = randomBytes(32).toString("base64url");
       const at = now();
-      const runner: StoredRunner = { ...draft, id: newId(), createdAt: at, lastSeenAt: at, tokenHash: hash(secret) };
-      this.store.createRunner(runner);
-      return c.json({ runner: publicRunner(runner), token: `${runner.id}.${secret}` }, 201);
+      const before = this.store.hostNamed(draft.name);
+      const host: StoredHost = {
+        ...draft,
+        id: before?.id ?? newId(),
+        free: before?.free ?? null,
+        metrics: before?.metrics ?? null,
+        createdAt: before?.createdAt ?? at,
+        lastSeenAt: at,
+        tokenHash: hash(secret),
+      };
+      this.store.putHost(host);
+      return c.json({ host: publicHost(host), token: `${host.id}.${secret}` }, 201);
     });
 
-    app.openapi(routes.runnersRoute, (c) => {
-      const runners = this.store
-        .runners()
-        .map(publicRunner)
+    app.openapi(routes.hostsRoute, (c) => {
+      const hosts = this.store
+        .hosts()
+        .map(publicHost)
         .sort((a, b) => b.lastSeenAt.localeCompare(a.lastSeenAt));
-      return c.json({ runners }, 200);
+      return c.json({ hosts }, 200);
+    });
+
+    app.openapi(routes.heartbeatRoute, (c) => {
+      const host = this.pathHost(c, c.req.valid("param").id);
+      const { free, metrics, running } = c.req.valid("json");
+      const at = now();
+      this.store.seen(host.id, at, { free, metrics });
+      const cancel = this.store.renew(host.id, running, leaseFrom(at), at);
+      return c.json({ cancel, lease: LEASE_SECONDS }, 200);
     });
 
     app.openapi(routes.claimRoute, (c) => {
-      const runner = this.caller(c);
-      if (runner.id !== c.req.valid("param").id) throw new RequestError("not this runner's token", 403);
-      const { labels, free, hostId, can } = c.req.valid("json");
-      this.store.seen(runner.id, now(), hostId);
+      const host = this.pathHost(c, c.req.valid("param").id);
+      const { free } = c.req.valid("json");
+      this.store.seen(host.id, now(), { free });
       for (const run of this.store.pending()) {
-        if (!fits(run, { labels: labels ?? runner.labels, free, can, hostId: hostId ?? runner.hostId })) continue;
-        const next = claimed(run, runner.id);
+        if (!fits(run, { os: host.os, arch: host.arch, free })) continue;
+        const next = claimed(run, host.id);
         try {
           this.store.update(next, run.updatedAt);
         } catch (err) {
@@ -203,17 +226,14 @@ export class JobApi {
     });
 
     app.openapi(routes.appendRoute, async (c) => {
-      const runner = this.caller(c);
+      const host = this.caller(c);
       const id = c.req.valid("param").id;
       const bytes = new Uint8Array(await c.req.arrayBuffer());
       // Read after the body: another append may have landed while it arrived.
       const run = this.found(id);
-      ownRunning(run, runner.id);
+      ownRunning(run, host.id);
       const range = c.req.valid("header")["content-range"];
-      if (!range && bytes.length) throw new RequestError("an append with a body needs Content-Range: bytes S-E/*", 400);
-      const [start, end] = range
-        ? (range.slice("bytes ".length).split("/")[0]!.split("-").map(Number) as [number, number])
-        : [run.logSize, run.logSize - 1];
+      const [start, end] = range.slice("bytes ".length).split("/")[0]!.split("-").map(Number) as [number, number];
       if (end - start + 1 !== bytes.length) throw new RequestError(`Content-Range says ${end - start + 1} bytes; the body has ${bytes.length}`, 400);
       try {
         appendAt(run, start, bytes.length);
@@ -221,24 +241,16 @@ export class JobApi {
         if (err instanceof RequestError && err.status === 416) return c.json({ code: ERROR_CODES[416], message: err.message, size: run.logSize }, 416);
         throw err;
       }
-      const at = stamp(run);
-      const next = this.store.append(run, start, bytes, leaseFrom(at), at);
-      return c.json({ size: next.logSize, canceled: next.cancelRequested, leaseExpiresAt: next.leaseExpiresAt! }, 200);
-    });
-
-    app.openapi(routes.runsWithRoute, (c) => {
-      const runner = this.caller(c);
-      const run = this.found(c.req.valid("param").id);
-      ownRunning(run, runner.id);
-      return c.json(this.store.runsWith(run, c.req.valid("json"), stamp(run)), 200);
+      const next = this.store.append(run, start, bytes, now());
+      return c.json({ size: next.logSize }, 200);
     });
 
     app.openapi(routes.reportRoute, (c) => {
-      const runner = this.caller(c);
+      const host = this.caller(c);
       const run = this.found(c.req.valid("param").id);
       const report = c.req.valid("json");
-      if (run.runner === runner.id && run.state !== "running" && sameEnd(run, report)) return c.json(run, 200);
-      ownRunning(run, runner.id);
+      if (run.host === host.id && run.state !== "running" && sameEnd(run, report)) return c.json(run, 200);
+      ownRunning(run, host.id);
       const next = finished(run, report);
       this.store.update(next, run.updatedAt);
       return c.json(next, 200);
@@ -257,12 +269,11 @@ export class JobApi {
   /**
    * The MCP server, at `/mcp`, stateless: each request gets its own, whose
    * tools make their API requests in-process with the request's own
-   * `authorization` and `claimed-by`.
+   * `authorization`.
    */
   private mcp(): void {
     this.hono.all("/mcp", async (c) => {
       const authorization = c.req.header("authorization")!;
-      const claimedBy = c.req.header("claimed-by");
       const call: Call = (method, path, init = {}) =>
         Promise.resolve(
           this.hono.fetch(
@@ -271,7 +282,6 @@ export class JobApi {
               headers: {
                 authorization,
                 ...(init.body !== undefined && { "content-type": "application/json" }),
-                ...(claimedBy && { "claimed-by": claimedBy }),
                 ...init.headers,
               },
               body: init.body === undefined ? undefined : JSON.stringify(init.body),
@@ -310,18 +320,18 @@ export class JobApi {
 
   private spec(): void {
     this.hono.openAPIRegistry.registerComponent("securitySchemes", "bearerAuth", { type: "http", scheme: "bearer" });
-    this.hono.openAPIRegistry.registerComponent("securitySchemes", "runnerAuth", {
+    this.hono.openAPIRegistry.registerComponent("securitySchemes", "hostAuth", {
       type: "http",
       scheme: "bearer",
-      description: "A runner's own token, `<runner id>.<secret>`, as `registerRunner` answered it.",
+      description: "A host's own token, `<host id>.<secret>`, as `RegisterHost` answered it.",
     });
     this.hono.doc(SPEC_PATH, {
       openapi: "3.1.0",
       info: { version: API_VERSION, title: "job-service", description: OVERVIEW },
       tags: [
         { name: "Runs", description: "Submit, follow and cancel runs." },
-        { name: "Runners", description: "See the runners." },
-        { name: "Runner protocol", description: "Called by job-runner, not by you." },
+        { name: "Hosts", description: "See the fleet." },
+        { name: "Host protocol", description: "Called by job-runner on each host, not by you." },
         { name: "Platform", description: "Health." },
       ],
     });

@@ -1,64 +1,56 @@
 # job-service
 
-Runs of jobs. A **job** is a named script in a repo's `jobs.toml`; a **run**
-is one execution of it, to completion at one commit, by a runner that claims
-it. A run is submitted `pending`, claimed and `running`, and ends
+Runs jobs on a fleet of hosts. A **job** is a named script in a repo's
+`jobs.toml`; a **run** is one execution of it at one commit, on a **host** that
+claims it. A run is submitted `pending`, claimed and `running`, and ends
 `succeeded`, `failed` or `canceled` with its exit code. Its log can be read
 from any offset while it runs and after.
 
 One Node 24 process serves the HTTP API, an MCP server and a page, with
 everything in one SQLite file. The page, at `/`, takes the submitters' token
-(kept in the browser), lists runs by state with filters, shows a run and
-follows its log, submits and cancels runs, and lists runners. The API's contract is [`openapi.json`](./openapi.json),
-rendered as an AWS API reference in [`docs/API.md`](./docs/API.md), and by
-Redoc at `/docs/api`, as waypoint's is: operations named VerbNoun
-(`SubmitRun`, `GetRunLog`, `ClaimRun`, …), and errors `{code, message}` with
-AWS's exception names (`ValidationException`, `ResourceNotFoundException`, …); the MCP
-server's is [`mcp.json`](./mcp.json), rendered in [`docs/MCP.md`](./docs/MCP.md)
-and served at `/docs/mcp`. Neither page needs a token.
-
-`/mcp` is streamable HTTP, stateless, under the submitters' token: one tool per
-operation that token calls (`submit_run`, `list_runs`, `get_run`,
-`get_run_log`, `cancel_run`, `list_runners`), each one API request made with the
-caller's `authorization` and `claimed-by`:
-
-```json
-{ "mcpServers": { "job-service": { "type": "http", "url": "https://<host>:8445/mcp", "headers": { "Authorization": "Bearer <AUTH_TOKEN>" } } } }
-```
+(kept in the browser), lists runs by state and label, shows a run and follows
+its log, submits and cancels runs, and lists the hosts with their health. The
+API's contract is [`openapi.json`](./openapi.json), rendered as an AWS API
+reference in [`docs/API.md`](./docs/API.md), and by Redoc at `/docs/api`. The
+MCP server's is [`mcp.json`](./mcp.json), rendered in
+[`docs/MCP.md`](./docs/MCP.md) and served at `/docs/mcp`.
 
 ```
-POST /runs               {repo, commit, job, args?, limits?, labels?, for?, routine?, host?}  → run, pending
-GET  /runs?state=…&repo=…&submittedBy=…&for=<kind>:<id>
+POST /runs               {repo, commit, job, args?, requirements?: {os, arch, memory, timeout}, labels?}  → run, pending
+GET  /runs?state=…&repo=…&label=key=value
 GET  /runs/{id}
 GET  /runs/{id}/log      Range: bytes=N-     (Run-State says the run's state)
 POST /runs/{id}/cancel
+GET  /hosts              each host with its capacity, free capacity and metrics
 ```
 
-Runners call in, since hosts are behind NAT, after GitLab Runner's protocol:
+`requirements` is everything a run needs from its host in one place; a host
+claims a run when its os and arch match and its free memory covers the run's
+(1024 MiB when none is given). `labels` describe the run, free-form (what it
+is for, who asked), and `ListRuns` filters by them.
+
+Hosts run job-runner, which calls in (hosts are behind NAT) and is never called:
 
 ```
-POST  /runners               registration token → runner id and its own token
-POST  /runners/{id}/claim    {labels?, can?, hostId?, free: {slots, memory}} → {run, memory, lease}, or 204
-PATCH /runs/{id}/log         Content-Range: bytes S-E/* → {size, canceled, leaseExpiresAt}
-PUT   /runs/{id}/runs-with   {memory, timeout, stall}
+POST  /hosts                 registration token → host id and its own token (same name again: same id, new token)
+POST  /hosts/{id}/heartbeat  {free, metrics, running: [run ids]} → {cancel: [run ids], lease}
+POST  /hosts/{id}/claim      {free: {slots, memory}} → {run, memory, lease}, or 204
+PATCH /runs/{id}/log         Content-Range: bytes S-E/* → {size}
 PUT   /runs/{id}             {state, exit, duration, reason?}
 ```
 
-A claim is a conditional write, so two runners never get the same run. Each
-log append lands at the log's current end or is refused (416, with the size
-to resend from), and renews the run's 60 s lease; an empty append only renews
-it. A timer in the process sweeps every minute and fails a running run whose
-lease has lapsed; another, hourly, deletes log chunks over 90 days old. The
-registration token (`RUNNER_TOKEN`) only registers: the runner then calls with
-`<runner id>.<secret>`, which works for its own runs and nothing else.
+A claim is a conditional write, so two hosts never get the same run. A
+running run's 60 s lease is renewed by its host's heartbeat, which a host sends
+every few seconds with its free capacity and metrics (CPU load, memory, free
+disk); a timer sweeps every minute and fails a running run whose lease lapsed,
+and another, hourly, deletes log chunks over 90 days old. Each log append lands
+at the log's current end or is refused (416, with the size to resend from).
+The registration token (`RUNNER_TOKEN`) only registers: the host then calls
+with `<host id>.<secret>`, which works for its own runs and nothing else.
 
 What a run runs is the repo's business: `job` names a `[jobs.<name>]` in its
-`jobs.toml` at `commit` (or in a routine's directory), which the runner reads
-after checking it out; this service never reads the repo. `limits.memory` is
-what a runner reserves for the run when it claims it; a run submitted without
-one is admitted at 1024 MiB. Once its runner has read `jobs.toml`, the run's
-`runsWith` says the memory, timeout and stall limit it actually runs with.
-`labels` are what a runner must have, every key with that value.
+`jobs.toml` at `commit`, which the host reads after checking it out; this
+service never reads the repo.
 
 ## Run it
 
@@ -81,8 +73,8 @@ from a checkout at the commit to release, as the hosts' user:
 
 ```sh
 ops/deploy beta dakotajp-lenovo-laptop     # on the HP; prod: ops/deploy prod dakotajp-hp-laptop on the Lenovo
-ops/runner beta <job-runner binary>        # the second job-runner, registered here (api = "runs")
-ops/check                                  # a run of python-template's hello, claimed by it, to `succeeded`
+ops/runner beta <job-runner binary>        # the second job-runner, registered here as a host (api = "hosts")
+ops/check                                  # a run of python-template's hello, claimed by this host, to `succeeded`
 ```
 
 `ops/deploy` installs the build under `~/.local/share/routines/job-service/`

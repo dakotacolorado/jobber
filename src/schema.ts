@@ -1,15 +1,5 @@
 import { createRoute, z } from "@hono/zod-openapi";
-import {
-  CAPABILITIES,
-  COMMIT_PATTERN,
-  FOR_ID_PATTERN,
-  FOR_KINDS,
-  JOB_NAME_PATTERN,
-  LABEL_PATTERN,
-  REPO_PATTERN,
-  ROUTINE_DIR_PATTERN,
-  STATES,
-} from "./domain.ts";
+import { ARCHES, COMMIT_PATTERN, JOB_NAME_PATTERN, LABEL_PATTERN, OSES, REPO_PATTERN, STATES } from "./domain.ts";
 
 /** Validates every request and generates `openapi.json`, so neither can drift. */
 
@@ -28,65 +18,25 @@ const State = z
   .enum(STATES)
   .describe("`pending` → `running` → `succeeded`, `failed` or `canceled`.")
   .openapi({ example: "pending" });
-
-const HostId = z.string().trim().min(1).max(200).describe("Host name, as worker-host knows it.");
+const Os = z.enum(OSES).describe("Operating system.");
+const Arch = z.enum(ARCHES).describe("CPU architecture.");
 
 const Label = z.string().regex(LABEL_PATTERN);
 export const Labels = z
   .record(Label, Label)
   .refine((labels) => Object.keys(labels).length <= 20, "at most 20 labels")
-  .describe("Key-value labels. On a run, what its runner must have.")
-  .openapi({ example: { arch: "x86_64" } });
+  .describe("Free-form key-value labels.")
+  .openapi({ example: { item: "28af81bc", by: "agent-7" } });
 
-export const LimitsSchema = z
+export const RequirementsSchema = z
   .object({
-    memory: z
-      .int()
-      .min(16)
-      .max(1_048_576)
-      .nullable()
-      .default(null)
-      .describe("Memory in MiB. Default: `jobs.toml`'s, else 1024."),
+    os: Os.nullable().default(null).describe("Operating system it needs. Default: any."),
+    arch: Arch.nullable().default(null).describe("CPU architecture it needs. Default: any."),
+    memory: z.int().min(16).max(1_048_576).nullable().default(null).describe("Memory in MiB. Default: `jobs.toml`'s, else 1024."),
     timeout: z.int().min(1).max(86_400).nullable().default(null).describe("Timeout in seconds. Default: `jobs.toml`'s."),
   })
-  .openapi("Limits");
-
-export const RunsWithSchema = z
-  .object({
-    memory: z.int().min(1).max(1_048_576).describe("Memory in MiB."),
-    timeout: z.int().min(1).max(86_400).describe("Timeout in seconds."),
-    stall: z
-      .int()
-      .min(1)
-      .max(86_400)
-      .nullable()
-      .describe("Seconds without progress before it fails as stalled; null for never."),
-  })
-  .openapi("RunsWith");
-
-export const ForSchema = z
-  .object({
-    kind: z.enum(FOR_KINDS).describe("What kind of thing asked for it."),
-    id: z.string().regex(FOR_ID_PATTERN).describe("Its id."),
-  })
-  .describe("What the run is for: filter with `ListRuns?for=<kind>:<id>`.")
-  .openapi("For", { example: { kind: "item", id: "28af81bc-6a9a-4189-ad1f-8fd9de51308a" } });
-
-export const RoutineSchema = z
-  .object({
-    repo: Repo.describe("Repo holding the routine.").openapi({ example: "dakotacolorado/release-routines" }),
-    commit: Commit.describe("Full commit sha of that repo."),
-    dir: z
-      .string()
-      .max(200)
-      .regex(ROUTINE_DIR_PATTERN)
-      .describe("Directory holding the routine's `jobs.toml`.")
-      .openapi({ example: "dakotacolorado/honed" }),
-  })
-  .describe(
-    "Run a job from another repo's `jobs.toml` against this repo (used by release routines).",
-  )
-  .openapi("Routine");
+  .describe("What the run needs from its host.")
+  .openapi("Requirements");
 
 export const SubmitSchema = z
   .object({
@@ -94,46 +44,32 @@ export const SubmitSchema = z
     commit: Commit,
     job: JobName,
     args: z.array(z.string().max(4000)).max(50).default([]).describe("Arguments appended to the job's command."),
-    limits: LimitsSchema.default({ memory: null, timeout: null }),
-    labels: Labels.default({}),
-    for: ForSchema.nullable().default(null),
-    routine: RoutineSchema.nullable().default(null),
-    host: HostId.nullable()
-      .default(null)
-      .describe(
-        "Run on this host itself, outside a container. Default: any runner, in a container.",
-      ),
+    requirements: RequirementsSchema.default({ os: null, arch: null, memory: null, timeout: null }),
+    labels: Labels.default({}).describe("Labels to find it by, e.g. what it is for and who asked."),
   })
   .openapi("SubmitRunInput");
 
 export const RunSchema = z
   .object({
     id: z.string().uuid().describe("The run's id."),
-    repo: Repo.describe("GitHub repo, `owner/name`."),
+    repo: Repo,
     commit: Commit,
     job: JobName,
-    routine: RoutineSchema.nullable().describe("The routine it runs, if any."),
-    host: z.string().nullable().describe("The host it must run on, if any."),
     args: z.array(z.string()).describe("Arguments appended to the job's command."),
-    limits: LimitsSchema,
+    requirements: RequirementsSchema,
     labels: Labels,
-    for: ForSchema.nullable().describe("What it is for, if given."),
     state: State,
     reason: z.string().nullable().describe("Why it ended, when not plain (e.g. timed out)."),
-    cancelRequested: z.boolean().describe("Cancel asked for; its runner will stop it."),
-    runner: z.string().uuid().nullable().describe("Runner that claimed it."),
-    runsWith: RunsWithSchema.nullable().describe(
-      "Limits it actually runs with, once its runner says.",
-    ),
+    cancelRequested: z.boolean().describe("Cancel asked for; its host will stop it."),
+    host: z.string().uuid().nullable().describe("Host that claimed it."),
     exit: z.int().nullable().describe("Exit code."),
     duration: z.number().nullable().describe("Seconds it ran."),
     logSize: z.int().describe("Log size in bytes."),
-    submittedBy: z.string().nullable().describe("Who submitted it (`claimed-by`)."),
     createdAt: z.string().describe("Submitted at (ISO 8601)."),
     updatedAt: z.string().describe("Last changed at (ISO 8601)."),
     startedAt: z.string().nullable().describe("Claimed at (ISO 8601)."),
     endedAt: z.string().nullable().describe("Ended at (ISO 8601)."),
-    leaseExpiresAt: z.string().nullable().describe("Fails at this time unless its runner checks in."),
+    leaseExpiresAt: z.string().nullable().describe("Fails at this time unless its host's heartbeat renews it."),
   })
   .openapi("Run");
 
@@ -159,10 +95,6 @@ export const ErrorSchema = z
   })
   .describe("Every error's body.")
   .openapi("Error");
-
-const ClaimHeader = z.object({
-  "claimed-by": z.string().min(1).max(200).optional().describe("Who is submitting; saved as `submittedBy`."),
-});
 
 const IdParam = z.object({ id: z.string().uuid().describe("The run's id.").openapi({ param: { name: "id", in: "path" } }) });
 
@@ -210,21 +142,20 @@ export const submitRoute = createRoute({
   path: "/runs",
   operationId: "SubmitRun",
   summary: "Submit a run",
-  description: "Queues a run as `pending` until a runner claims it. The repo isn't checked here: a missing job fails on its runner.",
-  request: { headers: ClaimHeader, body: json(SubmitSchema, "What to run, and where it may run.") },
+  description: "Queues a run as `pending` until a host that meets its requirements claims it. The repo isn't checked here: a missing job fails on its host.",
+  request: { body: json(SubmitSchema, "What to run, what it needs, and its labels.") },
   responses: { 201: json(RunSchema, "Stored, `pending`."), ...FAILS },
 });
 
-/** `listRuns`'s filters, which `list_runs` takes too. */
+/** `ListRuns`'s filters, which `list_runs` takes too. */
 export const ListQuery = z.object({
   state: State.optional(),
   repo: Repo.optional(),
-  submittedBy: z.string().min(1).max(200).optional().describe("Only runs with this `submittedBy`."),
-  for: z
-    .string()
+  label: z
+    .union([z.string(), z.array(z.string())])
     .optional()
-    .describe("Only runs for this `<kind>:<id>`.")
-    .openapi({ example: "item:28af81bc-6a9a-4189-ad1f-8fd9de51308a" }),
+    .describe("Only runs with this label, as `key=value`. Repeat to require several.")
+    .openapi({ example: "item=28af81bc" }),
   limit: z.coerce.number().int().min(1).max(500).default(100).describe("Max results. Default: 100."),
 });
 
@@ -234,9 +165,7 @@ export const listRoute = createRoute({
   path: "/runs",
   operationId: "ListRuns",
   summary: "List runs",
-  request: {
-    query: ListQuery,
-  },
+  request: { query: ListQuery },
   responses: {
     200: json(z.object({ runs: z.array(RunSchema).describe("Runs, newest first.") }).openapi("ListRunsResponse"), "The runs."),
     ...FAILS,
@@ -288,83 +217,94 @@ export const cancelRoute = createRoute({
   path: "/runs/{id}/cancel",
   operationId: "CancelRun",
   summary: "Cancel a run",
-  description: "Ends a pending run now. A running one is stopped by its runner within seconds.",
+  description: "Ends a pending run now. A running one is stopped by its host within seconds.",
   request: { params: IdParam },
   responses: { 200: json(RunSchema, "The run, canceled or marked."), 409: fails(409, "It has already ended."), ...FAILS, ...MISSING },
 });
 
-// --- runners ----------------------------------------------------------------
+// --- hosts ------------------------------------------------------------------
 
-export const RunnerSchema = z
+const FreeSchema = z
   .object({
-    id: z.string().uuid().describe("The runner's id."),
-    name: z.string().describe("Display name; not unique."),
-    labels: Labels,
+    slots: z.int().min(0).describe("Free run slots."),
+    memory: z.int().min(0).describe("Free memory for runs, in MiB."),
+  })
+  .describe("Capacity free now.")
+  .openapi("Free");
+
+export const MetricsSchema = z
+  .object({
+    cpuLoad: z.number().min(0).describe("1-minute load average."),
+    memoryUsed: z.int().min(0).describe("Memory in use, in MiB."),
+    memoryTotal: z.int().min(0).describe("Total memory, in MiB."),
+    diskFree: z.int().min(0).describe("Free disk where runs work, in MiB."),
+  })
+  .describe("The host's health.")
+  .openapi("Metrics");
+
+export const HostSchema = z
+  .object({
+    id: z.string().uuid().describe("The host's id."),
+    name: z.string().describe("Unique host name."),
+    os: Os,
+    arch: Arch,
     slots: z.int().describe("Runs at once."),
     memory: z.int().describe("Memory for runs, in MiB."),
+    labels: Labels,
     version: z.string().nullable().describe("job-runner version."),
-    hostId: z
-      .string()
-      .nullable()
-      .describe("Host it runs on."),
-    createdAt: z.string().describe("Registered at (ISO 8601)."),
-    lastSeenAt: z.string().describe("Last claim at (ISO 8601)."),
+    free: FreeSchema.nullable().describe("Free capacity, as last reported."),
+    metrics: MetricsSchema.nullable().describe("Health, as last reported."),
+    createdAt: z.string().describe("First registered at (ISO 8601)."),
+    lastSeenAt: z.string().describe("Last heartbeat or claim at (ISO 8601)."),
   })
-  .openapi("Runner");
-
+  .openapi("Host");
 
 export const RegisterSchema = z
   .object({
-    name: z.string().trim().min(1).max(200).describe("Display name; not unique."),
-    labels: Labels.default({}),
+    name: z.string().trim().min(1).max(200).describe("Unique host name. Registering it again keeps its id."),
+    os: Os,
+    arch: Arch,
     slots: z.int().min(1).max(64).describe("Runs at once."),
     memory: z.int().min(16).max(1_048_576).describe("Memory for runs, in MiB."),
+    labels: Labels.default({}),
     version: z.string().max(100).nullable().default(null).describe("job-runner version."),
-    hostId: HostId.nullable().default(null),
   })
-  .openapi("RegisterRunnerInput");
+  .openapi("RegisterHostInput");
 
 export const RegisteredSchema = z
   .object({
-    runner: RunnerSchema.describe("The new runner."),
+    host: HostSchema.describe("The host."),
     token: z.string().describe("Its own token, `<id>.<secret>`. Shown only once."),
   })
-  .openapi("RegisterRunnerResponse");
+  .openapi("RegisterHostResponse");
 
-export const ClaimRequestSchema = z
+export const HeartbeatSchema = z
   .object({
-    labels: Labels.optional().describe("Labels now. Default: as registered."),
-    can: z
-      .array(z.enum(CAPABILITIES))
-      .max(10)
-      .default([])
-      .describe(
-        "Extra kinds of run it takes: `routine`, `host`.",
-      ),
-    hostId: HostId.optional().describe("Host it runs on now."),
-    free: z
-      .object({
-        slots: z.int().min(0).describe("Free slots."),
-        memory: z.int().min(0).describe("Free memory in MiB."),
-      })
-      .describe("Free capacity now."),
+    free: FreeSchema,
+    metrics: MetricsSchema,
+    running: z.array(z.string().uuid()).max(64).describe("Runs it is running: their leases are renewed."),
   })
-  .openapi("ClaimRunInput");
+  .openapi("SendHeartbeatInput");
+
+export const HeartbeatAnswerSchema = z
+  .object({
+    cancel: z.array(z.string().uuid()).describe("Of those runs, the ones to stop and complete as `canceled`."),
+    lease: z.int().describe("Seconds before a run fails without another heartbeat."),
+  })
+  .openapi("SendHeartbeatResponse");
+
+export const ClaimRequestSchema = z.object({ free: FreeSchema }).openapi("ClaimRunInput");
 
 export const ClaimSchema = z
   .object({
     run: RunSchema.describe("The claimed run."),
     memory: z.int().describe("Memory to reserve, in MiB."),
-    lease: z.int().describe("Seconds between check-ins before the run fails."),
+    lease: z.int().describe("Seconds before the run fails without a heartbeat."),
   })
   .openapi("ClaimRunResponse");
 
 export const AppendedSchema = z
-  .object({
-    size: z.int().describe("Log size: where the next append starts."),
-    canceled: z.boolean().describe("Cancel asked for: stop and complete as `canceled`."),
-    leaseExpiresAt: z.string().describe("Lease end (ISO 8601)."),
-  })
+  .object({ size: z.int().describe("Log size: where the next append starts.") })
   .openapi("AppendRunLogResponse");
 
 export const ReportSchema = z
@@ -376,51 +316,59 @@ export const ReportSchema = z
   })
   .openapi("CompleteRunInput");
 
-const RunnerIdParam = z.object({ id: z.string().uuid().describe("The runner's id.").openapi({ param: { name: "id", in: "path" } }) });
-const runnerAuth = { security: [{ runnerAuth: [] }], tags: ["Runner protocol"] };
-const RUNNER_FAILS = {
+const HostIdParam = z.object({ id: z.string().uuid().describe("The host's id.").openapi({ param: { name: "id", in: "path" } }) });
+const hostAuth = { security: [{ hostAuth: [] }], tags: ["Host protocol"] };
+const HOST_FAILS = {
   400: fails(400, "The request failed validation."),
-  401: fails(401, "The bearer token is not a runner's own."),
-  403: fails(403, "The run is another runner's, or the path names another runner."),
+  401: fails(401, "The bearer token is not a host's own."),
+  403: fails(403, "The run is another host's, or the path names another host."),
 };
 
 export const registerRoute = createRoute({
   security: [{ bearerAuth: [] }],
-  tags: ["Runner protocol"],
+  tags: ["Host protocol"],
   method: "post",
-  path: "/runners",
-  operationId: "RegisterRunner",
-  summary: "Register a runner",
-  description: "Takes the registration token. Returns the runner's own token, once.",
-  request: { body: json(RegisterSchema, "What the runner is and has.") },
+  path: "/hosts",
+  operationId: "RegisterHost",
+  summary: "Register a host",
+  description: "Takes the registration token. Returns the host's own token, once; registering the same name again replaces it.",
+  request: { body: json(RegisterSchema, "What the host is and has.") },
   responses: { 201: json(RegisteredSchema, "Registered."), ...FAILS },
 });
 
-export const runnersRoute = createRoute({
+export const hostsRoute = createRoute({
   ...secured,
-  tags: ["Runners"],
+  tags: ["Hosts"],
   method: "get",
-  path: "/runners",
-  operationId: "ListRunners",
-  summary: "List runners",
+  path: "/hosts",
+  operationId: "ListHosts",
+  summary: "List hosts",
   responses: {
-    200: json(
-      z.object({ runners: z.array(RunnerSchema).describe("Runners, most recently seen first.") }).openapi("ListRunnersResponse"),
-      "The runners.",
-    ),
+    200: json(z.object({ hosts: z.array(HostSchema).describe("Hosts, most recently seen first.") }).openapi("ListHostsResponse"), "The hosts."),
     ...FAILS,
   },
 });
 
-export const claimRoute = createRoute({
-  ...runnerAuth,
+export const heartbeatRoute = createRoute({
+  ...hostAuth,
   method: "post",
-  path: "/runners/{id}/claim",
+  path: "/hosts/{id}/heartbeat",
+  operationId: "SendHeartbeat",
+  summary: "Send a heartbeat",
+  description: "Reports free capacity and health, and renews the leases of the runs it lists. Send one at least every 15 seconds.",
+  request: { params: HostIdParam, body: json(HeartbeatSchema, "Free capacity, health and running runs.") },
+  responses: { 200: json(HeartbeatAnswerSchema, "Leases renewed."), ...HOST_FAILS },
+});
+
+export const claimRoute = createRoute({
+  ...hostAuth,
+  method: "post",
+  path: "/hosts/{id}/claim",
   operationId: "ClaimRun",
   summary: "Claim a run",
-  description: "Takes the oldest pending run that fits this runner and marks it `running`. 204 if none fits.",
-  request: { params: RunnerIdParam, body: json(ClaimRequestSchema, "What the runner can take on.") },
-  responses: { 200: json(ClaimSchema, "A run, now running here."), 204: { description: "No pending run fits." }, ...RUNNER_FAILS },
+  description: "Takes the oldest pending run whose requirements this host meets and marks it `running`. 204 if none fits.",
+  request: { params: HostIdParam, body: json(ClaimRequestSchema, "Capacity free now.") },
+  responses: { 200: json(ClaimSchema, "A run, now running here."), 204: { description: "No pending run fits." }, ...HOST_FAILS },
 });
 
 export const InvalidRangeSchema = ErrorSchema.extend({
@@ -428,45 +376,34 @@ export const InvalidRangeSchema = ErrorSchema.extend({
 }).openapi("InvalidRangeError");
 
 export const appendRoute = createRoute({
-  ...runnerAuth,
+  ...hostAuth,
   method: "patch",
   path: "/runs/{id}/log",
   operationId: "AppendRunLog",
   summary: "Append to a log",
-  description: "Appends bytes at the log's end (`Content-Range: bytes S-E/*`) and renews the lease; an empty body only renews. Max 256 KiB per call, 64 MiB per run.",
+  description: "Appends bytes at the log's end (`Content-Range: bytes S-E/*`). Max 256 KiB per call, 64 MiB per run.",
   request: {
     params: IdParam,
-    headers: z.object({ "content-range": z.string().regex(/^bytes \d+-\d+\/(\*|\d+)$/).optional().describe("`bytes S-E/*`") }),
+    headers: z.object({ "content-range": z.string().regex(/^bytes \d+-\d+\/(\*|\d+)$/).describe("`bytes S-E/*`") }),
     body: { content: { "application/octet-stream": { schema: z.string().openapi({ format: "binary" }) } }, description: "The log's next bytes." },
   },
   responses: {
-    200: json(AppendedSchema, "Stored, and the lease renewed."),
+    200: json(AppendedSchema, "Stored."),
     409: fails(409, "The run is not running: it ended, perhaps by its lease lapsing."),
     413: fails(413, "Over 256 KiB, or the log would pass 64 MiB."),
     416: json(InvalidRangeSchema, `${ERROR_CODES[416]}: The append does not start at the log's end: resend from \`size\`.`),
-    ...RUNNER_FAILS,
+    ...HOST_FAILS,
     ...MISSING,
   },
 });
 
-export const runsWithRoute = createRoute({
-  ...runnerAuth,
-  method: "put",
-  path: "/runs/{id}/runs-with",
-  operationId: "PutRunsWith",
-  summary: "Put run limits",
-  description: "Records the memory, timeout and stall limit a run actually got, once its runner has read `jobs.toml`.",
-  request: { params: IdParam, body: json(RunsWithSchema, "Its memory, timeout and stall limit.") },
-  responses: { 200: json(RunSchema, "The run, with `runsWith`."), 409: fails(409, "It is not running."), ...RUNNER_FAILS, ...MISSING },
-});
-
 export const reportRoute = createRoute({
-  ...runnerAuth,
+  ...hostAuth,
   method: "put",
   path: "/runs/{id}",
   operationId: "CompleteRun",
   summary: "Complete a run",
   description: "Records how a run ended. Retrying with the same result is safe.",
   request: { params: IdParam, body: json(ReportSchema, "How it ended.") },
-  responses: { 200: json(RunSchema, "The run, ended."), 409: fails(409, "It is not running, or ended otherwise."), ...RUNNER_FAILS, ...MISSING },
+  responses: { 200: json(RunSchema, "The run, ended."), 409: fails(409, "It is not running, or ended otherwise."), ...HOST_FAILS, ...MISSING },
 });

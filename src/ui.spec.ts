@@ -33,7 +33,7 @@ describe("the page", () => {
     const { paths } = (await (await api.fetch(new Request("http://local/openapi.json"))).json()) as { paths: Record<string, unknown> };
     // Each call's path, as `api("GET", "/runs")` or `request("GET", `/runs/${run.id}/log`)` writes it.
     const all = [...new Set([...file("ui/app.js").matchAll(/(?:api|request)\("(?:GET|POST)", (["`])(.*?)\1/g)].map((m) => m[2]!.split("?")[0]!.replace(/\$\{[^}]+\}/g, "{id}")))];
-    expect(all.sort()).toEqual(["/runners", "/runs", "/runs/{id}", "/runs/{id}/cancel", "/runs/{id}/log"]);
+    expect(all.sort()).toEqual(["/hosts", "/runs", "/runs/{id}", "/runs/{id}/cancel", "/runs/{id}/log"]);
     for (const path of all) expect(Object.keys(paths)).toContain(path);
   });
 });

@@ -46,4 +46,7 @@ pre.log { background: #111; color: #e6e6e1; padding: 12px 14px; border-radius: 6
 .muted { color: var(--muted); }
 .signin { max-width: 560px; margin: 40px auto; }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; }
-@media (max-width: 900px) { .grid2 { grid-template-columns: 1fr; } }
+.grid4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0 16px; }
+h2.section { font-size: 13px; margin: 18px 0 0; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+a.label { font-size: 12px; }
+@media (max-width: 900px) { .grid2, .grid4 { grid-template-columns: 1fr; } }

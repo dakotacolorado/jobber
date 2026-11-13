@@ -50,8 +50,7 @@ export async function mcpDocument(): Promise<McpDocument> {
 
 const CONFIG = { mcpServers: { "job-service": { type: "http", url: `${LOCAL_URL}/mcp`, headers: { Authorization: "Bearer <AUTH_TOKEN>" } } } };
 const ABOUT =
-  "Streamable HTTP at `/mcp`, stateless, answering JSON. Every request takes the submitters' bearer token (`AUTH_TOKEN`), as the API does, " +
-  "and may send `claimed-by`: each tool is one API request made with them, so it is refused, recorded and answered as that request would be. " +
+  "Streamable HTTP at `/mcp`, stateless, answering JSON. Every request takes the submitters' bearer token (`AUTH_TOKEN`), as the API does: each tool is one API request made with it, so it is refused, recorded and answered as that request would be. " +
   "A refusal comes back as the tool's error, in the API's words.";
 
 const typeOf = (schema: JsonSchema): string => {

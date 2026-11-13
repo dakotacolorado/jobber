@@ -149,8 +149,9 @@ Deploy from a checkout at the commit to release, as the hosts' user:
 
 ```sh
 ops/deploy beta dakotajp-lenovo-laptop     # on the HP; prod: ops/deploy prod dakotajp-hp-laptop on the Lenovo
-ops/runner beta <runner binary>            # a host for this jobber, on this computer
+ops/runner beta <runner binary> 4 4096    # a host for this jobber, on this computer, keeping back 4 CPUs and 4096 MiB
 ops/check                                  # a run of python-template's hello, pushed to this host, to `succeeded`
+ops/check '' '' hello 3                    # three at once, which must all run at the same time
 ```
 
 `ops/deploy` installs the build beside the previous one, makes the host's
@@ -159,6 +160,15 @@ service, checks that `/health` answers the commit, and puts the previous
 release back if not. It also installs a nightly backup of the database to the
 other host, keeping 14 days. Run at an earlier commit, it is the rollback. Each
 script's header says where it puts things.
+
+`ops/runner` installs `job-runner-local.service` beside the host's own
+job-runner, which stays on the AWS job-service until cutover. It measures the
+machine each time it starts and offers runs what it has less the reserve
+given, which keeps back what else runs there: the AWS job-runner's
+`jobs.slice` (3 GiB on the HP, 4 GiB on the Lenovo), the services, agents'
+Claude sessions and the desktop. The HP (16 CPUs, 7 GiB) keeps back 4 CPUs
+and 4096 MiB, the Lenovo (16 CPUs, 13 GiB) 4 CPUs and 8192 MiB;
+`jobslocal.slice` is sized to what is left.
 
 ## Developing
 

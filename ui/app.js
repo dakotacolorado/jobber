@@ -4,6 +4,17 @@
 import { LETTERS, MARK_PIXELS, SUMMARY, TAGLINE } from "./banner.js";
 
 const TOKEN_KEY = "jobber.token";
+
+// Signed in from the workplace UI: a link whose address ends #signin=<token> (after any route,
+// as #/x&signin=<token>) stores the token, as signing in here would, and drops it from the address.
+{
+  const given = /(?:^#|&)signin=([^&]+)/.exec(location.hash);
+  if (given) {
+    localStorage.setItem(TOKEN_KEY, decodeURIComponent(given[1]));
+    const rest = location.hash.replace(/(?:^#|&)signin=[^&]+/, "").replace(/^#?&/, "#");
+    history.replaceState(null, "", location.pathname + location.search + (rest.length > 1 ? rest : ""));
+  }
+}
 const STATES = ["pending", "assigned", "running", "succeeded", "failed", "canceled"];
 const ENDED = ["succeeded", "failed", "canceled"];
 /** How often a run's page asks for more of its log, and the runs list for changes. */

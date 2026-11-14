@@ -8,7 +8,9 @@ Submit code to run on whatever computers you have. A **job** is a named script i
 - **Read its log** with `GetRunLog`, from any byte offset, while it runs and after.
 - **Hosts** are the computers that run jobber-host, which registers, holds a connection over which it is sent its runs, and reports their logs and ends through the *Host protocol* calls. You don't call those.
 
-**Auth:** `Authorization: Bearer <token>` with the submitters' token, on everything but `GetHealth`.
+- **Secrets** are set by an admin (`PutSecret`), stored encrypted, and never read back: a run naming them in `secrets` is given each as an environment variable.
+
+**Auth:** `Authorization: Bearer <token>` with the submitters' token, on everything but `GetHealth` and the *Secrets* calls, which take the admin's.
 
 **Errors:** `{code, message}`, where `code` is an AWS-style exception name such as `ValidationException` or `ResourceNotFoundException`.
 
@@ -18,12 +20,15 @@ Submit code to run on whatever computers you have. A **job** is a named script i
 - [CancelRun](#cancelrun): Cancel a run
 - [CompleteRun](#completerun): Complete a run
 - [ConnectHost](#connecthost): Connect a host
+- [DeleteSecret](#deletesecret): Delete a secret
 - [GetHealth](#gethealth): Get health
 - [GetRun](#getrun): Get a run
 - [GetRunLog](#getrunlog): Get a run's log
 - [ListHosts](#listhosts): List hosts
 - [ListQueue](#listqueue): List the queue
 - [ListRuns](#listruns): List runs
+- [ListSecrets](#listsecrets): List secrets
+- [PutSecret](#putsecret): Put a secret
 - [RegisterHost](#registerhost): Register a host
 - [SendHeartbeat](#sendheartbeat): Send a heartbeat
 - [SubmitRun](#submitrun): Submit a run
@@ -42,6 +47,7 @@ Submit code to run on whatever computers you have. A **job** is a named script i
 - [Requirements](#requirements)
 - [Retry](#retry)
 - [Run](#run)
+- [Secret](#secret)
 
 ---
 
@@ -165,7 +171,8 @@ Content-type: application/json
       "arch": "x86_64 | aarch64 | ",
       "cpu": number,
       "memory": number,
-      "timeout": number
+      "timeout": number,
+      "host": "string"
    },
    "labels": { },
    "priority": number,
@@ -173,6 +180,8 @@ Content-type: application/json
       "limit": number,
       "backoff": number
    },
+   "secrets": [ "string" ],
+   "onHost": boolean,
    "state": "pending | assigned | running | succeeded | failed | canceled",
    "reason": "string",
    "cancelRequested": boolean,
@@ -239,6 +248,14 @@ Type: Integer. Range: -1000 to 1000.
 **retry**  
 Retries a failed attempt (not a canceled one).  
 Type: [Retry](#retry) object.
+
+**secrets**  
+Secrets its host gives it as environment variables of their names.  
+Type: Array of strings. At most 50 items.
+
+**onHost**  
+Run on the host `requirements.host` names itself, as its user, in the checkout, outside a container. That host's jobber-host runs it only for a repo on its `host_runs` allowlist, and fails it otherwise. Default: false.  
+Type: Boolean.
 
 **state**  
 `pending` → `assigned` → `running` → `succeeded`, `failed` or `canceled`. An assignment not taken goes back to `pending`.  
@@ -394,7 +411,8 @@ Content-type: application/json
       "arch": "x86_64 | aarch64 | ",
       "cpu": number,
       "memory": number,
-      "timeout": number
+      "timeout": number,
+      "host": "string"
    },
    "labels": { },
    "priority": number,
@@ -402,6 +420,8 @@ Content-type: application/json
       "limit": number,
       "backoff": number
    },
+   "secrets": [ "string" ],
+   "onHost": boolean,
    "state": "pending | assigned | running | succeeded | failed | canceled",
    "reason": "string",
    "cancelRequested": boolean,
@@ -468,6 +488,14 @@ Type: Integer. Range: -1000 to 1000.
 **retry**  
 Retries a failed attempt (not a canceled one).  
 Type: [Retry](#retry) object.
+
+**secrets**  
+Secrets its host gives it as environment variables of their names.  
+Type: Array of strings. At most 50 items.
+
+**onHost**  
+Run on the host `requirements.host` names itself, as its user, in the checkout, outside a container. That host's jobber-host runs it only for a repo on its `host_runs` allowlist, and fails it otherwise. Default: false.  
+Type: Boolean.
 
 **state**  
 `pending` → `assigned` → `running` → `succeeded`, `failed` or `canceled`. An assignment not taken goes back to `pending`.  
@@ -606,6 +634,70 @@ HTTP status: 426
 
 ---
 
+## DeleteSecret
+
+Deletes a secret. A run naming it that has not started yet fails when its host would start it. Takes the admin's token.
+
+### Request syntax
+
+```http
+DELETE /secrets/{name} HTTP/1.1
+Authorization: Bearer token
+```
+
+### URI request parameters
+
+**name**  
+A secret's name, which is the environment variable a run is given it in: capitals, digits and `_`.  
+Type: String. Pattern: `^[A-Z_][A-Z0-9_]{0,127}$`. Required: Yes.
+
+### Response syntax
+
+```http
+HTTP/1.1 200
+Content-type: application/json
+
+{
+   "name": "string",
+   "createdAt": "string",
+   "updatedAt": "string"
+}
+```
+
+### Response elements
+
+**name**  
+A secret's name, which is the environment variable a run is given it in: capitals, digits and `_`.  
+Type: String. Pattern: `^[A-Z_][A-Z0-9_]{0,127}$`.
+
+**createdAt**  
+First set at (ISO 8601).  
+Type: String.
+
+**updatedAt**  
+Last set at (ISO 8601).  
+Type: String.
+
+### Errors
+
+**ValidationException**  
+The request failed validation.  
+HTTP status: 400
+
+**UnauthorizedException**  
+The bearer token is missing or is not the admin's.  
+HTTP status: 401
+
+**ResourceNotFoundException**  
+No secret has that name.  
+HTTP status: 404
+
+**ServiceUnavailableException**  
+The service has no admin token, or (to set one) no secrets key, configured.  
+HTTP status: 503
+
+---
+
 ## GetHealth
 
 Get health.
@@ -679,7 +771,8 @@ Content-type: application/json
       "arch": "x86_64 | aarch64 | ",
       "cpu": number,
       "memory": number,
-      "timeout": number
+      "timeout": number,
+      "host": "string"
    },
    "labels": { },
    "priority": number,
@@ -687,6 +780,8 @@ Content-type: application/json
       "limit": number,
       "backoff": number
    },
+   "secrets": [ "string" ],
+   "onHost": boolean,
    "state": "pending | assigned | running | succeeded | failed | canceled",
    "reason": "string",
    "cancelRequested": boolean,
@@ -753,6 +848,14 @@ Type: Integer. Range: -1000 to 1000.
 **retry**  
 Retries a failed attempt (not a canceled one).  
 Type: [Retry](#retry) object.
+
+**secrets**  
+Secrets its host gives it as environment variables of their names.  
+Type: Array of strings. At most 50 items.
+
+**onHost**  
+Run on the host `requirements.host` names itself, as its user, in the checkout, outside a container. That host's jobber-host runs it only for a repo on its `host_runs` allowlist, and fails it otherwise. Default: false.  
+Type: Boolean.
 
 **state**  
 `pending` → `assigned` → `running` → `succeeded`, `failed` or `canceled`. An assignment not taken goes back to `pending`.  
@@ -951,6 +1054,7 @@ Content-type: application/json
       },
       "labels": { },
       "version": "string",
+      "features": [ "string" ],
       "free": {
          "cpu": number,
          "memory": number
@@ -1026,7 +1130,8 @@ Content-type: application/json
          "arch": "x86_64 | aarch64 | ",
          "cpu": number,
          "memory": number,
-         "timeout": number
+         "timeout": number,
+         "host": "string"
       },
       "labels": { },
       "priority": number,
@@ -1034,6 +1139,8 @@ Content-type: application/json
          "limit": number,
          "backoff": number
       },
+      "secrets": [ "string" ],
+      "onHost": boolean,
       "state": "pending | assigned | running | succeeded | failed | canceled",
       "reason": "string",
       "cancelRequested": boolean,
@@ -1133,7 +1240,8 @@ Content-type: application/json
          "arch": "x86_64 | aarch64 | ",
          "cpu": number,
          "memory": number,
-         "timeout": number
+         "timeout": number,
+         "host": "string"
       },
       "labels": { },
       "priority": number,
@@ -1141,6 +1249,8 @@ Content-type: application/json
          "limit": number,
          "backoff": number
       },
+      "secrets": [ "string" ],
+      "onHost": boolean,
       "state": "pending | assigned | running | succeeded | failed | canceled",
       "reason": "string",
       "cancelRequested": boolean,
@@ -1193,6 +1303,121 @@ HTTP status: 503
 
 ---
 
+## ListSecrets
+
+Lists the secrets' names and when each was set, never their values. Takes the admin's token.
+
+### Request syntax
+
+```http
+GET /secrets HTTP/1.1
+Authorization: Bearer token
+```
+
+### Response syntax
+
+```http
+HTTP/1.1 200
+Content-type: application/json
+
+{
+   "secrets": [ {
+      "name": "string",
+      "createdAt": "string",
+      "updatedAt": "string"
+   } ]
+}
+```
+
+### Response elements
+
+**secrets**  
+Secrets, by name.  
+Type: Array of [Secret](#secret) objects.
+
+### Errors
+
+**UnauthorizedException**  
+The bearer token is missing or is not the admin's.  
+HTTP status: 401
+
+**ServiceUnavailableException**  
+The service has no admin token, or (to set one) no secrets key, configured.  
+HTTP status: 503
+
+---
+
+## PutSecret
+
+Sets a secret, or replaces its value (to rotate it): runs started after get the new one. Takes the admin's token. The value is stored encrypted under `JOBBER_SECRETS_KEY` and is never returned by any call.
+
+### Request syntax
+
+```http
+PUT /secrets/{name} HTTP/1.1
+Authorization: Bearer token
+Content-type: application/json
+
+{
+   "value": "string"
+}
+```
+
+### URI request parameters
+
+**name**  
+A secret's name, which is the environment variable a run is given it in: capitals, digits and `_`.  
+Type: String. Pattern: `^[A-Z_][A-Z0-9_]{0,127}$`. Required: Yes.
+
+### Request body
+
+**value**  
+The value, up to 64 KiB. Stored encrypted; never returned.  
+Type: String. Length: 1 to 65536. Required: Yes.
+
+### Response syntax
+
+```http
+HTTP/1.1 200
+Content-type: application/json
+
+{
+   "name": "string",
+   "createdAt": "string",
+   "updatedAt": "string"
+}
+```
+
+### Response elements
+
+**name**  
+A secret's name, which is the environment variable a run is given it in: capitals, digits and `_`.  
+Type: String. Pattern: `^[A-Z_][A-Z0-9_]{0,127}$`.
+
+**createdAt**  
+First set at (ISO 8601).  
+Type: String.
+
+**updatedAt**  
+Last set at (ISO 8601).  
+Type: String.
+
+### Errors
+
+**ValidationException**  
+The request failed validation.  
+HTTP status: 400
+
+**UnauthorizedException**  
+The bearer token is missing or is not the admin's.  
+HTTP status: 401
+
+**ServiceUnavailableException**  
+The service has no admin token, or (to set one) no secrets key, configured.  
+HTTP status: 503
+
+---
+
 ## RegisterHost
 
 Takes the registration token. Returns the host's own token, once. Registering the same name again keeps its id, replaces its token, and updates what it is and offers: a host registers each time it starts.
@@ -1213,7 +1438,8 @@ Content-type: application/json
       "memory": number
    },
    "labels": { },
-   "version": "string"
+   "version": "string",
+   "features": [ "string" ]
 }
 ```
 
@@ -1243,6 +1469,10 @@ Type: Object. Required: No.
 jobber-host version.  
 Type: String. Length: 0 to 100. Nullable: Yes. Required: No.
 
+**features**  
+What its jobber-host can do beyond container runs, of `secrets`, `hostRuns`: a run naming secrets goes only to a host with `secrets`, a run `onHost` only to one with `hostRuns`. Others are kept and ignored.  
+Type: Array of strings. At most 50 items. Required: No.
+
 ### Response syntax
 
 ```http
@@ -1261,6 +1491,7 @@ Content-type: application/json
       },
       "labels": { },
       "version": "string",
+      "features": [ "string" ],
       "free": {
          "cpu": number,
          "memory": number
@@ -1398,7 +1629,7 @@ HTTP status: 403
 
 ## SubmitRun
 
-Queues a run as `pending`, by `priority` then age, until a host that meets its requirements takes it. The repo isn't checked here: a missing job fails on its host.
+Queues a run as `pending`, by `priority` then age, until a host that meets its requirements takes it. The repo isn't checked here: a missing job fails on its host. Refused if a secret it names is not set, if `requirements.host` names no registered host, or if it is `onHost` without one.
 
 ### Request syntax
 
@@ -1417,14 +1648,17 @@ Content-type: application/json
       "arch": "x86_64 | aarch64 | ",
       "cpu": number,
       "memory": number,
-      "timeout": number
+      "timeout": number,
+      "host": "string"
    },
    "labels": { },
    "priority": number,
    "retry": {
       "limit": number,
       "backoff": number
-   }
+   },
+   "secrets": [ "string" ],
+   "onHost": boolean
 }
 ```
 
@@ -1462,6 +1696,14 @@ Type: Integer. Range: -1000 to 1000. Required: No.
 Retries a failed attempt (not a canceled one).  
 Type: [Retry](#retry) object. Required: No.
 
+**secrets**  
+Secrets its host gives it, each as an environment variable of its name, masked in its log. Each must be set (`PutSecret`). Default: none.  
+Type: Array of strings. At most 50 items. Required: No.
+
+**onHost**  
+Run on the host `requirements.host` names itself, as its user, in the checkout, outside a container. That host's jobber-host runs it only for a repo on its `host_runs` allowlist, and fails it otherwise. Default: false.  
+Type: Boolean. Required: No.
+
 ### Response syntax
 
 ```http
@@ -1479,7 +1721,8 @@ Content-type: application/json
       "arch": "x86_64 | aarch64 | ",
       "cpu": number,
       "memory": number,
-      "timeout": number
+      "timeout": number,
+      "host": "string"
    },
    "labels": { },
    "priority": number,
@@ -1487,6 +1730,8 @@ Content-type: application/json
       "limit": number,
       "backoff": number
    },
+   "secrets": [ "string" ],
+   "onHost": boolean,
    "state": "pending | assigned | running | succeeded | failed | canceled",
    "reason": "string",
    "cancelRequested": boolean,
@@ -1553,6 +1798,14 @@ Type: Integer. Range: -1000 to 1000.
 **retry**  
 Retries a failed attempt (not a canceled one).  
 Type: [Retry](#retry) object.
+
+**secrets**  
+Secrets its host gives it as environment variables of their names.  
+Type: Array of strings. At most 50 items.
+
+**onHost**  
+Run on the host `requirements.host` names itself, as its user, in the checkout, outside a container. That host's jobber-host runs it only for a repo on its `host_runs` allowlist, and fails it otherwise. Default: false.  
+Type: Boolean.
 
 **state**  
 `pending` → `assigned` → `running` → `succeeded`, `failed` or `canceled`. An assignment not taken goes back to `pending`.  
@@ -1679,7 +1932,8 @@ Content-type: application/json
       "arch": "x86_64 | aarch64 | ",
       "cpu": number,
       "memory": number,
-      "timeout": number
+      "timeout": number,
+      "host": "string"
    },
    "labels": { },
    "priority": number,
@@ -1687,6 +1941,8 @@ Content-type: application/json
       "limit": number,
       "backoff": number
    },
+   "secrets": [ "string" ],
+   "onHost": boolean,
    "state": "pending | assigned | running | succeeded | failed | canceled",
    "reason": "string",
    "cancelRequested": boolean,
@@ -1753,6 +2009,14 @@ Type: Integer. Range: -1000 to 1000.
 **retry**  
 Retries a failed attempt (not a canceled one).  
 Type: [Retry](#retry) object.
+
+**secrets**  
+Secrets its host gives it as environment variables of their names.  
+Type: Array of strings. At most 50 items.
+
+**onHost**  
+Run on the host `requirements.host` names itself, as its user, in the checkout, outside a container. That host's jobber-host runs it only for a repo on its `host_runs` allowlist, and fails it otherwise. Default: false.  
+Type: Boolean.
 
 **state**  
 `pending` → `assigned` → `running` → `succeeded`, `failed` or `canceled`. An assignment not taken goes back to `pending`.  
@@ -1978,6 +2242,10 @@ Type: Object. Required: Yes.
 jobber-host version, as it last registered.  
 Type: String. Nullable: Yes. Required: Yes.
 
+**features**  
+What its jobber-host can do beyond container runs, of `secrets`, `hostRuns`: a run naming secrets goes only to a host with `secrets`, a run `onHost` only to one with `hostRuns`. Others are kept and ignored.  
+Type: Array of strings. At most 50 items. Required: Yes.
+
 **free**  
 Free capacity, as last reported.  
 Type: [Free](#free) object. Required: Yes.
@@ -2056,6 +2324,10 @@ Type: Integer. Range: 16 to 1048576. Nullable: Yes. Required: No.
 Timeout in seconds. Default: `jobs.toml`'s.  
 Type: Integer. Range: 1 to 86400. Nullable: Yes. Required: No.
 
+**host**  
+Name of the host it must run on, which must be registered. Default: any. A run `onHost` names one.  
+Type: String. Length: 1 to 200. Nullable: Yes. Required: No.
+
 ## Retry
 
 Retries a failed attempt (not a canceled one).
@@ -2109,6 +2381,14 @@ Type: Integer. Range: -1000 to 1000. Required: Yes.
 **retry**  
 Retries a failed attempt (not a canceled one).  
 Type: [Retry](#retry) object. Required: Yes.
+
+**secrets**  
+Secrets its host gives it as environment variables of their names.  
+Type: Array of strings. At most 50 items. Required: Yes.
+
+**onHost**  
+Run on the host `requirements.host` names itself, as its user, in the checkout, outside a container. That host's jobber-host runs it only for a repo on its `host_runs` allowlist, and fails it otherwise. Default: false.  
+Type: Boolean. Required: Yes.
 
 **state**  
 `pending` → `assigned` → `running` → `succeeded`, `failed` or `canceled`. An assignment not taken goes back to `pending`.  
@@ -2173,4 +2453,22 @@ Type: String. Nullable: Yes. Required: Yes.
 **leaseExpiresAt**  
 Fails at this time unless its host's heartbeat renews it.  
 Type: String. Nullable: Yes. Required: Yes.
+
+## Secret
+
+A secret, without its value: no call returns that.
+
+### Contents
+
+**name**  
+A secret's name, which is the environment variable a run is given it in: capitals, digits and `_`.  
+Type: String. Pattern: `^[A-Z_][A-Z0-9_]{0,127}$`. Required: Yes.
+
+**createdAt**  
+First set at (ISO 8601).  
+Type: String. Required: Yes.
+
+**updatedAt**  
+Last set at (ISO 8601).  
+Type: String. Required: Yes.
 

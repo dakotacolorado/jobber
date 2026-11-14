@@ -7,10 +7,12 @@ import { JobApi } from "./api.ts";
 import { Connections, REPLACED, type ServiceMessage } from "./connections.ts";
 import { ASSIGN_SECONDS, type Host, type Run } from "./domain.ts";
 import { tick } from "./scheduler.ts";
+import { Secrets } from "./secrets.ts";
 import { Store } from "./store.ts";
 
 const TOKEN = "submitter";
 const REGISTRATION = "registration";
+const ADMIN = "admin";
 const COMMIT = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 const METRICS = { cpuLoad: 0.5, memoryUsed: 2048, memoryTotal: 8192, diskFree: 50_000, cpus: 8 };
 
@@ -61,8 +63,9 @@ class Peer {
 
 async function setup() {
   const store = Store.open(":memory:");
-  const connections = new Connections(store, () => {});
-  const api = new JobApi(store, { submitter: TOKEN, registration: REGISTRATION }, { version: "0", commit: "x" }, connections);
+  const secrets = new Secrets(store.db, Buffer.alloc(32, 7));
+  const connections = new Connections(store, () => {}, secrets);
+  const api = new JobApi(store, { submitter: TOKEN, registration: REGISTRATION, admin: ADMIN }, { version: "0", commit: "x" }, connections, secrets);
   const server = serve({ fetch: api.fetch, hostname: "127.0.0.1", port: 0 });
   servers.push(server);
   await new Promise((ready) => server.once("listening", ready));
@@ -76,8 +79,8 @@ async function setup() {
     });
   const submit = async (over: Record<string, unknown> = {}) =>
     (await (await call("POST", "/runs", TOKEN, { repo: "o/r", commit: COMMIT, job: "hello", ...over })).json()) as Run;
-  const register = async (name: string) =>
-    (await (await call("POST", "/hosts", REGISTRATION, { name, os: "linux", arch: "x86_64", capacity: { cpu: 4, memory: 8192 } })).json()) as { host: Host; token: string };
+  const register = async (name: string, features?: string[]) =>
+    (await (await call("POST", "/hosts", REGISTRATION, { name, os: "linux", arch: "x86_64", capacity: { cpu: 4, memory: 8192 }, features })).json()) as { host: Host; token: string };
   /** Opens host `id`'s connection with `token`; answers the peer, or the HTTP status it was refused with. */
   const connect = (id: string, token: string) =>
     new Promise<Peer | number>((done) => {
@@ -279,5 +282,69 @@ describe("a host's writes", () => {
     expect((await call("PUT", `/runs/${run.id}?attempt=2`, a.token, { state: "succeeded", exit: 0, duration: 1 })).status).toBe(409);
     expect((await call("PUT", `/runs/${run.id}?attempt=1`, a.token, { state: "succeeded", exit: 0, duration: 1 })).status).toBe(200);
     expect((await call("PUT", `/runs/${run.id}?attempt=1`, a.token, { state: "succeeded", exit: 0, duration: 1 })).status).toBe(200);
+  });
+});
+
+describe("a run's secrets and host", () => {
+  it("go only to a host that says it can take them, and its secrets only in its start", async () => {
+    const { register, peer, submit, schedule, call, store } = await setup();
+    expect((await call("PUT", "/secrets/DEPLOY_TOKEN", ADMIN, { value: "s3cr3t-value" })).status).toBe(200);
+    const old = await register("old");
+    const oldHost = await peer(old.host.id, old.token);
+    oldHost.heartbeat();
+    await oldHost.next("heartbeat");
+    const run = await submit({ secrets: ["DEPLOY_TOKEN"] });
+    const plain = await submit();
+    expect(schedule().placed).toBe(1);
+    expect((await oldHost.next("assign")).run.id).toBe(plain.id);
+    oldHost.send({ type: "accept", run: plain.id, attempt: 1 });
+    expect(await oldHost.next("start")).not.toHaveProperty("secrets");
+
+    const fresh = await register("new", ["secrets", "hostRuns", "somethingLater"]);
+    expect(fresh.host.features).toEqual(["secrets", "hostRuns", "somethingLater"]);
+    const host = await peer(fresh.host.id, fresh.token);
+    host.heartbeat();
+    await host.next("heartbeat");
+    expect(schedule().placed).toBe(1);
+    const assign = await host.next("assign");
+    expect(assign.run).toMatchObject({ id: run.id, secrets: ["DEPLOY_TOKEN"] });
+    expect(JSON.stringify(assign)).not.toContain("s3cr3t-value");
+    host.send({ type: "accept", run: run.id, attempt: 1 });
+    expect(await host.next("start")).toEqual({ type: "start", run: run.id, attempt: 1, lease: 60, secrets: { DEPLOY_TOKEN: "s3cr3t-value" } });
+    expect(JSON.stringify(store.run(run.id))).not.toContain("s3cr3t-value");
+  });
+
+  it("fails a run, unstarted, whose secret was deleted before it started", async () => {
+    const { register, peer, submit, schedule, call, store } = await setup();
+    await call("PUT", "/secrets/GONE", ADMIN, { value: "v" });
+    const h = await register("h", ["secrets"]);
+    const host = await peer(h.host.id, h.token);
+    host.heartbeat();
+    await host.next("heartbeat");
+    const run = await submit({ secrets: ["GONE"] });
+    schedule();
+    await host.next("assign");
+    expect((await call("DELETE", "/secrets/GONE", ADMIN)).status).toBe(200);
+    host.send({ type: "accept", run: run.id, attempt: 1 });
+    expect(await host.next("drop")).toMatchObject({ run: run.id, reason: "no secret GONE" });
+    expect(store.run(run.id)).toMatchObject({ state: "failed", reason: "not started: no secret GONE", attempt: 1 });
+  });
+
+  it("puts a run onHost only on the host it names, and only if that host takes host runs", async () => {
+    const { register, peer, submit, schedule } = await setup();
+    const plain = await register("plain");
+    const named = await register("named", ["hostRuns"]);
+    const other = await register("other", ["hostRuns"]);
+    const peers: Peer[] = [];
+    for (const h of [plain, named, other]) {
+      const p = await peer(h.host.id, h.token);
+      p.heartbeat();
+      await p.next("heartbeat");
+      peers.push(p);
+    }
+    const run = await submit({ onHost: true, requirements: { host: "named" } });
+    expect(schedule().placed).toBe(1);
+    const assign = await peers[1]!.next("assign");
+    expect(assign.run).toMatchObject({ id: run.id, onHost: true, requirements: { host: "named" }, host: named.host.id });
   });
 });

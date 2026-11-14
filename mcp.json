@@ -4,7 +4,7 @@
     {
       "name": "submit_run",
       "title": "Submit a run",
-      "description": "Queues a run as `pending`, by `priority` then age, until a host that meets its requirements takes it. The repo isn't checked here: a missing job fails on its host.",
+      "description": "Queues a run as `pending`, by `priority` then age, until a host that meets its requirements takes it. The repo isn't checked here: a missing job fails on its host. Refused if a secret it names is not set, if `requirements.host` names no registered host, or if it is `onHost` without one.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "type": "object",
@@ -41,7 +41,8 @@
               "arch": null,
               "cpu": null,
               "memory": null,
-              "timeout": null
+              "timeout": null,
+              "host": null
             },
             "description": "What the run needs from its host.",
             "type": "object",
@@ -122,6 +123,20 @@
                     "type": "null"
                   }
                 ]
+              },
+              "host": {
+                "default": null,
+                "description": "Name of the host it must run on, which must be registered. Default: any. A run `onHost` names one.",
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               }
             }
           },
@@ -168,6 +183,21 @@
                 "maximum": 3600
               }
             }
+          },
+          "secrets": {
+            "default": [],
+            "description": "Secrets its host gives it, each as an environment variable of its name, masked in its log. Each must be set (`PutSecret`). Default: none.",
+            "maxItems": 50,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Z_][A-Z0-9_]{0,127}$"
+            }
+          },
+          "onHost": {
+            "default": false,
+            "description": "Run on the host `requirements.host` names itself, as its user, in the checkout, outside a container. That host's jobber-host runs it only for a repo on its `host_runs` allowlist, and fails it otherwise. Default: false.",
+            "type": "boolean"
           }
         },
         "required": [

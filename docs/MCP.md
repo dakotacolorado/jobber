@@ -47,7 +47,7 @@ What the server tells an agent when it connects:
 
 ### submit_run
 
-Queues a run as `pending`, by `priority` then age, until a host that meets its requirements takes it. The repo isn't checked here: a missing job fails on its host.
+Queues a run as `pending`, by `priority` then age, until a host that meets its requirements takes it. The repo isn't checked here: a missing job fails on its host. Refused if a secret it names is not set, if `requirements.host` names no registered host, or if it is `onHost` without one.
 
 | Input | Type | Required | |
 | --- | --- | --- | --- |
@@ -61,11 +61,14 @@ Queues a run as `pending`, by `priority` then age, until a host that meets its r
 | `requirements.cpu` | number or null |  | CPUs, a decimal number (e.g. 0.5). Default: 0.5. |
 | `requirements.memory` | integer or null |  | Memory in MiB. Default: `jobs.toml`'s, else 1024. |
 | `requirements.timeout` | integer or null |  | Timeout in seconds. Default: `jobs.toml`'s. |
+| `requirements.host` | string or null |  | Name of the host it must run on, which must be registered. Default: any. A run `onHost` names one. |
 | `labels` | object |  | Labels to find it by, e.g. what it is for and who asked. |
 | `priority` | integer |  | Higher is placed first; equal ones oldest first. -1000 to 1000. Default: 0. |
 | `retry` | object |  | Retries a failed attempt (not a canceled one). |
 | `retry.limit` | integer |  | Retries after a failed attempt, 0 to 10. Default: 0. |
 | `retry.backoff` | integer |  | Seconds before the first retry, doubling for each after, at most 3600. Default: 10. |
+| `secrets` | string[] |  | Secrets its host gives it, each as an environment variable of its name, masked in its log. Each must be set (`PutSecret`). Default: none. |
+| `onHost` | boolean |  | Run on the host `requirements.host` names itself, as its user, in the checkout, outside a container. That host's jobber-host runs it only for a repo on its `host_runs` allowlist, and fails it otherwise. Default: false. |
 
 ### list_runs
 

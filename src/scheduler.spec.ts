@@ -14,15 +14,17 @@ const run = (over: { priority?: number; cpu?: number; memory?: number; os?: "lin
       commit: COMMIT,
       job: "hello",
       args: [],
-      requirements: { os: over.os ?? null, arch: null, cpu: over.cpu ?? null, memory: over.memory ?? null, timeout: null },
+      requirements: { os: over.os ?? null, arch: null, cpu: over.cpu ?? null, memory: over.memory ?? null, timeout: null, host: null },
       labels: {},
       priority: over.priority ?? 0,
       retry: NO_RETRY,
+      secrets: [],
+      onHost: false,
     },
     over.at ?? T0,
   );
 
-const candidate = (id: string, cpu: number, memory: number, os: "linux" | "macos" = "linux"): Candidate => ({ id, os, arch: "x86_64", free: { cpu, memory } });
+const candidate = (id: string, cpu: number, memory: number, os: "linux" | "macos" = "linux"): Candidate => ({ id, name: id, features: [], os, arch: "x86_64", free: { cpu, memory } });
 
 describe("schedule", () => {
   it("places the highest priority first, then the oldest, while capacity lasts", () => {
@@ -129,6 +131,7 @@ function fleet() {
       capacity: { cpu: 2 * DEFAULT_CPU, memory: 4096 },
       labels: {},
       version: null,
+      features: [],
       free: { cpu: 2 * DEFAULT_CPU, memory: 4096 },
       metrics: null,
       createdAt: T0,

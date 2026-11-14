@@ -6,6 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { banner } from "./banner.ts";
 import { PACKAGE_VERSION } from "./build.ts";
+import { parseKey } from "./secrets.ts";
 import { start, type Running } from "./server.ts";
 import { Store } from "./store.ts";
 
@@ -26,6 +27,10 @@ Options:
 Environment:
   AUTH_TOKEN      the submitters' bearer token: submit, read and cancel runs, list the queue and the hosts
   RUNNER_TOKEN    the registration token: registers hosts (jobber-host), which then call with their own
+  ADMIN_TOKEN     the admin's token: sets, lists and deletes secrets (/secrets), and nothing else
+  JOBBER_SECRETS_KEY  32 bytes, base64 or hex (openssl rand -base64 32): encrypts the secrets.
+                  Without it no secret can be set, and jobber refuses to start on a
+                  database that holds some; with the wrong one, too.
 
 Without AUTH_TOKEN, every call but /health, /openapi.json, /mcp.json and the
 docs at /docs/api and /docs/mcp answers 503; without RUNNER_TOKEN, so does
@@ -87,7 +92,14 @@ const portSetting = values.port ?? setting("PORT");
 const port = Number(portSetting ?? 4500);
 if (!Number.isInteger(port) || port < 0 || port > 65535) fail(`--port must be a port number, not ${portSetting}`);
 
-const running: Running = start({ db: path, tokens: { submitter: env.AUTH_TOKEN || null, registration: env.RUNNER_TOKEN || null } });
+const running: Running = (() => {
+  try {
+    const secretsKey = env.JOBBER_SECRETS_KEY ? parseKey(env.JOBBER_SECRETS_KEY) : null;
+    return start({ db: path, tokens: { submitter: env.AUTH_TOKEN || null, registration: env.RUNNER_TOKEN || null, admin: env.ADMIN_TOKEN || null }, secretsKey });
+  } catch (err) {
+    return fail((err as Error).message);
+  }
+})();
 const shown = (at: number) => `http://${host.includes(":") ? `[${host}]` : host}:${at}`;
 const server = serve({ fetch: running.api.fetch, hostname: host, port }, (info) => {
   const missing = ["AUTH_TOKEN", "RUNNER_TOKEN"].filter((name) => !env[name]);

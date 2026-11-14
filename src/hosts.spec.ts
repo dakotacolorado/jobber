@@ -350,7 +350,7 @@ describe("a database from before hosts", () => {
     for (const gone of ["limits", "for", "routine", "runsWith", "submittedBy", "runner"]) expect(run).not.toHaveProperty(gone);
     expect(store.runs({ labels: [["worker", "jobber-check"]], limit: 10 }).map((r) => r.id)).toEqual([old.id]);
     expect(store.hosts()).toEqual([
-      { ...runner, name: "example-host", os: "linux", arch: "x86_64", free: null, metrics: null, hostId: undefined, ...{} },
+      { ...runner, name: "example-host", os: "linux", arch: "x86_64", features: [], free: null, metrics: null, hostId: undefined, ...{} },
     ].map(({ hostId: _, slots, memory, ...h }) => ({ ...h, capacity: { cpu: slots, memory } })));
     // Opening it again changes nothing.
     expect(new Store(db).run(old.id)).toEqual(run);
@@ -369,8 +369,9 @@ describe("a database from before capacity", () => {
     void first;
     const store = new Store(db);
     const { slots: _s, memory: _m, ...rest } = host;
-    expect(store.hosts()).toEqual([{ ...rest, capacity: { cpu: 1, memory: 1024 }, free: null }]);
-    expect(store.run(run.id)!.requirements).toEqual({ os: null, arch: null, cpu: null, memory: 256, timeout: null });
+    expect(store.hosts()).toEqual([{ ...rest, capacity: { cpu: 1, memory: 1024 }, free: null, features: [] }]);
+    expect(store.run(run.id)!.requirements).toEqual({ os: null, arch: null, cpu: null, memory: 256, timeout: null, host: null });
+    expect(store.run(run.id)).toMatchObject({ secrets: [], onHost: false });
     expect(new Store(db).hosts()).toEqual(store.hosts());
   });
 });

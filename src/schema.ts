@@ -1,5 +1,5 @@
 import { createRoute, z } from "@hono/zod-openapi";
-import { ARCHES, BACKOFF_MAX_SECONDS, DEFAULT_CPU, DEFAULT_MEMORY_MIB, COMMIT_PATTERN, NO_RETRY, RETRY_LIMIT_MAX, JOB_NAME_PATTERN, LABEL_PATTERN, OSES, PRIORITY_MAX, PRIORITY_MIN, REPO_PATTERN, STATES } from "./domain.ts";
+import { ARCHES, FEATURES, SECRET_NAME_PATTERN, SECRETS_PER_RUN_MAX, BACKOFF_MAX_SECONDS, DEFAULT_CPU, DEFAULT_MEMORY_MIB, COMMIT_PATTERN, NO_RETRY, RETRY_LIMIT_MAX, JOB_NAME_PATTERN, LABEL_PATTERN, OSES, PRIORITY_MAX, PRIORITY_MIN, REPO_PATTERN, STATES } from "./domain.ts";
 
 /** Validates every request and generates `openapi.json`, so neither can drift. */
 
@@ -45,6 +45,7 @@ export const RequirementsSchema = z
     cpu: Cpu.min(0.001).nullable().default(null).describe(`CPUs, a decimal number (e.g. 0.5). Default: ${DEFAULT_CPU}.`),
     memory: z.int().min(16).max(1_048_576).nullable().default(null).describe(`Memory in MiB. Default: \`jobs.toml\`'s, else ${DEFAULT_MEMORY_MIB}.`),
     timeout: z.int().min(1).max(86_400).nullable().default(null).describe("Timeout in seconds. Default: `jobs.toml`'s."),
+    host: z.string().trim().min(1).max(200).nullable().default(null).describe("Name of the host it must run on, which must be registered. Default: any. A run `onHost` names one."),
   })
   .describe("What the run needs from its host.")
   .openapi("Requirements");
@@ -79,16 +80,37 @@ export const AttemptSchema = z
   .describe("An earlier attempt of a run.")
   .openapi("Attempt");
 
+export const SecretName = z
+  .string()
+  .regex(SECRET_NAME_PATTERN)
+  .describe("A secret's name, which is the environment variable a run is given it in: capitals, digits and `_`.")
+  .openapi({ example: "AWS_ROLE_ARN" });
+
+const SecretNames = z
+  .array(SecretName)
+  .max(SECRETS_PER_RUN_MAX)
+  .refine((names) => new Set(names).size === names.length, "each secret once");
+
+const OnHost = z
+  .boolean()
+  .describe(
+    "Run on the host `requirements.host` names itself, as its user, in the checkout, outside a container. That host's jobber-host runs it only for a repo on its `host_runs` allowlist, and fails it otherwise. Default: false.",
+  );
+
 export const SubmitSchema = z
   .object({
     repo: Repo,
     commit: Commit,
     job: JobName,
     args: z.array(z.string().max(4000)).max(50).default([]).describe("Arguments appended to the job's command."),
-    requirements: RequirementsSchema.default({ os: null, arch: null, cpu: null, memory: null, timeout: null }),
+    requirements: RequirementsSchema.default({ os: null, arch: null, cpu: null, memory: null, timeout: null, host: null }),
     labels: Labels.default({}).describe("Labels to find it by, e.g. what it is for and who asked."),
     priority: Priority.default(0).describe(`Higher is placed first; equal ones oldest first. ${PRIORITY_MIN} to ${PRIORITY_MAX}. Default: 0.`),
     retry: RetrySchema.default(NO_RETRY),
+    secrets: SecretNames.default([]).describe(
+      "Secrets its host gives it, each as an environment variable of its name, masked in its log. Each must be set (`PutSecret`). Default: none.",
+    ),
+    onHost: OnHost.default(false),
   })
   .openapi("SubmitRunInput");
 
@@ -103,6 +125,8 @@ export const RunSchema = z
     labels: Labels,
     priority: Priority,
     retry: RetrySchema,
+    secrets: SecretNames.describe("Secrets its host gives it as environment variables of their names."),
+    onHost: OnHost,
     state: State,
     reason: z.string().nullable().describe("Why it ended, when not plain (e.g. timed out)."),
     cancelRequested: z.boolean().describe("Cancel asked for; its host will stop it."),
@@ -192,7 +216,7 @@ export const submitRoute = createRoute({
   path: "/runs",
   operationId: "SubmitRun",
   summary: "Submit a run",
-  description: "Queues a run as `pending`, by `priority` then age, until a host that meets its requirements takes it. The repo isn't checked here: a missing job fails on its host.",
+  description: "Queues a run as `pending`, by `priority` then age, until a host that meets its requirements takes it. The repo isn't checked here: a missing job fails on its host. Refused if a secret it names is not set, if `requirements.host` names no registered host, or if it is `onHost` without one.",
   request: { body: json(SubmitSchema, "What to run, what it needs, and its labels.") },
   responses: { 201: json(RunSchema, "Stored, `pending`."), ...FAILS },
 });
@@ -337,6 +361,11 @@ export const MetricsSchema = z
   .describe("The host's health.")
   .openapi("Metrics");
 
+const Features = z
+  .array(z.string().max(100))
+  .max(50)
+  .describe(`What its jobber-host can do beyond container runs, of \`${FEATURES.join("`, `")}\`: a run naming secrets goes only to a host with \`secrets\`, a run \`onHost\` only to one with \`hostRuns\`. Others are kept and ignored.`);
+
 export const HostSchema = z
   .object({
     id: z.string().uuid().describe("The host's id."),
@@ -346,6 +375,7 @@ export const HostSchema = z
     capacity: CapacitySchema,
     labels: Labels,
     version: z.string().nullable().describe("jobber-host version, as it last registered."),
+    features: Features,
     free: FreeSchema.nullable().describe("Free capacity, as last reported."),
     metrics: MetricsSchema.nullable().describe("Health, as last reported."),
     createdAt: z.string().describe("First registered at (ISO 8601)."),
@@ -362,6 +392,7 @@ export const RegisterSchema = z
     capacity: CapacitySchema,
     labels: Labels.default({}),
     version: z.string().max(100).nullable().default(null).describe("jobber-host version."),
+    features: Features.default([]),
   })
   .openapi("RegisterHostInput");
 
@@ -518,4 +549,65 @@ export const connectRoute = createRoute({
     426: fails(426, "Not a WebSocket upgrade."),
     ...HOST_FAILS,
   },
+});
+
+// --- secrets ----------------------------------------------------------------
+
+const admin = { security: [{ adminAuth: [] }], tags: ["Secrets"] };
+const ADMIN_FAILS = {
+  400: fails(400, "The request failed validation."),
+  401: fails(401, "The bearer token is missing or is not the admin's."),
+  503: fails(503, "The service has no admin token, or (to set one) no secrets key, configured."),
+};
+
+export const SecretInfoSchema = z
+  .object({
+    name: SecretName,
+    createdAt: z.string().describe("First set at (ISO 8601)."),
+    updatedAt: z.string().describe("Last set at (ISO 8601)."),
+  })
+  .describe("A secret, without its value: no call returns that.")
+  .openapi("Secret");
+
+const SecretParam = z.object({ name: SecretName.openapi({ param: { name: "name", in: "path" } }) });
+
+export const PutSecretSchema = z
+  .object({ value: z.string().min(1).max(65_536).describe("The value, up to 64 KiB. Stored encrypted; never returned.") })
+  .openapi("PutSecretInput");
+
+export const putSecretRoute = createRoute({
+  ...admin,
+  method: "put",
+  path: "/secrets/{name}",
+  operationId: "PutSecret",
+  summary: "Put a secret",
+  description:
+    "Sets a secret, or replaces its value (to rotate it): runs started after get the new one. Takes the admin's token. The value is stored encrypted under `JOBBER_SECRETS_KEY` and is never returned by any call.",
+  request: { params: SecretParam, body: json(PutSecretSchema, "Its value.") },
+  responses: { 200: json(SecretInfoSchema, "Set."), ...ADMIN_FAILS },
+});
+
+export const listSecretsRoute = createRoute({
+  ...admin,
+  method: "get",
+  path: "/secrets",
+  operationId: "ListSecrets",
+  summary: "List secrets",
+  description: "Lists the secrets' names and when each was set, never their values. Takes the admin's token.",
+  responses: {
+    200: json(z.object({ secrets: z.array(SecretInfoSchema).describe("Secrets, by name.") }).openapi("ListSecretsResponse"), "The secrets."),
+    401: ADMIN_FAILS[401],
+    503: ADMIN_FAILS[503],
+  },
+});
+
+export const deleteSecretRoute = createRoute({
+  ...admin,
+  method: "delete",
+  path: "/secrets/{name}",
+  operationId: "DeleteSecret",
+  summary: "Delete a secret",
+  description: "Deletes a secret. A run naming it that has not started yet fails when its host would start it. Takes the admin's token.",
+  request: { params: SecretParam },
+  responses: { 200: json(SecretInfoSchema, "Deleted: what it was."), 404: fails(404, "No secret has that name."), ...ADMIN_FAILS },
 });

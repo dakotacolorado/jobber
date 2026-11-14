@@ -2,6 +2,7 @@ import { JobApi, type Tokens } from "./api.ts";
 import { buildOf, PACKAGE_VERSION } from "./build.ts";
 import { Connections } from "./connections.ts";
 import { startScheduler } from "./scheduler.ts";
+import { Secrets } from "./secrets.ts";
 import { Store } from "./store.ts";
 import { startTimers } from "./sweep.ts";
 
@@ -9,6 +10,8 @@ export interface Config {
   /** The SQLite file; `:memory:` keeps nothing past the process. */
   db: string;
   tokens: Tokens;
+  /** `JOBBER_SECRETS_KEY`, parsed. Null: no secret can be set, and a database holding some is refused. */
+  secretsKey?: Buffer | null;
 }
 
 export interface Running {
@@ -24,7 +27,14 @@ export interface Running {
 export function start(config: Config): Running {
   const store = Store.open(config.db);
   const build = buildOf();
-  const connections = new Connections(store);
+  let secrets: Secrets;
+  try {
+    secrets = new Secrets(store.db, config.secretsKey ?? null);
+  } catch (err) {
+    store.close();
+    throw err;
+  }
+  const connections = new Connections(store, console.log, secrets);
   const api = new JobApi(
     store,
     config.tokens,
@@ -33,6 +43,7 @@ export function start(config: Config): Running {
       commit: build.commit,
     },
     connections,
+    secrets,
   );
   const stop = startTimers(store);
   const unschedule = startScheduler(store, connections);

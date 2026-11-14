@@ -172,6 +172,7 @@ Content-type: application/json
       "cpu": number,
       "memory": number,
       "gpu": number,
+      "gpuMemory": number,
       "timeout": number,
       "host": "string"
    },
@@ -413,6 +414,7 @@ Content-type: application/json
       "cpu": number,
       "memory": number,
       "gpu": number,
+      "gpuMemory": number,
       "timeout": number,
       "host": "string"
    },
@@ -774,6 +776,7 @@ Content-type: application/json
       "cpu": number,
       "memory": number,
       "gpu": number,
+      "gpuMemory": number,
       "timeout": number,
       "host": "string"
    },
@@ -1054,7 +1057,8 @@ Content-type: application/json
       "capacity": {
          "cpu": number,
          "memory": number,
-         "gpu": number
+         "gpu": number,
+         "gpuMemory": number
       },
       "labels": { },
       "version": "string",
@@ -1136,6 +1140,7 @@ Content-type: application/json
          "cpu": number,
          "memory": number,
          "gpu": number,
+         "gpuMemory": number,
          "timeout": number,
          "host": "string"
       },
@@ -1247,6 +1252,7 @@ Content-type: application/json
          "cpu": number,
          "memory": number,
          "gpu": number,
+         "gpuMemory": number,
          "timeout": number,
          "host": "string"
       },
@@ -1443,7 +1449,8 @@ Content-type: application/json
    "capacity": {
       "cpu": number,
       "memory": number,
-      "gpu": number
+      "gpu": number,
+      "gpuMemory": number
    },
    "labels": { },
    "version": "string",
@@ -1496,7 +1503,8 @@ Content-type: application/json
       "capacity": {
          "cpu": number,
          "memory": number,
-         "gpu": number
+         "gpu": number,
+         "gpuMemory": number
       },
       "labels": { },
       "version": "string",
@@ -1660,6 +1668,7 @@ Content-type: application/json
       "cpu": number,
       "memory": number,
       "gpu": number,
+      "gpuMemory": number,
       "timeout": number,
       "host": "string"
    },
@@ -1734,6 +1743,7 @@ Content-type: application/json
       "cpu": number,
       "memory": number,
       "gpu": number,
+      "gpuMemory": number,
       "timeout": number,
       "host": "string"
    },
@@ -1946,6 +1956,7 @@ Content-type: application/json
       "cpu": number,
       "memory": number,
       "gpu": number,
+      "gpuMemory": number,
       "timeout": number,
       "host": "string"
    },
@@ -2182,6 +2193,10 @@ Type: Integer. Range: 16 to 67108864. Required: Yes.
 Whole GPUs for runs. Default: 0.  
 Type: Integer. Range: 0 to 64. Required: No.
 
+**gpuMemory**  
+MiB of memory of its smallest GPU, each given whole to one run. Default: 0.  
+Type: Integer. Range: 0 to 1048576. Required: No.
+
 ## Error
 
 Every error's body.
@@ -2343,8 +2358,12 @@ Memory in MiB. Default: `jobs.toml`'s, else 1024.
 Type: Integer. Range: 16 to 1048576. Nullable: Yes. Required: No.
 
 **gpu**  
-Whole GPUs, each its container's own. Default: none, and a job whose `jobs.toml` asks for more fails on its host.  
+Whole GPUs, each its container's own. Default: 1 if it names `gpuMemory`, else none; a job whose `jobs.toml` asks for more fails on its host.  
 Type: Integer. Range: 0 to 64. Nullable: Yes. Required: No.
+
+**gpuMemory**  
+MiB of memory each of its GPUs must have: it runs only on a host whose GPUs are at least this large. Default: any.  
+Type: Integer. Range: 1 to 1048576. Nullable: Yes. Required: No.
 
 **timeout**  
 Timeout in seconds. Default: `jobs.toml`'s.  

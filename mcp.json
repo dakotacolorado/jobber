@@ -42,6 +42,7 @@
               "cpu": null,
               "memory": null,
               "gpu": null,
+              "gpuMemory": null,
               "timeout": null,
               "host": null
             },
@@ -113,12 +114,26 @@
               },
               "gpu": {
                 "default": null,
-                "description": "Whole GPUs, each its container's own. Default: none, and a job whose `jobs.toml` asks for more fails on its host.",
+                "description": "Whole GPUs, each its container's own. Default: 1 if it names `gpuMemory`, else none; a job whose `jobs.toml` asks for more fails on its host.",
                 "anyOf": [
                   {
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 64
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "gpuMemory": {
+                "default": null,
+                "description": "MiB of memory each of its GPUs must have: it runs only on a host whose GPUs are at least this large. Default: any.",
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1048576
                   },
                   {
                     "type": "null"

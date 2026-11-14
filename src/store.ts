@@ -276,7 +276,9 @@ export function backfill(db: DatabaseSync): void {
     WHERE json_type(record, '$.secrets') IS NULL`);
   db.exec("UPDATE hosts SET record = json_set(record, '$.features', json('[]')) WHERE json_type(record, '$.features') IS NULL");
   db.exec(`UPDATE runs SET record = json_set(record, '$.requirements.gpu', json('null')) WHERE json_type(record, '$.requirements.gpu') IS NULL`);
+  db.exec(`UPDATE runs SET record = json_set(record, '$.requirements.gpuMemory', json('null')) WHERE json_type(record, '$.requirements.gpuMemory') IS NULL`);
   db.exec(`UPDATE hosts SET record = json_set(record, '$.capacity.gpu', 0) WHERE json_type(record, '$.capacity.gpu') IS NULL`);
+  db.exec(`UPDATE hosts SET record = json_set(record, '$.capacity.gpuMemory', 0) WHERE json_type(record, '$.capacity.gpuMemory') IS NULL`);
   db.exec(`UPDATE hosts SET record = json_set(record, '$.free.gpu', 0) WHERE json_type(record, '$.free') = 'object' AND json_type(record, '$.free.gpu') IS NULL`);
   db.exec("UPDATE runs SET record = json_set(record, '$.attempt', 1) WHERE record ->> '$.attempt' IS NULL");
   db.exec("UPDATE runs SET record = json_set(record, '$.priority', 0) WHERE record ->> '$.priority' IS NULL");
@@ -318,7 +320,7 @@ export function migrate(db: DatabaseSync): void {
       if (submittedBy) labels.by = label(submittedBy);
       const run = {
         ...rest,
-        requirements: { os: null, arch: null, cpu: null, memory: limits?.memory ?? null, gpu: null, timeout: limits?.timeout ?? null, host: null },
+        requirements: { os: null, arch: null, cpu: null, memory: limits?.memory ?? null, gpu: null, gpuMemory: null, timeout: limits?.timeout ?? null, host: null },
         labels,
         host: runner ?? null,
       };
@@ -352,7 +354,7 @@ export function migrate(db: DatabaseSync): void {
           name,
           os: "linux",
           arch,
-          capacity: { cpu: old.slots, memory: old.memory ?? DEFAULT_MEMORY_MIB, gpu: 0 },
+          capacity: { cpu: old.slots, memory: old.memory ?? DEFAULT_MEMORY_MIB, gpu: 0, gpuMemory: 0 },
           labels: old.labels ?? {},
           version: old.version ?? null,
           features: [],

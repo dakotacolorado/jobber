@@ -310,7 +310,15 @@
             "minimum": 0,
             "maximum": 64,
             "default": null,
-            "description": "Whole GPUs, each its container's own. Default: none, and a job whose `jobs.toml` asks for more fails on its host."
+            "description": "Whole GPUs, each its container's own. Default: 1 if it names `gpuMemory`, else none; a job whose `jobs.toml` asks for more fails on its host."
+          },
+          "gpuMemory": {
+            "type": "integer",
+            "nullable": true,
+            "minimum": 1,
+            "maximum": 1048576,
+            "default": null,
+            "description": "MiB of memory each of its GPUs must have: it runs only on a host whose GPUs are at least this large. Default: any."
           },
           "timeout": {
             "type": "integer",
@@ -705,6 +713,13 @@
             "maximum": 64,
             "default": 0,
             "description": "Whole GPUs for runs. Default: 0."
+          },
+          "gpuMemory": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1048576,
+            "default": 0,
+            "description": "MiB of memory of its smallest GPU, each given whole to one run. Default: 0."
           }
         },
         "required": [

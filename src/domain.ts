@@ -66,15 +66,17 @@ export interface Requirements {
   cpu: number | null;
   /** MiB. Null: `jobs.toml`'s, admitted at `DEFAULT_MEMORY_MIB`. */
   memory: number | null;
-  /** GPUs, whole. Null: admitted at none, so a job whose `jobs.toml` asks for GPUs fails on its host. */
+  /** GPUs, whole. Null: one if it names `gpuMemory`, else none, so a job whose `jobs.toml` asks for GPUs fails on its host. */
   gpu: number | null;
+  /** MiB of memory each of its GPUs must have. Null: any. */
+  gpuMemory: number | null;
   /** Seconds. Null: `jobs.toml`'s. */
   timeout: number | null;
   /** The name of the host it must run on. Null: any. A run `onHost` names one. */
   host: string | null;
 }
 
-export const NO_REQUIREMENTS: Requirements = { os: null, arch: null, cpu: null, memory: null, gpu: null, timeout: null, host: null };
+export const NO_REQUIREMENTS: Requirements = { os: null, arch: null, cpu: null, memory: null, gpu: null, gpuMemory: null, timeout: null, host: null };
 
 export type Labels = Record<string, string>;
 
@@ -204,8 +206,8 @@ export const admittedMemory = (run: Pick<Run, "requirements">) => run.requiremen
 /** The CPUs a host reserves for the run when it takes it; a run stored before `cpu` has none. */
 export const admittedCpu = (run: Pick<Run, "requirements">) => run.requirements.cpu ?? DEFAULT_CPU;
 
-/** The GPUs a host reserves for the run when it takes it; a run stored before `gpu` has none. */
-export const admittedGpu = (run: Pick<Run, "requirements">) => run.requirements.gpu ?? 0;
+/** The GPUs a host reserves for the run when it takes it: a run naming only `gpuMemory` wants one; one stored before `gpu` none. */
+export const admittedGpu = (run: Pick<Run, "requirements">) => run.requirements.gpu ?? (run.requirements.gpuMemory !== null ? 1 : 0);
 
 /** CPUs to the thousandth, so sums and differences of decimal requests stay exact enough to compare. */
 const milli = (cpu: number) => Math.round(cpu * 1000) / 1000;
@@ -266,6 +268,12 @@ export interface Resources {
   gpu: number;
 }
 
+/** What a host offers runs: its resources, and the size of its GPUs, which a run takes whole. */
+export interface Capacity extends Resources {
+  /** MiB of memory of its smallest GPU; 0 with none. */
+  gpuMemory: number;
+}
+
 /** A host's health, as its last heartbeat said. */
 export interface Metrics {
   /** 1-minute load average. */
@@ -286,7 +294,7 @@ export interface Host {
   os: Os;
   arch: Arch;
   /** What it offers runs: what it measured, less what it keeps back for the rest of the machine. As it last registered. */
-  capacity: Resources;
+  capacity: Capacity;
   labels: Labels;
   version: string | null;
   /** What its jobber-host can do (\`FEATURES\`, and any it names that this jobber does not know), as it last registered. */
@@ -302,17 +310,18 @@ export interface Host {
 export const needs = (run: Pick<Run, "secrets" | "onHost">): Feature[] => [...(run.secrets.length ? (["secrets"] as const) : []), ...(run.onHost ? (["hostRuns"] as const) : [])];
 
 /**
- * The run may run on this host: pending, its cpu, memory and GPUs free there, its
+ * The run may run on this host: pending, its cpu, memory and GPUs free there, its GPUs as large as it asks, its
  * os, arch and host, if it names them, the host's, and the host able to do
  * what it needs.
  */
-export const fits = (run: Run, host: Pick<Candidate, "name" | "os" | "arch" | "free" | "features">) =>
+export const fits = (run: Run, host: Pick<Candidate, "name" | "os" | "arch" | "free" | "features" | "gpuMemory">) =>
   run.state === "pending" &&
   (run.requirements.host === null || run.requirements.host === host.name) &&
   needs(run).every((f) => host.features.includes(f)) &&
   admittedCpu(run) <= host.free.cpu &&
   admittedMemory(run) <= host.free.memory &&
   admittedGpu(run) <= host.free.gpu &&
+  (run.requirements.gpuMemory === null || admittedGpu(run) === 0 || run.requirements.gpuMemory <= host.gpuMemory) &&
   (run.requirements.os === null || run.requirements.os === host.os) &&
   (run.requirements.arch === null || run.requirements.arch === host.arch);
 
@@ -371,6 +380,8 @@ export interface Candidate {
   os: Os;
   arch: Arch;
   free: Resources;
+  /** MiB of memory of its smallest GPU. */
+  gpuMemory: number;
 }
 
 /**
@@ -415,7 +426,9 @@ export const fresh = (host: Pick<Host, "lastSeenAt">, when = now()) => Date.pars
 /**
  * Places queued runs on hosts: each run, highest priority first and then
  * oldest, on the fitting host with the most CPU free (then memory, then
- * id), whose free capacity its requests then take. A run no host fits is passed over,
+ * id), whose free capacity its requests then take. A run taking GPUs goes
+ * first to the fitting host whose GPUs are smallest, so larger ones are left
+ * for runs that need them. A run no host fits is passed over,
  * not waited for, so one large run does not hold up the small ones behind it.
  */
 export function schedule(queue: Run[], hosts: Candidate[]): { run: Run; host: string }[] {
@@ -424,7 +437,9 @@ export function schedule(queue: Run[], hosts: Candidate[]): { run: Run; host: st
   for (const run of [...queue].sort(queueOrder)) {
     const fitting = left.filter((h) => fits(run, h));
     if (!fitting.length) continue;
-    const best = fitting.reduce((a, b) => (b.free.cpu > a.free.cpu || (b.free.cpu === a.free.cpu && (b.free.memory > a.free.memory || (b.free.memory === a.free.memory && b.id < a.id))) ? b : a));
+    const roomier = (a: Candidate, b: Candidate) => b.free.cpu > a.free.cpu || (b.free.cpu === a.free.cpu && (b.free.memory > a.free.memory || (b.free.memory === a.free.memory && b.id < a.id)));
+    const gpus = admittedGpu(run) > 0;
+    const best = fitting.reduce((a, b) => ((gpus && b.gpuMemory !== a.gpuMemory ? b.gpuMemory < a.gpuMemory : roomier(a, b)) ? b : a));
     best.free.cpu = milli(best.free.cpu - admittedCpu(run));
     best.free.memory -= admittedMemory(run);
     best.free.gpu -= admittedGpu(run);

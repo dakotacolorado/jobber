@@ -7,14 +7,14 @@ const COMMIT = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 const T0 = "2026-11-13T00:00:00.000Z";
 const later = (seconds: number, from = T0) => new Date(Date.parse(from) + seconds * 1000).toISOString();
 
-const run = (over: { priority?: number; cpu?: number; memory?: number; gpu?: number; os?: "linux" | "macos"; at?: string } = {}): Run =>
+const run = (over: { priority?: number; cpu?: number; memory?: number; gpu?: number; gpuMemory?: number; os?: "linux" | "macos"; at?: string } = {}): Run =>
   submitted(
     {
       repo: "o/r",
       commit: COMMIT,
       job: "hello",
       args: [],
-      requirements: { os: over.os ?? null, arch: null, cpu: over.cpu ?? null, memory: over.memory ?? null, gpu: over.gpu ?? null, timeout: null, host: null },
+      requirements: { os: over.os ?? null, arch: null, cpu: over.cpu ?? null, memory: over.memory ?? null, gpu: over.gpu ?? null, gpuMemory: over.gpuMemory ?? null, timeout: null, host: null },
       labels: {},
       priority: over.priority ?? 0,
       retry: NO_RETRY,
@@ -24,7 +24,7 @@ const run = (over: { priority?: number; cpu?: number; memory?: number; gpu?: num
     over.at ?? T0,
   );
 
-const candidate = (id: string, cpu: number, memory: number, os: "linux" | "macos" = "linux", gpu = 0): Candidate => ({ id, name: id, features: [], os, arch: "x86_64", free: { cpu, memory, gpu } });
+const candidate = (id: string, cpu: number, memory: number, os: "linux" | "macos" = "linux", gpu = 0, gpuMemory = 0): Candidate => ({ id, name: id, features: [], os, arch: "x86_64", free: { cpu, memory, gpu }, gpuMemory });
 
 describe("schedule", () => {
   it("places the highest priority first, then the oldest, while capacity lasts", () => {
@@ -77,14 +77,29 @@ describe("schedule, with GPUs", () => {
     ]);
   });
 
-  it("gives a run that names no GPUs none", () => {
+  it("gives a run that names no GPUs none, and one naming only their size one", () => {
     expect(admittedGpu(run())).toBe(0);
     expect(admittedGpu(run({ gpu: 3 }))).toBe(3);
+    expect(admittedGpu(run({ gpuMemory: 8192 }))).toBe(1);
+    expect(admittedGpu(run({ gpu: 0, gpuMemory: 8192 }))).toBe(0);
+  });
+
+  it("places a run only where its GPUs are as large as it asks, and on the smallest that are", () => {
+    const hosts = () => [candidate("big", 4, 8192, "linux", 1, 24564), candidate("small", 16, 65536, "linux", 1, 6144)];
+    const large = run({ gpuMemory: 16384, at: T0 });
+    const small = run({ gpu: 1, at: later(1) });
+    expect(schedule([large, small], hosts()).map((p) => [p.run.id, p.host])).toEqual([
+      [large.id, "big"],
+      [small.id, "small"],
+    ]);
+    expect(schedule([small], hosts()).map((p) => p.host)).toEqual(["small"]);
+    expect(schedule([run({ gpuMemory: 32768 })], hosts())).toEqual([]);
+    expect(schedule([run({ cpu: 1 })], hosts()).map((p) => p.host), "a run taking no GPU goes by room").toEqual(["small"]);
   });
 });
 
 describe("freeOn", () => {
-  const host = { id: "h", capacity: { cpu: 3, memory: 4096, gpu: 2 }, free: { cpu: 3, memory: 4096, gpu: 2 } };
+  const host = { id: "h", capacity: { cpu: 3, memory: 4096, gpu: 2, gpuMemory: 0 }, free: { cpu: 3, memory: 4096, gpu: 2 } };
 
   it("takes off the requests of the runs assigned or running there that its last report predates", () => {
     const mine = assigned(run({ cpu: 0.1, memory: 1000, gpu: 1 }), "h", T0);
@@ -96,7 +111,7 @@ describe("freeOn", () => {
 
   it("is never more than the host last reported, nor less than nothing", () => {
     expect(freeOn({ ...host, free: { cpu: 1, memory: 500, gpu: 0 } }, [])).toEqual({ cpu: 1, memory: 500, gpu: 0 });
-    expect(freeOn({ ...host, capacity: { cpu: 0.5, memory: 512, gpu: 0 } }, [assigned(run({ cpu: 1 }), "h", T0)])).toEqual({ cpu: 0, memory: 0, gpu: 0 });
+    expect(freeOn({ ...host, capacity: { cpu: 0.5, memory: 512, gpu: 0, gpuMemory: 0 } }, [assigned(run({ cpu: 1 }), "h", T0)])).toEqual({ cpu: 0, memory: 0, gpu: 0 });
   });
 });
 
@@ -147,7 +162,7 @@ function fleet() {
       name,
       os: "linux",
       arch: "x86_64",
-      capacity: { cpu: 2 * DEFAULT_CPU, memory: 4096, gpu: 0 },
+      capacity: { cpu: 2 * DEFAULT_CPU, memory: 4096, gpu: 0, gpuMemory: 0 },
       labels: {},
       version: null,
       features: [],
@@ -171,7 +186,7 @@ describe("tick", () => {
   it("assigns each queued run to a fitting connected host, highest priority first, and hands it over", () => {
     const { store, host, sent, reachable, link } = fleet();
     host("a");
-    host("b", { os: "macos", capacity: { cpu: DEFAULT_CPU, memory: 4096, gpu: 0 }, free: { cpu: DEFAULT_CPU, memory: 4096, gpu: 0 } });
+    host("b", { os: "macos", capacity: { cpu: DEFAULT_CPU, memory: 4096, gpu: 0, gpuMemory: 0 }, free: { cpu: DEFAULT_CPU, memory: 4096, gpu: 0 } });
     reachable.add("a").add("b");
     const mac = run({ os: "macos", at: T0 });
     const low = run({ at: later(1) });
@@ -195,8 +210,8 @@ describe("tick", () => {
   it("places nothing on a host its metrics say is nearly out of disk or overloaded", () => {
     const { store, host, sent, reachable, link } = fleet();
     const well = { cpuLoad: 0.5, memoryUsed: 1000, memoryTotal: 8000, diskFree: 50_000, cpus: 4 };
-    host("full", { metrics: { ...well, diskFree: 100 }, capacity: { cpu: 8, memory: 65536, gpu: 0 }, free: null });
-    host("busy", { metrics: { ...well, cpuLoad: 40 }, capacity: { cpu: 8, memory: 65536, gpu: 0 }, free: null });
+    host("full", { metrics: { ...well, diskFree: 100 }, capacity: { cpu: 8, memory: 65536, gpu: 0, gpuMemory: 0 }, free: null });
+    host("busy", { metrics: { ...well, cpuLoad: 40 }, capacity: { cpu: 8, memory: 65536, gpu: 0, gpuMemory: 0 }, free: null });
     host("well", { metrics: well });
     reachable.add("full").add("busy").add("well");
     store.create(run());

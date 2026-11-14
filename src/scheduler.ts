@@ -31,7 +31,7 @@ export function tick(store: Store, link: Link, at = now()): { expired: number; p
   const candidates = store
     .hosts()
     .filter((h) => reachable.has(h.id) && fresh(h, at) && healthy(h))
-    .map((h) => ({ id: h.id, name: h.name, features: h.features, os: h.os, arch: h.arch, free: freeOn(h, active) }));
+    .map((h) => ({ id: h.id, name: h.name, features: h.features, os: h.os, arch: h.arch, free: freeOn(h, active), gpuMemory: h.capacity.gpuMemory }));
   let placed = 0;
   if (candidates.length) {
     for (const { run, host } of schedule(

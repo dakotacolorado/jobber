@@ -132,7 +132,7 @@ const labelLinks = (labels) =>
   pairs(labels).flatMap((pair, i) => [i ? " " : "", h("a", { class: "mono label", href: `#/?label=${encodeURIComponent(pair)}` }, pair)]);
 /** What a run asked for, in a few words: `linux x86_64, 0.5 CPU, 256 MiB, 1 GPU, 60 s`. */
 const needs = (r) =>
-  [r.os, r.arch, r.cpu != null && `${r.cpu} CPU`, r.memory !== null && `${r.memory} MiB`, r.gpu && `${r.gpu} GPU`, r.timeout !== null && `${r.timeout} s`].filter(Boolean).join(", ") || "any host";
+  [r.os, r.arch, r.cpu != null && `${r.cpu} CPU`, r.memory !== null && `${r.memory} MiB`, (r.gpu || r.gpuMemory) && `${r.gpu ?? 1} GPU${r.gpuMemory ? ` of ${r.gpuMemory} MiB` : ""}`, r.timeout !== null && `${r.timeout} s`].filter(Boolean).join(", ") || "any host";
 function took(run) {
   if (run.duration !== null) return `${run.duration.toFixed(1)} s`;
   if (run.startedAt && !run.endedAt) return `${Math.round((Date.now() - Date.parse(run.startedAt)) / 1000)} s so far`;
@@ -425,6 +425,7 @@ function newRun(params) {
   const cpu = input("cpu", { type: "number", min: 0.001, step: "any", placeholder: "0.5" });
   const memory = input("memory", { type: "number", min: 16, placeholder: "jobs.toml's" });
   const gpu = input("gpu", { type: "number", min: 0, max: 64, step: 1, placeholder: "0" });
+  const gpuMemory = input("gpuMemory", { type: "number", min: 1, step: 1, placeholder: "any" });
   const timeout = input("timeout", { type: "number", min: 1, placeholder: "jobs.toml's" });
   const priority = input("priority", { type: "number", min: -1000, max: 1000, step: 1, placeholder: "0" });
   const retries = input("retries", { type: "number", min: 0, max: 10, step: 1, placeholder: "0" });
@@ -457,6 +458,7 @@ function newRun(params) {
                 cpu: cpu.value ? Number(cpu.value) : null,
                 memory: memory.value ? Number(memory.value) : null,
                 gpu: gpu.value ? Number(gpu.value) : null,
+                gpuMemory: gpuMemory.value ? Number(gpuMemory.value) : null,
                 timeout: timeout.value ? Number(timeout.value) : null,
               },
             });
@@ -479,6 +481,7 @@ function newRun(params) {
         h("div", {}, h("label", {}, "CPUs"), cpu),
         h("div", {}, h("label", {}, "Memory, MiB"), memory),
         h("div", {}, h("label", {}, "GPUs"), gpu),
+        h("div", {}, h("label", {}, "GPU memory, MiB"), gpuMemory),
         h("div", {}, h("label", {}, "Timeout, s"), timeout)),
       h("label", {}, "Labels"), labels,
       h("div", { class: "grid4" },
@@ -492,8 +495,8 @@ function newRun(params) {
 }
 
 const mib = (n) => (n >= 1024 ? `${(n / 1024).toFixed(1)} GiB` : `${n} MiB`);
-/** CPUs, memory and any GPUs: `13.5 CPU, 9.0 GiB, 1 GPU`. */
-const resources = (r) => [`${+r.cpu.toFixed(3)} CPU`, mib(r.memory), r.gpu && `${r.gpu} GPU`].filter(Boolean).join(", ");
+/** CPUs, memory and any GPUs: `13.5 CPU, 9.0 GiB, 1 GPU of 24.0 GiB`. */
+const resources = (r) => [`${+r.cpu.toFixed(3)} CPU`, mib(r.memory), r.gpu && `${r.gpu} GPU${r.gpuMemory ? ` of ${mib(r.gpuMemory)}` : ""}`].filter(Boolean).join(", ");
 
 async function hosts() {
   current();

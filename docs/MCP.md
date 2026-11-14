@@ -60,7 +60,8 @@ Queues a run as `pending`, by `priority` then age, until a host that meets its r
 | `requirements.arch` | `x86_64`, `aarch64` or null |  | CPU architecture it needs. Default: any. |
 | `requirements.cpu` | number or null |  | CPUs, a decimal number (e.g. 0.5). Default: 0.5. |
 | `requirements.memory` | integer or null |  | Memory in MiB. Default: `jobs.toml`'s, else 1024. |
-| `requirements.gpu` | integer or null |  | Whole GPUs, each its container's own. Default: none, and a job whose `jobs.toml` asks for more fails on its host. |
+| `requirements.gpu` | integer or null |  | Whole GPUs, each its container's own. Default: 1 if it names `gpuMemory`, else none; a job whose `jobs.toml` asks for more fails on its host. |
+| `requirements.gpuMemory` | integer or null |  | MiB of memory each of its GPUs must have: it runs only on a host whose GPUs are at least this large. Default: any. |
 | `requirements.timeout` | integer or null |  | Timeout in seconds. Default: `jobs.toml`'s. |
 | `requirements.host` | string or null |  | Name of the host it must run on, which must be registered. Default: any. A run `onHost` names one. |
 | `labels` | object |  | Labels to find it by, e.g. what it is for and who asked. |

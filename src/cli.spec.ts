@@ -95,7 +95,7 @@ describe("jobber serve, to a host", () => {
     const registered = await fetch(`${url}/hosts`, {
       method: "POST",
       headers: { authorization: "Bearer r", "content-type": "application/json" },
-      body: JSON.stringify({ name: "h", os: "linux", arch: "x86_64", capacity: { cpu: 1, memory: 1024, gpu: 0 } }),
+      body: JSON.stringify({ name: "h", os: "linux", arch: "x86_64", capacity: { cpu: 1, memory: 1024, gpu: 0, gpuMemory: 0 } }),
     });
     const { host, token } = (await registered.json()) as { host: { id: string }; token: string };
     const socket = new WebSocket(`${url.replace("http", "ws")}/hosts/${host.id}/connect`, { headers: { authorization: `Bearer ${token}` } });
@@ -121,7 +121,7 @@ describe("jobber backup", () => {
   it("copies the database to the file it names", () => {
     const dir = temp();
     const store = Store.open(join(dir, "js.db"));
-    store.putHost({ id: "h1", name: "h", os: "linux", arch: "x86_64", labels: {}, capacity: { cpu: 1, memory: 16, gpu: 0 }, version: null, features: [], free: null, metrics: null, createdAt: "t", lastSeenAt: "t", tokenHash: "x" });
+    store.putHost({ id: "h1", name: "h", os: "linux", arch: "x86_64", labels: {}, capacity: { cpu: 1, memory: 16, gpu: 0, gpuMemory: 0 }, version: null, features: [], free: null, metrics: null, createdAt: "t", lastSeenAt: "t", tokenHash: "x" });
     const done = spawnSync(process.execPath, [CLI, "backup", join(dir, "copy.db"), "--db", join(dir, "js.db")], { env: clean(), encoding: "utf8" });
     store.close();
     expect(done.status, done.stderr).toBe(0);

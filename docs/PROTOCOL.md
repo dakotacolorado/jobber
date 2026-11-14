@@ -55,7 +55,9 @@ Every message either way is one JSON text frame, an object with a `type`.
   "memory": MiB, "gpu": GPUs, "lease": seconds}`: `cpu`, `memory` and `gpu` are what the run
   requests (its `requirements`, or their defaults), which the host reserves
   for it and gives its container. `gpu` is whole GPUs, 0 for none; a host
-  that sends no `gpu` in its capacity or heartbeat has none. The `Run`'s `secrets` are names only; its
+  that sends no `gpu` in its capacity or heartbeat has none. A host registers
+  `capacity.gpuMemory`, the MiB of its smallest GPU, and is sent only runs
+  whose `requirements.gpuMemory` that meets. The `Run`'s `secrets` are names only; its
   `onHost` and `requirements.host` say to run it on this machine itself
   (refuse one whose repo is not on the host's allowlist by completing it
   `failed` with the reason, after `start`). Sent when the scheduler places a run here, and again,

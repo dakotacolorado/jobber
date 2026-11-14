@@ -50,7 +50,14 @@ export const RequirementsSchema = z
       .max(64)
       .nullable()
       .default(null)
-      .describe("Whole GPUs, each its container's own. Default: none, and a job whose `jobs.toml` asks for more fails on its host."),
+      .describe("Whole GPUs, each its container's own. Default: 1 if it names `gpuMemory`, else none; a job whose `jobs.toml` asks for more fails on its host."),
+    gpuMemory: z
+      .int()
+      .min(1)
+      .max(1_048_576)
+      .nullable()
+      .default(null)
+      .describe("MiB of memory each of its GPUs must have: it runs only on a host whose GPUs are at least this large. Default: any."),
     timeout: z.int().min(1).max(86_400).nullable().default(null).describe("Timeout in seconds. Default: `jobs.toml`'s."),
     host: z.string().trim().min(1).max(200).nullable().default(null).describe("Name of the host it must run on, which must be registered. Default: any. A run `onHost` names one."),
   })
@@ -110,7 +117,7 @@ export const SubmitSchema = z
     commit: Commit,
     job: JobName,
     args: z.array(z.string().max(4000)).max(50).default([]).describe("Arguments appended to the job's command."),
-    requirements: RequirementsSchema.default({ os: null, arch: null, cpu: null, memory: null, gpu: null, timeout: null, host: null }),
+    requirements: RequirementsSchema.default({ os: null, arch: null, cpu: null, memory: null, gpu: null, gpuMemory: null, timeout: null, host: null }),
     labels: Labels.default({}).describe("Labels to find it by, e.g. what it is for and who asked."),
     priority: Priority.default(0).describe(`Higher is placed first; equal ones oldest first. ${PRIORITY_MIN} to ${PRIORITY_MAX}. Default: 0.`),
     retry: RetrySchema.default(NO_RETRY),
@@ -346,6 +353,7 @@ const CapacitySchema = z
     cpu: Cpu.min(0.001).describe("CPUs for runs, a decimal number."),
     memory: z.int().min(16).max(1_048_576 * 64).describe("Memory for runs, in MiB."),
     gpu: z.int().min(0).max(64).default(0).describe("Whole GPUs for runs. Default: 0."),
+    gpuMemory: z.int().min(0).max(1_048_576).default(0).describe("MiB of memory of its smallest GPU, each given whole to one run. Default: 0."),
   })
   .describe("What the host offers runs: what it measured, less what it keeps back for the rest of the machine.")
   .openapi("Capacity");

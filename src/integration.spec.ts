@@ -53,7 +53,7 @@ describe.skipIf(!url || !token || !registration)("jobber's host API as deployed"
   it("registers, connects, is pushed its own run, appends, is pushed a cancel, and completes", async () => {
     const name = `jobber-integration-${crypto.randomUUID().slice(0, 8)}`;
     // A Windows host: no real one is, so only this test's run, which asks for Windows, is placed on it.
-    const reg = await call("POST", "/hosts", { name, os: "windows", arch: "x86_64", capacity: { cpu: 1, memory: 16, gpu: 0 } }, `Bearer ${registration}`);
+    const reg = await call("POST", "/hosts", { name, os: "windows", arch: "x86_64", capacity: { cpu: 1, memory: 16, gpu: 0, gpuMemory: 0 } }, `Bearer ${registration}`);
     expect(reg.status).toBe(201);
     const { host, token: own } = (await reg.json()) as { host: { id: string }; token: string };
     const ws = `${url!.replace(/^http/, "ws")}/hosts/${host.id}/connect`;

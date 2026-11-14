@@ -11,7 +11,7 @@ export function startNext(store: Store, id: string, free: Resources = { cpu: 1, 
   if (!host) throw new Error(`no host ${id}`);
   const [placed] = schedule(
     store.pending().filter((r) => due(r)),
-    [{ id, name: host.name, features: host.features, os: host.os, arch: host.arch, free }],
+    [{ id, name: host.name, features: host.features, os: host.os, arch: host.arch, free, gpuMemory: host.capacity.gpuMemory }],
   );
   if (!placed) return null;
   const run = accepted(assigned(placed.run, id), id);

@@ -3,7 +3,7 @@
   "info": {
     "version": "2026-11-13",
     "title": "jobber",
-    "description": "Submit code to run on whatever computers you have. A **job** is a named script in a repo's `jobs.toml`; a **run** is one execution of it at a commit.\n\n- **Submit** a run, with a `priority` if it should jump the queue, see where it waits with `ListQueue`, then follow it: `pending` → `assigned` → `running` → `succeeded`, `failed` or `canceled`.\n- **Read its log** with `GetRunLog`, from any byte offset, while it runs and after.\n- **Hosts** are the computers that run jobber-host, which registers, holds a connection over which it is sent its runs, and reports their logs and ends through the *Host protocol* calls. You don't call those.\n\n**Auth:** `Authorization: Bearer <token>` with the submitters' token, on everything but `GetHealth`.\n\n**Errors:** `{code, message}`, where `code` is an AWS-style exception name such as `ValidationException` or `ResourceNotFoundException`."
+    "description": "Submit code to run on whatever computers you have. A **job** is a named script in a repo's `jobs.toml`; a **run** is one execution of it at a commit.\n\n- **Submit** a run, with a `priority` if it should jump the queue, see where it waits with `ListQueue`, then follow it: `pending` → `assigned` → `running` → `succeeded`, `failed` or `canceled`.\n- **Read its log** with `GetRunLog`, from any byte offset, while it runs and after.\n- **Hosts** are the computers that run jobber-host, which registers, holds a connection over which it is sent its runs, and reports their logs and ends through the *Host protocol* calls. You don't call those.\n\n- **Secrets** are set by an admin (`PutSecret`), stored encrypted, and never read back: a run naming them in `secrets` is given each as an environment variable.\n\n**Auth:** `Authorization: Bearer <token>` with the submitters' token, on everything but `GetHealth` and the *Secrets* calls, which take the admin's.\n\n**Errors:** `{code, message}`, where `code` is an AWS-style exception name such as `ValidationException` or `ResourceNotFoundException`."
   },
   "tags": [
     {
@@ -13,6 +13,10 @@
     {
       "name": "Hosts",
       "description": "See the fleet."
+    },
+    {
+      "name": "Secrets",
+      "description": "Set the secrets runs are given, by an admin."
     },
     {
       "name": "Host protocol",
@@ -28,6 +32,11 @@
       "bearerAuth": {
         "type": "http",
         "scheme": "bearer"
+      },
+      "adminAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "The admin's token, `ADMIN_TOKEN`: it manages secrets, and nothing else."
       },
       "hostAuth": {
         "type": "http",
@@ -119,6 +128,21 @@
           },
           "retry": {
             "$ref": "#/components/schemas/Retry"
+          },
+          "secrets": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Z_][A-Z0-9_]{0,127}$",
+              "description": "A secret's name, which is the environment variable a run is given it in: capitals, digits and `_`.",
+              "example": "AWS_ROLE_ARN"
+            },
+            "maxItems": 50,
+            "description": "Secrets its host gives it as environment variables of their names."
+          },
+          "onHost": {
+            "type": "boolean",
+            "description": "Run on the host `requirements.host` names itself, as its user, in the checkout, outside a container. That host's jobber-host runs it only for a repo on its `host_runs` allowlist, and fails it otherwise. Default: false."
           },
           "state": {
             "type": "string",
@@ -218,6 +242,8 @@
           "labels",
           "priority",
           "retry",
+          "secrets",
+          "onHost",
           "state",
           "reason",
           "cancelRequested",
@@ -285,6 +311,14 @@
             "maximum": 86400,
             "default": null,
             "description": "Timeout in seconds. Default: `jobs.toml`'s."
+          },
+          "host": {
+            "type": "string",
+            "nullable": true,
+            "minLength": 1,
+            "maxLength": 200,
+            "default": null,
+            "description": "Name of the host it must run on, which must be registered. Default: any. A run `onHost` names one."
           }
         },
         "description": "What the run needs from its host."
@@ -462,6 +496,23 @@
           },
           "retry": {
             "$ref": "#/components/schemas/Retry"
+          },
+          "secrets": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Z_][A-Z0-9_]{0,127}$",
+              "description": "A secret's name, which is the environment variable a run is given it in: capitals, digits and `_`.",
+              "example": "AWS_ROLE_ARN"
+            },
+            "maxItems": 50,
+            "default": [],
+            "description": "Secrets its host gives it, each as an environment variable of its name, masked in its log. Each must be set (`PutSecret`). Default: none."
+          },
+          "onHost": {
+            "type": "boolean",
+            "default": false,
+            "description": "Run on the host `requirements.host` names itself, as its user, in the checkout, outside a container. That host's jobber-host runs it only for a repo on its `host_runs` allowlist, and fails it otherwise. Default: false."
           }
         },
         "required": [
@@ -580,6 +631,15 @@
             "nullable": true,
             "description": "jobber-host version, as it last registered."
           },
+          "features": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 100
+            },
+            "maxItems": 50,
+            "description": "What its jobber-host can do beyond container runs, of `secrets`, `hostRuns`: a run naming secrets goes only to a host with `secrets`, a run `onHost` only to one with `hostRuns`. Others are kept and ignored."
+          },
           "free": {
             "$ref": "#/components/schemas/Free"
           },
@@ -607,6 +667,7 @@
           "capacity",
           "labels",
           "version",
+          "features",
           "free",
           "metrics",
           "createdAt",
@@ -748,6 +809,16 @@
             "maxLength": 100,
             "default": null,
             "description": "jobber-host version."
+          },
+          "features": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 100
+            },
+            "maxItems": 50,
+            "default": [],
+            "description": "What its jobber-host can do beyond container runs, of `secrets`, `hostRuns`: a run naming secrets goes only to a host with `secrets`, a run `onHost` only to one with `hostRuns`. Others are kept and ignored."
           }
         },
         "required": [
@@ -839,6 +910,60 @@
           "free",
           "metrics",
           "running"
+        ]
+      },
+      "ListSecretsResponse": {
+        "type": "object",
+        "properties": {
+          "secrets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Secret"
+            },
+            "description": "Secrets, by name."
+          }
+        },
+        "required": [
+          "secrets"
+        ]
+      },
+      "Secret": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[A-Z_][A-Z0-9_]{0,127}$",
+            "description": "A secret's name, which is the environment variable a run is given it in: capitals, digits and `_`.",
+            "example": "AWS_ROLE_ARN"
+          },
+          "createdAt": {
+            "type": "string",
+            "description": "First set at (ISO 8601)."
+          },
+          "updatedAt": {
+            "type": "string",
+            "description": "Last set at (ISO 8601)."
+          }
+        },
+        "required": [
+          "name",
+          "createdAt",
+          "updatedAt"
+        ],
+        "description": "A secret, without its value: no call returns that."
+      },
+      "PutSecretInput": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 65536,
+            "description": "The value, up to 64 KiB. Stored encrypted; never returned."
+          }
+        },
+        "required": [
+          "value"
         ]
       },
       "AppendRunLogResponse": {
@@ -947,7 +1072,7 @@
         ],
         "operationId": "SubmitRun",
         "summary": "Submit a run",
-        "description": "Queues a run as `pending`, by `priority` then age, until a host that meets its requirements takes it. The repo isn't checked here: a missing job fails on its host.",
+        "description": "Queues a run as `pending`, by `priority` then age, until a host that meets its requirements takes it. The repo isn't checked here: a missing job fails on its host. Refused if a secret it names is not set, if `requirements.host` names no registered host, or if it is `onHost` without one.",
         "requestBody": {
           "description": "What to run, what it needs, and its labels.",
           "content": {
@@ -2052,6 +2177,213 @@
           },
           "403": {
             "description": "AccessDeniedException: The run is another host's, or the path names another host.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/secrets": {
+      "get": {
+        "security": [
+          {
+            "adminAuth": []
+          }
+        ],
+        "tags": [
+          "Secrets"
+        ],
+        "operationId": "ListSecrets",
+        "summary": "List secrets",
+        "description": "Lists the secrets' names and when each was set, never their values. Takes the admin's token.",
+        "responses": {
+          "200": {
+            "description": "The secrets.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListSecretsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "UnauthorizedException: The bearer token is missing or is not the admin's.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "ServiceUnavailableException: The service has no admin token, or (to set one) no secrets key, configured.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/secrets/{name}": {
+      "put": {
+        "security": [
+          {
+            "adminAuth": []
+          }
+        ],
+        "tags": [
+          "Secrets"
+        ],
+        "operationId": "PutSecret",
+        "summary": "Put a secret",
+        "description": "Sets a secret, or replaces its value (to rotate it): runs started after get the new one. Takes the admin's token. The value is stored encrypted under `JOBBER_SECRETS_KEY` and is never returned by any call.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Z_][A-Z0-9_]{0,127}$",
+              "description": "A secret's name, which is the environment variable a run is given it in: capitals, digits and `_`.",
+              "example": "AWS_ROLE_ARN"
+            },
+            "required": true,
+            "description": "A secret's name, which is the environment variable a run is given it in: capitals, digits and `_`.",
+            "name": "name",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "description": "Its value.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutSecretInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Set.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Secret"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "ValidationException: The request failed validation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "UnauthorizedException: The bearer token is missing or is not the admin's.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "ServiceUnavailableException: The service has no admin token, or (to set one) no secrets key, configured.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "security": [
+          {
+            "adminAuth": []
+          }
+        ],
+        "tags": [
+          "Secrets"
+        ],
+        "operationId": "DeleteSecret",
+        "summary": "Delete a secret",
+        "description": "Deletes a secret. A run naming it that has not started yet fails when its host would start it. Takes the admin's token.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Z_][A-Z0-9_]{0,127}$",
+              "description": "A secret's name, which is the environment variable a run is given it in: capitals, digits and `_`.",
+              "example": "AWS_ROLE_ARN"
+            },
+            "required": true,
+            "description": "A secret's name, which is the environment variable a run is given it in: capitals, digits and `_`.",
+            "name": "name",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted: what it was.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Secret"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "ValidationException: The request failed validation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "UnauthorizedException: The bearer token is missing or is not the admin's.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "ResourceNotFoundException: No secret has that name.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "ServiceUnavailableException: The service has no admin token, or (to set one) no secrets key, configured.",
             "content": {
               "application/json": {
                 "schema": {

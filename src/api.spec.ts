@@ -50,7 +50,7 @@ describe("POST /runs", () => {
       logSize: 0,
     });
     expect(await (await call("GET", `/runs/${run.id}`)).json()).toEqual(run);
-    expect(await submit()).toMatchObject({ args: [], requirements: { os: null, arch: null, cpu: null, memory: null, timeout: null }, labels: {}, priority: 0 });
+    expect(await submit()).toMatchObject({ args: [], requirements: { os: null, arch: null, cpu: null, memory: null, timeout: null, host: null }, labels: {}, priority: 0 });
     expect(await submit({ priority: -5 })).toMatchObject({ priority: -5 });
   });
 

@@ -18,6 +18,14 @@ cannot write to the retry.
 `RegisterHost` answered it). Before the upgrade, a wrong token is answered
 401 and another host's path 403, as `{code, message}`.
 
+A host says what it can do beyond running a run in a container in
+`RegisterHost`'s `features`: `secrets` (it gives a run its secrets as
+environment variables) and `hostRuns` (it runs a run `onHost` on the machine
+itself, for a repo on its own allowlist). jobber places a run naming secrets
+only on a host with `secrets`, and a run `onHost` only on the host it names,
+and only if that host has `hostRuns`; a host that says neither (an older
+jobber-host) is sent neither, and ignores fields it does not know.
+
 One connection per host: a new one closes the one before with code 4000
 (`replaced`).
 
@@ -46,7 +54,10 @@ Every message either way is one JSON text frame, an object with a `type`.
 - `assign`: `{"type": "assign", "run": <Run>, "attempt": n, "cpu": CPUs,
   "memory": MiB, "lease": seconds}`: `cpu` and `memory` are what the run
   requests (its `requirements`, or their defaults), which the host reserves
-  for it and gives its container. Sent when the scheduler places a run here, and again,
+  for it and gives its container. The `Run`'s `secrets` are names only; its
+  `onHost` and `requirements.host` say to run it on this machine itself
+  (refuse one whose repo is not on the host's allowlist by completing it
+  `failed` with the reason, after `start`). Sent when the scheduler places a run here, and again,
   on connecting, for each run still assigned here. Answer `accept` or
   `decline`. An assignment neither accepted nor declined within 30 seconds
   goes back to the queue. An `assign` for a run and attempt the host already
@@ -54,7 +65,13 @@ Every message either way is one JSON text frame, an object with a `type`.
   after a reconnect, not a second run. One for a run still running here on an
   earlier attempt is declined, until that attempt stops.
 - `start`: `{"type": "start", "run": "<id>", "attempt": n, "lease":
-  seconds}`. The run is `running` here: start it, its lease running from now.
+  seconds, "secrets": {"<NAME>": "<value>"}}`. The run is `running` here:
+  start it, its lease running from now. `secrets`, present only for a run
+  that names some, are their values: the only message that carries them. Give
+  each to the run as an environment variable of its name, mask every value in
+  its log, and keep them nowhere else (no log line, no file outside the run).
+  A run whose secret was deleted after it was submitted is answered `drop`
+  instead, and ends `failed`.
 - `drop`: `{"type": "drop", "run": "<id>", "attempt": n, "reason": "…"}`.
   The run is no longer this host's (canceled, or its assignment expired and
   it went to another): do not run it, or, if it already runs, stop it without

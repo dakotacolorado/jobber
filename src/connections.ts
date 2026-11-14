@@ -1,15 +1,16 @@
 import type { IncomingMessage, Server } from "node:http";
 import type { Duplex } from "node:stream";
 import { WebSocketServer, type RawData, type WebSocket } from "ws";
-import { accepted, admittedCpu, admittedMemory, LEASE_SECONDS, leaseFrom, now, RequestError, unassigned, type Run } from "./domain.ts";
+import { accepted, admittedCpu, admittedMemory, LEASE_SECONDS, leaseFrom, now, RequestError, unassigned, unstartable, type Run } from "./domain.ts";
 import type { Link } from "./scheduler.ts";
 import { ERROR_CODES, HostMessage, type ErrorStatus } from "./schema.ts";
+import { Secrets } from "./secrets.ts";
 import type { Store, StoredHost } from "./store.ts";
 
 /** What jobber sends a host over its connection, as `docs/PROTOCOL.md` describes. */
 export type ServiceMessage =
   | { type: "assign"; run: Run; attempt: number; cpu: number; memory: number; lease: number }
-  | { type: "start"; run: string; attempt: number; lease: number }
+  | { type: "start"; run: string; attempt: number; lease: number; secrets?: Record<string, string> }
   | { type: "drop"; run: string; attempt: number; reason: string }
   | { type: "cancel"; run: string; attempt: number }
   | { type: "heartbeat"; cancel: string[]; ended: string[]; lease: number }
@@ -41,10 +42,12 @@ export class Connections implements Link {
   private readonly server = new WebSocketServer({ noServer: true, maxPayload: 1 << 20 });
   private readonly store: Store;
   private readonly log: (line: string) => void;
+  private readonly secrets: Secrets;
 
-  constructor(store: Store, log: (line: string) => void = console.log) {
+  constructor(store: Store, log: (line: string) => void = console.log, secrets = new Secrets(store.db, null)) {
     this.store = store;
     this.log = log;
+    this.secrets = secrets;
   }
 
   connected(): string[] {
@@ -141,6 +144,15 @@ export class Connections implements Link {
         const drop = (reason: string) => this.send(host, { type: "drop", run: message.run, attempt: message.attempt, reason });
         if (!run) return drop("no such run");
         if (run.attempt !== message.attempt) return drop(`the run is on attempt ${run.attempt}`);
+        // Its secrets travel only here, in the start, and only to the host it starts on.
+        let secrets: Record<string, string> | undefined;
+        try {
+          if (run.secrets.length && run.host === host) secrets = this.secrets.values(run.secrets);
+        } catch (err) {
+          if (!(err instanceof RequestError) || run.state !== "assigned") throw err;
+          this.store.update(unstartable(run, `not started: ${err.message}`, at), run.updatedAt);
+          return drop(err.message);
+        }
         try {
           const next = accepted(run, host, at);
           if (next !== run) this.store.update(next, run.updatedAt);
@@ -148,7 +160,7 @@ export class Connections implements Link {
           if (err instanceof RequestError && err.status === 409) return drop(err.message);
           throw err;
         }
-        return this.send(host, { type: "start", run: run.id, attempt: run.attempt, lease: LEASE_SECONDS });
+        return this.send(host, { type: "start", run: run.id, attempt: run.attempt, lease: LEASE_SECONDS, ...(secrets && { secrets }) });
       }
       case "decline": {
         const run = this.store.run(message.run);

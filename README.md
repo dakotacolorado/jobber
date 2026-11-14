@@ -9,7 +9,7 @@
 ██   ██║██║   ██║██╔══██╗██╔══██╗██╔══╝  ██╔══██╗  █▀█▀▀█▀█  █▀█▀▀█▀█
 ╚█████╔╝╚██████╔╝██████╔╝██████╔╝███████╗██║  ██║  █ █  █ █  █ █  █ █
  ╚════╝  ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝╚═╝  ╚═╝  ▀▀▀▀▀▀▀▀  ▀▀▀▀▀▀▀▀
-v0.1.0
+v0.2.0
 
 Submit code to run on whatever computers you have.
 A queue of runs, each placed on a host that fits it and pushed there, with its log streamed back.
@@ -75,6 +75,19 @@ capacity and health.
 - A run given `retry: {limit, backoff}` that fails goes back to the queue as
   its next `attempt`, `backoff` seconds later, doubling each time. Each attempt
   keeps its own log and exit.
+- A run may name **secrets** (`secrets: ["AWS_ROLE_ARN"]`), which an admin
+  sets with `PutSecret` (`ADMIN_TOKEN`). jobber keeps them encrypted under
+  `JOBBER_SECRETS_KEY`, never returns a value, and sends a run's only to the
+  host it starts on, in the message that starts it; jobber-host gives them to
+  the run as environment variables of their names and masks them in its log.
+  A name not set is refused at submit. Secrets are named by the run, not in
+  `jobs.toml`, since jobber never reads the repo.
+- A run may be **onHost**: run on the host `requirements.host` names itself,
+  as that host's user, in its checkout, outside a container. The host must be
+  registered (else it is refused at submit), and its jobber-host runs it only
+  for a repo on its `host_runs` allowlist, failing it otherwise. A run naming
+  secrets, or onHost, goes only to a host whose jobber-host says it can
+  (`features`), so an older jobber-host is never sent one.
 - `labels` describe a run, free-form (what it is for, who asked), and runs are
   filtered by them.
 - A **host** runs jobber-host. It registers once with `RUNNER_TOKEN` and then
@@ -100,6 +113,8 @@ capacity and health.
 | `CancelRun` | `POST /runs/{id}/cancel` |
 | `UpdateRunPriority` | `POST /runs/{id}/priority` |
 | `RegisterHost`, `ListHosts` | `POST`, `GET /hosts` |
+| `ListSecrets` | `GET /secrets`: names and when set, never values |
+| `PutSecret`, `DeleteSecret` | `PUT`, `DELETE /secrets/{name}` |
 | `SendHeartbeat` | `POST /hosts/{id}/heartbeat` |
 | `ConnectHost` | `GET /hosts/{id}/connect` (WebSocket) |
 | `GetHealth` | `GET /health` |
@@ -144,6 +159,8 @@ There is no separate client: agents use the MCP server, scripts the API.
 | `--public-url` | `JOBBER_PUBLIC_URL` | its own address: what the banner gives, behind a proxy |
 | | `AUTH_TOKEN` | none: the submitters' token. Without it, all but `/health` and the docs answer 503 |
 | | `RUNNER_TOKEN` | none: registers hosts. Without it, `RegisterHost` answers 503 |
+| | `ADMIN_TOKEN` | none: sets, lists and deletes secrets. Without it, those calls answer 503 |
+| | `JOBBER_SECRETS_KEY` | none: 32 bytes, base64 or hex (`openssl rand -base64 32`), that encrypts the secrets. Without it no secret can be set, and jobber will not start on a database holding some (nor with another key than theirs). Keep it apart from the database's backups |
 
 The `JOB_SERVICE_*` names it had before are still read when the `JOBBER_*`
 ones are unset, with a warning. `jobber --help` lists the options.

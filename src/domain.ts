@@ -14,6 +14,22 @@ export const COMMIT_PATTERN = /^[0-9a-f]{40}$/;
 /** A `[jobs.<name>]` table in the repo's `jobs.toml`. */
 export const JOB_NAME_PATTERN = /^[a-z0-9][a-z0-9_-]{0,62}$/;
 
+/** A secret's name, as the environment variable a run is given it in. */
+export const SECRET_NAME_PATTERN = /^[A-Z_][A-Z0-9_]{0,127}$/;
+
+/** Most secrets one run may name. */
+export const SECRETS_PER_RUN_MAX = 50;
+
+/**
+ * What a host's jobber-host can do beyond running a run in a container, as it
+ * registers: `secrets`, given a run's secrets as environment variables;
+ * `hostRuns`, running a run on the host itself. A host that does not say
+ * (an older jobber-host) is given no run that needs either.
+ */
+export const FEATURES = ["secrets", "hostRuns"] as const;
+
+export type Feature = (typeof FEATURES)[number];
+
 /** A label key or value: letters, digits, `_`, `.` and `-`, starting and ending with a letter or digit. */
 export const LABEL_PATTERN = /^[A-Za-z0-9]([A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?$/;
 
@@ -52,9 +68,11 @@ export interface Requirements {
   memory: number | null;
   /** Seconds. Null: `jobs.toml`'s. */
   timeout: number | null;
+  /** The name of the host it must run on. Null: any. A run `onHost` names one. */
+  host: string | null;
 }
 
-export const NO_REQUIREMENTS: Requirements = { os: null, arch: null, cpu: null, memory: null, timeout: null };
+export const NO_REQUIREMENTS: Requirements = { os: null, arch: null, cpu: null, memory: null, timeout: null, host: null };
 
 export type Labels = Record<string, string>;
 
@@ -80,6 +98,10 @@ export interface RunDraft {
   priority: number;
   /** How often a failed attempt is tried again, and after how long. */
   retry: Retry;
+  /** Names of the secrets its host gives it as environment variables of those names. */
+  secrets: string[];
+  /** Runs on its host (`requirements.host`) itself, as the host's user, outside a container. */
+  onHost: boolean;
 }
 
 /**
@@ -141,7 +163,7 @@ export interface Run extends RunDraft {
 }
 
 export class RequestError extends Error {
-  readonly status: 400 | 401 | 403 | 404 | 409 | 413 | 416 | 426;
+  readonly status: 400 | 401 | 403 | 404 | 409 | 413 | 416 | 426 | 503;
 
   constructor(message: string, status: RequestError["status"]) {
     super(message);
@@ -260,6 +282,8 @@ export interface Host {
   capacity: Resources;
   labels: Labels;
   version: string | null;
+  /** What its jobber-host can do (\`FEATURES\`, and any it names that this jobber does not know), as it last registered. */
+  features: string[];
   /** What its own budget had free, as its last heartbeat said; null until one does since it registered. */
   free: Resources | null;
   metrics: Metrics | null;
@@ -267,9 +291,18 @@ export interface Host {
   lastSeenAt: string;
 }
 
-/** The run may run on this host: pending, its cpu and memory free there, and its os and arch, if it names them, the host's. */
-export const fits = (run: Run, host: Pick<Candidate, "os" | "arch" | "free">) =>
+/** What `run` needs its host's jobber-host to be able to do. */
+export const needs = (run: Pick<Run, "secrets" | "onHost">): Feature[] => [...(run.secrets.length ? (["secrets"] as const) : []), ...(run.onHost ? (["hostRuns"] as const) : [])];
+
+/**
+ * The run may run on this host: pending, its cpu and memory free there, its
+ * os, arch and host, if it names them, the host's, and the host able to do
+ * what it needs.
+ */
+export const fits = (run: Run, host: Pick<Candidate, "name" | "os" | "arch" | "free" | "features">) =>
   run.state === "pending" &&
+  (run.requirements.host === null || run.requirements.host === host.name) &&
+  needs(run).every((f) => host.features.includes(f)) &&
   admittedCpu(run) <= host.free.cpu &&
   admittedMemory(run) <= host.free.memory &&
   (run.requirements.os === null || run.requirements.os === host.os) &&
@@ -306,6 +339,16 @@ export function unassigned(run: Run, when = now()): Run {
   return { ...run, state: "pending", host: null, assignedAt: null, updatedAt: stamp(run, when) };
 }
 
+/**
+ * An assigned run its host may not be started with, because a secret it names
+ * is gone: it ends `failed`, not retried, since a retry would fail the same.
+ */
+export function unstartable(run: Run, reason: string, when = now()): Run {
+  if (run.state !== "assigned") throw new RequestError(`run ${run.id} is ${run.state}, not assigned`, 409);
+  const at = stamp(run, when);
+  return { ...run, state: "failed", reason, updatedAt: at, endedAt: at };
+}
+
 /** An assignment not taken within `ASSIGN_SECONDS`, back in the queue; null for any other run. */
 export function expired(run: Run, when = now()): Run | null {
   if (run.state !== "assigned" || !run.assignedAt || Date.parse(run.assignedAt) + ASSIGN_SECONDS * 1000 > Date.parse(when)) return null;
@@ -315,6 +358,8 @@ export function expired(run: Run, when = now()): Run | null {
 /** A host the scheduler may place runs on: what it is, and what it has free for them now. */
 export interface Candidate {
   id: string;
+  name: string;
+  features: string[];
   os: Os;
   arch: Arch;
   free: Resources;

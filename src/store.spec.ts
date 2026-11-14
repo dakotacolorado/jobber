@@ -4,7 +4,7 @@ import { NO_RETRY, queueOrder, submitted, type Run } from "./domain.ts";
 import { Store } from "./store.ts";
 
 const COMMIT = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
-const draft = { repo: "o/r", commit: COMMIT, job: "hello", args: [], requirements: { os: null, arch: null, cpu: null, memory: null, timeout: null }, labels: {}, retry: NO_RETRY };
+const draft = { repo: "o/r", commit: COMMIT, job: "hello", args: [], requirements: { os: null, arch: null, cpu: null, memory: null, timeout: null, host: null }, labels: {}, retry: NO_RETRY, secrets: [], onHost: false };
 
 describe("a database written before priority and assignments", () => {
   it("opens with each run at priority 0 and assigned nowhere, queued oldest first", () => {

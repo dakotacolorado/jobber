@@ -30,6 +30,7 @@ import { DOCS_URL, mcpServer, type Call } from "./mcp.ts";
 import * as routes from "./schema.ts";
 import { ERROR_CODES, type ErrorStatus } from "./schema.ts";
 import { NO_LINK, type Link } from "./scheduler.ts";
+import { Secrets } from "./secrets.ts";
 import type { Store, StoredHost } from "./store.ts";
 
 export const SPEC_PATH = "/openapi.json";
@@ -44,7 +45,9 @@ export const OVERVIEW = `Submit code to run on whatever computers you have. A **
 - **Read its log** with \`GetRunLog\`, from any byte offset, while it runs and after.
 - **Hosts** are the computers that run jobber-host, which registers, holds a connection over which it is sent its runs, and reports their logs and ends through the *Host protocol* calls. You don't call those.
 
-**Auth:** \`Authorization: Bearer <token>\` with the submitters' token, on everything but \`GetHealth\`.
+- **Secrets** are set by an admin (\`PutSecret\`), stored encrypted, and never read back: a run naming them in \`secrets\` is given each as an environment variable.
+
+**Auth:** \`Authorization: Bearer <token>\` with the submitters' token, on everything but \`GetHealth\` and the *Secrets* calls, which take the admin's.
 
 **Errors:** \`{code, message}\`, where \`code\` is an AWS-style exception name such as \`ValidationException\` or \`ResourceNotFoundException\`.`;
 
@@ -53,6 +56,8 @@ export interface Tokens {
   submitter: string | null;
   /** Registers hosts, and nothing else: each host then calls with a token of its own. */
   registration: string | null;
+  /** Sets, lists and deletes secrets, and nothing else. Null or absent: every such call answers 503. */
+  admin?: string | null;
 }
 
 export interface About {
@@ -75,10 +80,12 @@ export class JobApi {
   private readonly tokens: Tokens;
   private readonly about: About;
   private readonly link: Link;
+  private readonly secrets: Secrets;
 
   /** `link` reaches the connected hosts: `ListHosts` says which, and a cancel reaches a running run's host through it at once. */
-  constructor(store: Store, tokens: Tokens, about: About, link: Link = NO_LINK) {
+  constructor(store: Store, tokens: Tokens, about: About, link: Link = NO_LINK, secrets = new Secrets(store.db, null)) {
     this.store = store;
+    this.secrets = secrets;
     this.tokens = tokens;
     this.about = about;
     this.link = link;
@@ -111,6 +118,8 @@ export class JobApi {
     this.hono.use("/runs/*", submitterReads);
     this.hono.on("POST", "/hosts", bearer(this.tokens.registration));
     this.hono.on("GET", "/hosts", submitter);
+    this.hono.use("/secrets", bearer(this.tokens.admin ?? null));
+    this.hono.use("/secrets/*", bearer(this.tokens.admin ?? null));
   }
 
   /** The host whose own token the request carries: 401 for any other token. */
@@ -151,7 +160,12 @@ export class JobApi {
     app.openapi(routes.healthRoute, (c) => c.json({ ok: true as const, ...this.about }, 200));
 
     app.openapi(routes.submitRoute, (c) => {
-      const run = submitted(c.req.valid("json"));
+      const draft = c.req.valid("json");
+      const unknown = this.secrets.missing(draft.secrets);
+      if (unknown.length) throw new RequestError(`secrets: no secret ${unknown.join(", ")} is set`, 400);
+      if (draft.onHost && draft.requirements.host === null) throw new RequestError("requirements.host: a run onHost names the host it runs on", 400);
+      if (draft.requirements.host !== null && !this.store.hostNamed(draft.requirements.host)) throw new RequestError(`requirements.host: no host ${draft.requirements.host} is registered`, 400);
+      const run = submitted(draft);
       this.store.create(run);
       return c.json(run, 201);
     });
@@ -236,6 +250,17 @@ export class JobApi {
       this.store.seen(host.id, at, { free, metrics });
       const { cancel, ended } = this.store.renew(host.id, running.map((id) => ({ id })), leaseFrom(at), at);
       return c.json({ cancel, ended, lease: LEASE_SECONDS }, 200);
+    });
+
+    app.openapi(routes.listSecretsRoute, (c) => c.json({ secrets: this.secrets.list() }, 200));
+
+    app.openapi(routes.putSecretRoute, (c) => c.json(this.secrets.put(c.req.valid("param").name, c.req.valid("json").value, now()), 200));
+
+    app.openapi(routes.deleteSecretRoute, (c) => {
+      const { name } = c.req.valid("param");
+      const was = this.secrets.delete(name);
+      if (!was) throw new RequestError(`no secret ${name}`, 404);
+      return c.json(was, 200);
     });
 
     // An upgrade is taken by `Connections` before it reaches here.
@@ -349,6 +374,11 @@ export class JobApi {
 
   private spec(): void {
     this.hono.openAPIRegistry.registerComponent("securitySchemes", "bearerAuth", { type: "http", scheme: "bearer" });
+    this.hono.openAPIRegistry.registerComponent("securitySchemes", "adminAuth", {
+      type: "http",
+      scheme: "bearer",
+      description: "The admin's token, `ADMIN_TOKEN`: it manages secrets, and nothing else.",
+    });
     this.hono.openAPIRegistry.registerComponent("securitySchemes", "hostAuth", {
       type: "http",
       scheme: "bearer",
@@ -360,6 +390,7 @@ export class JobApi {
       tags: [
         { name: "Runs", description: "Submit, follow and cancel runs." },
         { name: "Hosts", description: "See the fleet." },
+        { name: "Secrets", description: "Set the secrets runs are given, by an admin." },
         { name: "Host protocol", description: "Called by jobber-host on each computer, not by you." },
         { name: "Platform", description: "Health." },
       ],

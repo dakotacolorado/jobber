@@ -10,7 +10,7 @@ const T0 = "2026-11-13T00:00:00.000Z";
 const at = (seconds: number) => new Date(Date.parse(T0) + seconds * 1000).toISOString();
 
 const running = (retry = { limit: 2, backoff: 10 }, attempt = 1): Run => ({
-  ...submitted({ repo: "o/r", commit: COMMIT, job: "hello", args: [], requirements: { os: null, arch: null, cpu: null, memory: null, timeout: null }, labels: {}, priority: 0, retry }, T0),
+  ...submitted({ repo: "o/r", commit: COMMIT, job: "hello", args: [], requirements: { os: null, arch: null, cpu: null, memory: null, timeout: null, host: null }, labels: {}, priority: 0, retry, secrets: [], onHost: false }, T0),
   state: "running",
   host: "h",
   attempt,

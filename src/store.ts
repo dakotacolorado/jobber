@@ -271,6 +271,9 @@ export function backfill(db: DatabaseSync): void {
     WHERE json_type(record, '$.slots') IS NOT NULL`);
   db.exec(`UPDATE runs SET record = json_set(record, '$.retry', json('${JSON.stringify(NO_RETRY)}'), '$.attempts', json('[]'), '$.retryAt', json('null'))
     WHERE json_type(record, '$.retry') IS NULL`);
+  db.exec(`UPDATE runs SET record = json_set(record, '$.secrets', json('[]'), '$.onHost', json('false'), '$.requirements.host', json('null'))
+    WHERE json_type(record, '$.secrets') IS NULL`);
+  db.exec("UPDATE hosts SET record = json_set(record, '$.features', json('[]')) WHERE json_type(record, '$.features') IS NULL");
   db.exec("UPDATE runs SET record = json_set(record, '$.attempt', 1) WHERE record ->> '$.attempt' IS NULL");
   db.exec("UPDATE runs SET record = json_set(record, '$.priority', 0) WHERE record ->> '$.priority' IS NULL");
   db.exec("UPDATE runs SET record = json_set(record, '$.assignedAt', json('null')) WHERE json_type(record, '$.assignedAt') IS NULL");
@@ -311,7 +314,7 @@ export function migrate(db: DatabaseSync): void {
       if (submittedBy) labels.by = label(submittedBy);
       const run = {
         ...rest,
-        requirements: { os: null, arch: null, cpu: null, memory: limits?.memory ?? null, timeout: limits?.timeout ?? null },
+        requirements: { os: null, arch: null, cpu: null, memory: limits?.memory ?? null, timeout: limits?.timeout ?? null, host: null },
         labels,
         host: runner ?? null,
       };
@@ -348,6 +351,7 @@ export function migrate(db: DatabaseSync): void {
           capacity: { cpu: old.slots, memory: old.memory ?? DEFAULT_MEMORY_MIB },
           labels: old.labels ?? {},
           version: old.version ?? null,
+          features: [],
           free: null,
           metrics: null,
           createdAt: old.createdAt,

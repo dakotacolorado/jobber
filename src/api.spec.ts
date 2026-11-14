@@ -42,7 +42,7 @@ describe("POST /runs", () => {
       commit: COMMIT,
       job: "hello",
       args: ["--n", "3"],
-      requirements: { os: "linux", arch: null, cpu: 1.5, memory: 256, timeout: null },
+      requirements: { os: "linux", arch: null, cpu: 1.5, memory: 256, gpu: null, timeout: null },
       labels: { item: "28af81bc", by: "agent-1" },
       state: "pending",
       host: null,
@@ -50,7 +50,7 @@ describe("POST /runs", () => {
       logSize: 0,
     });
     expect(await (await call("GET", `/runs/${run.id}`)).json()).toEqual(run);
-    expect(await submit()).toMatchObject({ args: [], requirements: { os: null, arch: null, cpu: null, memory: null, timeout: null, host: null }, labels: {}, priority: 0 });
+    expect(await submit()).toMatchObject({ args: [], requirements: { os: null, arch: null, cpu: null, memory: null, gpu: null, timeout: null, host: null }, labels: {}, priority: 0 });
     expect(await submit({ priority: -5 })).toMatchObject({ priority: -5 });
   });
 

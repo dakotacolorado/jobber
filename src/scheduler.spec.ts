@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { NO_RETRY, accepted, ASSIGN_SECONDS, assigned, canceled, DEFAULT_CPU, expired, FRESH_SECONDS, freeOn, healthy, MAX_LOAD_PER_CPU, MIN_DISK_FREE_MIB, schedule, submitted, unassigned, type Candidate, type Metrics, type Run } from "./domain.ts";
+import { NO_RETRY, accepted, admittedGpu, ASSIGN_SECONDS, assigned, canceled, DEFAULT_CPU, expired, FRESH_SECONDS, freeOn, healthy, MAX_LOAD_PER_CPU, MIN_DISK_FREE_MIB, schedule, submitted, unassigned, type Candidate, type Metrics, type Run } from "./domain.ts";
 import { tick, type Link } from "./scheduler.ts";
 import { Store, type StoredHost } from "./store.ts";
 
@@ -7,14 +7,14 @@ const COMMIT = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 const T0 = "2026-11-13T00:00:00.000Z";
 const later = (seconds: number, from = T0) => new Date(Date.parse(from) + seconds * 1000).toISOString();
 
-const run = (over: { priority?: number; cpu?: number; memory?: number; os?: "linux" | "macos"; at?: string } = {}): Run =>
+const run = (over: { priority?: number; cpu?: number; memory?: number; gpu?: number; os?: "linux" | "macos"; at?: string } = {}): Run =>
   submitted(
     {
       repo: "o/r",
       commit: COMMIT,
       job: "hello",
       args: [],
-      requirements: { os: over.os ?? null, arch: null, cpu: over.cpu ?? null, memory: over.memory ?? null, timeout: null, host: null },
+      requirements: { os: over.os ?? null, arch: null, cpu: over.cpu ?? null, memory: over.memory ?? null, gpu: over.gpu ?? null, timeout: null, host: null },
       labels: {},
       priority: over.priority ?? 0,
       retry: NO_RETRY,
@@ -24,7 +24,7 @@ const run = (over: { priority?: number; cpu?: number; memory?: number; os?: "lin
     over.at ?? T0,
   );
 
-const candidate = (id: string, cpu: number, memory: number, os: "linux" | "macos" = "linux"): Candidate => ({ id, name: id, features: [], os, arch: "x86_64", free: { cpu, memory } });
+const candidate = (id: string, cpu: number, memory: number, os: "linux" | "macos" = "linux", gpu = 0): Candidate => ({ id, name: id, features: [], os, arch: "x86_64", free: { cpu, memory, gpu } });
 
 describe("schedule", () => {
   it("places the highest priority first, then the oldest, while capacity lasts", () => {
@@ -64,20 +64,39 @@ describe("schedule", () => {
   });
 });
 
+describe("schedule, with GPUs", () => {
+  it("places a run asking for GPUs only on a host with that many free, and takes them", () => {
+    const a = run({ gpu: 1, at: T0 });
+    const b = run({ gpu: 1, at: later(1) });
+    const two = run({ gpu: 2, at: later(2) });
+    const cpuOnly = run({ at: later(3) });
+    const placed = schedule([a, b, two, cpuOnly], [candidate("big", 16, 65536), candidate("gpu", 4, 8192, "linux", 1)]);
+    expect(placed.map((p) => [p.run.id, p.host])).toEqual([
+      [a.id, "gpu"],
+      [cpuOnly.id, "big"],
+    ]);
+  });
+
+  it("gives a run that names no GPUs none", () => {
+    expect(admittedGpu(run())).toBe(0);
+    expect(admittedGpu(run({ gpu: 3 }))).toBe(3);
+  });
+});
+
 describe("freeOn", () => {
-  const host = { id: "h", capacity: { cpu: 3, memory: 4096 }, free: { cpu: 3, memory: 4096 } };
+  const host = { id: "h", capacity: { cpu: 3, memory: 4096, gpu: 2 }, free: { cpu: 3, memory: 4096, gpu: 2 } };
 
   it("takes off the requests of the runs assigned or running there that its last report predates", () => {
-    const mine = assigned(run({ cpu: 0.1, memory: 1000 }), "h", T0);
+    const mine = assigned(run({ cpu: 0.1, memory: 1000, gpu: 1 }), "h", T0);
     const running = accepted(assigned(run({ cpu: 0.2 }), "h", T0), "h", T0);
     const theirs = assigned(run(), "other", T0);
-    expect(freeOn(host, [mine, running, theirs])).toEqual({ cpu: 2.7, memory: 2072 });
-    expect(freeOn({ ...host, free: null }, [assigned(run(), "h", T0)])).toEqual({ cpu: 3 - DEFAULT_CPU, memory: 3072 });
+    expect(freeOn(host, [mine, running, theirs])).toEqual({ cpu: 2.7, memory: 2072, gpu: 1 });
+    expect(freeOn({ ...host, free: null }, [assigned(run(), "h", T0)])).toEqual({ cpu: 3 - DEFAULT_CPU, memory: 3072, gpu: 2 });
   });
 
   it("is never more than the host last reported, nor less than nothing", () => {
-    expect(freeOn({ ...host, free: { cpu: 1, memory: 500 } }, [])).toEqual({ cpu: 1, memory: 500 });
-    expect(freeOn({ ...host, capacity: { cpu: 0.5, memory: 512 } }, [assigned(run({ cpu: 1 }), "h", T0)])).toEqual({ cpu: 0, memory: 0 });
+    expect(freeOn({ ...host, free: { cpu: 1, memory: 500, gpu: 0 } }, [])).toEqual({ cpu: 1, memory: 500, gpu: 0 });
+    expect(freeOn({ ...host, capacity: { cpu: 0.5, memory: 512, gpu: 0 } }, [assigned(run({ cpu: 1 }), "h", T0)])).toEqual({ cpu: 0, memory: 0, gpu: 0 });
   });
 });
 
@@ -128,11 +147,11 @@ function fleet() {
       name,
       os: "linux",
       arch: "x86_64",
-      capacity: { cpu: 2 * DEFAULT_CPU, memory: 4096 },
+      capacity: { cpu: 2 * DEFAULT_CPU, memory: 4096, gpu: 0 },
       labels: {},
       version: null,
       features: [],
-      free: { cpu: 2 * DEFAULT_CPU, memory: 4096 },
+      free: { cpu: 2 * DEFAULT_CPU, memory: 4096, gpu: 0 },
       metrics: null,
       createdAt: T0,
       lastSeenAt: T0,
@@ -152,7 +171,7 @@ describe("tick", () => {
   it("assigns each queued run to a fitting connected host, highest priority first, and hands it over", () => {
     const { store, host, sent, reachable, link } = fleet();
     host("a");
-    host("b", { os: "macos", capacity: { cpu: DEFAULT_CPU, memory: 4096 }, free: { cpu: DEFAULT_CPU, memory: 4096 } });
+    host("b", { os: "macos", capacity: { cpu: DEFAULT_CPU, memory: 4096, gpu: 0 }, free: { cpu: DEFAULT_CPU, memory: 4096, gpu: 0 } });
     reachable.add("a").add("b");
     const mac = run({ os: "macos", at: T0 });
     const low = run({ at: later(1) });
@@ -176,8 +195,8 @@ describe("tick", () => {
   it("places nothing on a host its metrics say is nearly out of disk or overloaded", () => {
     const { store, host, sent, reachable, link } = fleet();
     const well = { cpuLoad: 0.5, memoryUsed: 1000, memoryTotal: 8000, diskFree: 50_000, cpus: 4 };
-    host("full", { metrics: { ...well, diskFree: 100 }, capacity: { cpu: 8, memory: 65536 }, free: null });
-    host("busy", { metrics: { ...well, cpuLoad: 40 }, capacity: { cpu: 8, memory: 65536 }, free: null });
+    host("full", { metrics: { ...well, diskFree: 100 }, capacity: { cpu: 8, memory: 65536, gpu: 0 }, free: null });
+    host("busy", { metrics: { ...well, cpuLoad: 40 }, capacity: { cpu: 8, memory: 65536, gpu: 0 }, free: null });
     host("well", { metrics: well });
     reachable.add("full").add("busy").add("well");
     store.create(run());

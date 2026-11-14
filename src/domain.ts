@@ -66,13 +66,15 @@ export interface Requirements {
   cpu: number | null;
   /** MiB. Null: `jobs.toml`'s, admitted at `DEFAULT_MEMORY_MIB`. */
   memory: number | null;
+  /** GPUs, whole. Null: admitted at none, so a job whose `jobs.toml` asks for GPUs fails on its host. */
+  gpu: number | null;
   /** Seconds. Null: `jobs.toml`'s. */
   timeout: number | null;
   /** The name of the host it must run on. Null: any. A run `onHost` names one. */
   host: string | null;
 }
 
-export const NO_REQUIREMENTS: Requirements = { os: null, arch: null, cpu: null, memory: null, timeout: null, host: null };
+export const NO_REQUIREMENTS: Requirements = { os: null, arch: null, cpu: null, memory: null, gpu: null, timeout: null, host: null };
 
 export type Labels = Record<string, string>;
 
@@ -202,6 +204,9 @@ export const admittedMemory = (run: Pick<Run, "requirements">) => run.requiremen
 /** The CPUs a host reserves for the run when it takes it; a run stored before `cpu` has none. */
 export const admittedCpu = (run: Pick<Run, "requirements">) => run.requirements.cpu ?? DEFAULT_CPU;
 
+/** The GPUs a host reserves for the run when it takes it; a run stored before `gpu` has none. */
+export const admittedGpu = (run: Pick<Run, "requirements">) => run.requirements.gpu ?? 0;
+
 /** CPUs to the thousandth, so sums and differences of decimal requests stay exact enough to compare. */
 const milli = (cpu: number) => Math.round(cpu * 1000) / 1000;
 
@@ -252,11 +257,13 @@ export const LOG_MAX = 64 * 1024 * 1024;
 /** Days a run's log is kept after it is written; the run itself stays. */
 export const LOG_DAYS = 90;
 
-/** CPUs and MiB: what a host offers runs, or has free for them. */
+/** CPUs, MiB and GPUs: what a host offers runs, or has free for them. */
 export interface Resources {
   cpu: number;
   /** MiB. */
   memory: number;
+  /** Whole GPUs; a host registered before GPUs offers none. */
+  gpu: number;
 }
 
 /** A host's health, as its last heartbeat said. */
@@ -295,7 +302,7 @@ export interface Host {
 export const needs = (run: Pick<Run, "secrets" | "onHost">): Feature[] => [...(run.secrets.length ? (["secrets"] as const) : []), ...(run.onHost ? (["hostRuns"] as const) : [])];
 
 /**
- * The run may run on this host: pending, its cpu and memory free there, its
+ * The run may run on this host: pending, its cpu, memory and GPUs free there, its
  * os, arch and host, if it names them, the host's, and the host able to do
  * what it needs.
  */
@@ -305,6 +312,7 @@ export const fits = (run: Run, host: Pick<Candidate, "name" | "os" | "arch" | "f
   needs(run).every((f) => host.features.includes(f)) &&
   admittedCpu(run) <= host.free.cpu &&
   admittedMemory(run) <= host.free.memory &&
+  admittedGpu(run) <= host.free.gpu &&
   (run.requirements.os === null || run.requirements.os === host.os) &&
   (run.requirements.arch === null || run.requirements.arch === host.arch);
 
@@ -375,8 +383,13 @@ export function freeOn(host: Pick<Host, "id" | "capacity" | "free">, runs: Run[]
   const mine = runs.filter((r) => r.host === host.id && (r.state === "assigned" || r.state === "running"));
   const cpu = milli(host.capacity.cpu - mine.reduce((sum, r) => sum + admittedCpu(r), 0));
   const memory = host.capacity.memory - mine.reduce((sum, r) => sum + admittedMemory(r), 0);
-  const reported = host.free ?? { cpu, memory };
-  return { cpu: Math.max(0, Math.min(cpu, reported.cpu)), memory: Math.max(0, Math.min(memory, reported.memory)) };
+  const gpu = host.capacity.gpu - mine.reduce((sum, r) => sum + admittedGpu(r), 0);
+  const reported = host.free ?? { cpu, memory, gpu };
+  return {
+    cpu: Math.max(0, Math.min(cpu, reported.cpu)),
+    memory: Math.max(0, Math.min(memory, reported.memory)),
+    gpu: Math.max(0, Math.min(gpu, reported.gpu)),
+  };
 }
 
 /** Least MiB free on the disk runs use for a host to be given more: a run's checkout and image need room. */
@@ -414,6 +427,7 @@ export function schedule(queue: Run[], hosts: Candidate[]): { run: Run; host: st
     const best = fitting.reduce((a, b) => (b.free.cpu > a.free.cpu || (b.free.cpu === a.free.cpu && (b.free.memory > a.free.memory || (b.free.memory === a.free.memory && b.id < a.id))) ? b : a));
     best.free.cpu = milli(best.free.cpu - admittedCpu(run));
     best.free.memory -= admittedMemory(run);
+    best.free.gpu -= admittedGpu(run);
     placed.push({ run, host: best.id });
   }
   return placed;

@@ -110,7 +110,7 @@ describe("SubmitRun", () => {
     const { call, submit } = setup();
     expect(await (await submit({ onHost: true })).json()).toMatchObject({ message: "requirements.host: a run onHost names the host it runs on" });
     expect(await (await submit({ onHost: true, requirements: { host: "laptop" } })).json()).toMatchObject({ message: "requirements.host: no host laptop is registered" });
-    await call("POST", "/hosts", "reg", { name: "laptop", os: "linux", arch: "x86_64", capacity: { cpu: 1, memory: 1024 } });
+    await call("POST", "/hosts", "reg", { name: "laptop", os: "linux", arch: "x86_64", capacity: { cpu: 1, memory: 1024, gpu: 0 } });
     const taken = await submit({ onHost: true, requirements: { host: "laptop" } });
     expect(taken.status).toBe(201);
     expect(await taken.json()).toMatchObject({ onHost: true, requirements: { host: "laptop" } });
@@ -124,14 +124,14 @@ describe("fits", () => {
       commit: COMMIT,
       job: "j",
       args: [],
-      requirements: { os: null, arch: null, cpu: null, memory: null, timeout: null, host: over.host ?? null },
+      requirements: { os: null, arch: null, cpu: null, memory: null, gpu: null, timeout: null, host: over.host ?? null },
       labels: {},
       priority: 0,
       retry: NO_RETRY,
       secrets: over.secrets ?? [],
       onHost: over.onHost ?? false,
     });
-  const host = (name: string, features: string[]) => ({ name, features, os: "linux" as const, arch: "x86_64" as const, free: { cpu: 4, memory: 8192 } });
+  const host = (name: string, features: string[]) => ({ name, features, os: "linux" as const, arch: "x86_64" as const, free: { cpu: 4, memory: 8192, gpu: 0 } });
 
   it("needs the features a run uses, and the host it names", () => {
     expect(fits(run({}), host("a", []))).toBe(true);

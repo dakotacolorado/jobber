@@ -43,7 +43,7 @@ function setup() {
     const reg = await fetch("/hosts", REGISTRATION, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: { name: "host", os: "linux", arch: "x86_64", capacity: { cpu: 1, memory: 2048 } },
+      body: { name: "host", os: "linux", arch: "x86_64", capacity: { cpu: 1, memory: 2048, gpu: 0 } },
     });
     const { host: me, token } = (await reg.json()) as { host: Host; token: string };
     const claim = async () => startNext(store, me.id)!.run;

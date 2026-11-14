@@ -56,7 +56,7 @@ class Peer {
     }
   }
 
-  heartbeat(running: { id: string; attempt: number }[] = [], free = { cpu: 4, memory: 8192 }) {
+  heartbeat(running: { id: string; attempt: number }[] = [], free = { cpu: 4, memory: 8192, gpu: 0 }) {
     this.send({ type: "heartbeat", free, metrics: METRICS, running });
   }
 }
@@ -80,7 +80,7 @@ async function setup() {
   const submit = async (over: Record<string, unknown> = {}) =>
     (await (await call("POST", "/runs", TOKEN, { repo: "o/r", commit: COMMIT, job: "hello", ...over })).json()) as Run;
   const register = async (name: string, features?: string[]) =>
-    (await (await call("POST", "/hosts", REGISTRATION, { name, os: "linux", arch: "x86_64", capacity: { cpu: 4, memory: 8192 }, features })).json()) as { host: Host; token: string };
+    (await (await call("POST", "/hosts", REGISTRATION, { name, os: "linux", arch: "x86_64", capacity: { cpu: 4, memory: 8192, gpu: 0 }, features })).json()) as { host: Host; token: string };
   /** Opens host `id`'s connection with `token`; answers the peer, or the HTTP status it was refused with. */
   const connect = (id: string, token: string) =>
     new Promise<Peer | number>((done) => {

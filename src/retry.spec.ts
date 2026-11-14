@@ -10,7 +10,7 @@ const T0 = "2026-11-13T00:00:00.000Z";
 const at = (seconds: number) => new Date(Date.parse(T0) + seconds * 1000).toISOString();
 
 const running = (retry = { limit: 2, backoff: 10 }, attempt = 1): Run => ({
-  ...submitted({ repo: "o/r", commit: COMMIT, job: "hello", args: [], requirements: { os: null, arch: null, cpu: null, memory: null, timeout: null, host: null }, labels: {}, priority: 0, retry, secrets: [], onHost: false }, T0),
+  ...submitted({ repo: "o/r", commit: COMMIT, job: "hello", args: [], requirements: { os: null, arch: null, cpu: null, memory: null, gpu: null, timeout: null, host: null }, labels: {}, priority: 0, retry, secrets: [], onHost: false }, T0),
   state: "running",
   host: "h",
   attempt,
@@ -91,7 +91,7 @@ describe("a run with retries, over the API", () => {
     const created = await call("POST", "/runs", "s", { repo: "o/r", commit: COMMIT, job: "hello", retry: { limit: 1, backoff: 60 } });
     const run = (await created.json()) as Run;
     expect(run).toMatchObject({ retry: { limit: 1, backoff: 60 }, attempt: 1, attempts: [], retryAt: null });
-    const { host, token } = (await (await call("POST", "/hosts", "r", { name: "h", os: "linux", arch: "x86_64", capacity: { cpu: 1, memory: 2048 } })).json()) as { host: Host; token: string };
+    const { host, token } = (await (await call("POST", "/hosts", "r", { name: "h", os: "linux", arch: "x86_64", capacity: { cpu: 1, memory: 2048, gpu: 0 } })).json()) as { host: Host; token: string };
     const claim = () => startNext(store, host.id);
     const append = (text: string, attempt: number) => call("PATCH", `/runs/${run.id}/log?attempt=${attempt}`, token, text, { "content-range": `bytes 0-${text.length - 1}/*` });
     const complete = (attempt: number, state: string, exit: number) => call("PUT", `/runs/${run.id}?attempt=${attempt}`, token, { state, exit, duration: 1 });
@@ -126,7 +126,7 @@ describe("a run with retries, over the API", () => {
   it("is not retried once canceled", async () => {
     const { store, call } = setup();
     const run = (await (await call("POST", "/runs", "s", { repo: "o/r", commit: COMMIT, job: "hello", retry: { limit: 3, backoff: 1 } })).json()) as Run;
-    const { host, token } = (await (await call("POST", "/hosts", "r", { name: "h", os: "linux", arch: "x86_64", capacity: { cpu: 1, memory: 2048 } })).json()) as { host: Host; token: string };
+    const { host, token } = (await (await call("POST", "/hosts", "r", { name: "h", os: "linux", arch: "x86_64", capacity: { cpu: 1, memory: 2048, gpu: 0 } })).json()) as { host: Host; token: string };
     startNext(store, host.id);
     await call("POST", `/runs/${run.id}/cancel`, "s");
     const ended = (await (await call("PUT", `/runs/${run.id}?attempt=1`, token, { state: "failed", exit: 143, duration: 1 })).json()) as Run;

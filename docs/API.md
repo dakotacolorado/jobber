@@ -171,6 +171,7 @@ Content-type: application/json
       "arch": "x86_64 | aarch64 | ",
       "cpu": number,
       "memory": number,
+      "gpu": number,
       "timeout": number,
       "host": "string"
    },
@@ -411,6 +412,7 @@ Content-type: application/json
       "arch": "x86_64 | aarch64 | ",
       "cpu": number,
       "memory": number,
+      "gpu": number,
       "timeout": number,
       "host": "string"
    },
@@ -771,6 +773,7 @@ Content-type: application/json
       "arch": "x86_64 | aarch64 | ",
       "cpu": number,
       "memory": number,
+      "gpu": number,
       "timeout": number,
       "host": "string"
    },
@@ -1050,14 +1053,16 @@ Content-type: application/json
       "arch": "x86_64 | aarch64",
       "capacity": {
          "cpu": number,
-         "memory": number
+         "memory": number,
+         "gpu": number
       },
       "labels": { },
       "version": "string",
       "features": [ "string" ],
       "free": {
          "cpu": number,
-         "memory": number
+         "memory": number,
+         "gpu": number
       },
       "metrics": {
          "cpuLoad": number,
@@ -1130,6 +1135,7 @@ Content-type: application/json
          "arch": "x86_64 | aarch64 | ",
          "cpu": number,
          "memory": number,
+         "gpu": number,
          "timeout": number,
          "host": "string"
       },
@@ -1240,6 +1246,7 @@ Content-type: application/json
          "arch": "x86_64 | aarch64 | ",
          "cpu": number,
          "memory": number,
+         "gpu": number,
          "timeout": number,
          "host": "string"
       },
@@ -1435,7 +1442,8 @@ Content-type: application/json
    "arch": "x86_64 | aarch64",
    "capacity": {
       "cpu": number,
-      "memory": number
+      "memory": number,
+      "gpu": number
    },
    "labels": { },
    "version": "string",
@@ -1487,14 +1495,16 @@ Content-type: application/json
       "arch": "x86_64 | aarch64",
       "capacity": {
          "cpu": number,
-         "memory": number
+         "memory": number,
+         "gpu": number
       },
       "labels": { },
       "version": "string",
       "features": [ "string" ],
       "free": {
          "cpu": number,
-         "memory": number
+         "memory": number,
+         "gpu": number
       },
       "metrics": {
          "cpuLoad": number,
@@ -1551,7 +1561,8 @@ Content-type: application/json
 {
    "free": {
       "cpu": number,
-      "memory": number
+      "memory": number,
+      "gpu": number
    },
    "metrics": {
       "cpuLoad": number,
@@ -1648,6 +1659,7 @@ Content-type: application/json
       "arch": "x86_64 | aarch64 | ",
       "cpu": number,
       "memory": number,
+      "gpu": number,
       "timeout": number,
       "host": "string"
    },
@@ -1721,6 +1733,7 @@ Content-type: application/json
       "arch": "x86_64 | aarch64 | ",
       "cpu": number,
       "memory": number,
+      "gpu": number,
       "timeout": number,
       "host": "string"
    },
@@ -1932,6 +1945,7 @@ Content-type: application/json
       "arch": "x86_64 | aarch64 | ",
       "cpu": number,
       "memory": number,
+      "gpu": number,
       "timeout": number,
       "host": "string"
    },
@@ -2164,6 +2178,10 @@ Type: Number. Range: 0.001 to 65536. Required: Yes.
 Memory for runs, in MiB.  
 Type: Integer. Range: 16 to 67108864. Required: Yes.
 
+**gpu**  
+Whole GPUs for runs. Default: 0.  
+Type: Integer. Range: 0 to 64. Required: No.
+
 ## Error
 
 Every error's body.
@@ -2191,6 +2209,10 @@ Type: Number. Range: 0 to 65536. Required: Yes.
 **memory**  
 Memory free for runs, in MiB.  
 Type: Integer. Range: 0 to 67108864. Required: Yes.
+
+**gpu**  
+Whole GPUs free for runs. Default: 0.  
+Type: Integer. Range: 0 to 64. Required: No.
 
 ## Health
 
@@ -2319,6 +2341,10 @@ Type: Number. Range: 0.001 to 65536. Nullable: Yes. Required: No.
 **memory**  
 Memory in MiB. Default: `jobs.toml`'s, else 1024.  
 Type: Integer. Range: 16 to 1048576. Nullable: Yes. Required: No.
+
+**gpu**  
+Whole GPUs, each its container's own. Default: none, and a job whose `jobs.toml` asks for more fails on its host.  
+Type: Integer. Range: 0 to 64. Nullable: Yes. Required: No.
 
 **timeout**  
 Timeout in seconds. Default: `jobs.toml`'s.  

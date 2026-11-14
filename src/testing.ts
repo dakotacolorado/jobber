@@ -6,7 +6,7 @@ import type { Store } from "./store.ts";
  * the scheduler's assignment and the host's accept would, and answers it as
  * a host is handed it; null if none fits.
  */
-export function startNext(store: Store, id: string, free: Resources = { cpu: 1, memory: 2048 }): { run: Run; memory: number; lease: number } | null {
+export function startNext(store: Store, id: string, free: Resources = { cpu: 1, memory: 2048, gpu: 0 }): { run: Run; memory: number; lease: number } | null {
   const host = store.host(id);
   if (!host) throw new Error(`no host ${id}`);
   const [placed] = schedule(

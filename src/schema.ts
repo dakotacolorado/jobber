@@ -44,6 +44,13 @@ export const RequirementsSchema = z
     arch: Arch.nullable().default(null).describe("CPU architecture it needs. Default: any."),
     cpu: Cpu.min(0.001).nullable().default(null).describe(`CPUs, a decimal number (e.g. 0.5). Default: ${DEFAULT_CPU}.`),
     memory: z.int().min(16).max(1_048_576).nullable().default(null).describe(`Memory in MiB. Default: \`jobs.toml\`'s, else ${DEFAULT_MEMORY_MIB}.`),
+    gpu: z
+      .int()
+      .min(0)
+      .max(64)
+      .nullable()
+      .default(null)
+      .describe("Whole GPUs, each its container's own. Default: none, and a job whose `jobs.toml` asks for more fails on its host."),
     timeout: z.int().min(1).max(86_400).nullable().default(null).describe("Timeout in seconds. Default: `jobs.toml`'s."),
     host: z.string().trim().min(1).max(200).nullable().default(null).describe("Name of the host it must run on, which must be registered. Default: any. A run `onHost` names one."),
   })
@@ -103,7 +110,7 @@ export const SubmitSchema = z
     commit: Commit,
     job: JobName,
     args: z.array(z.string().max(4000)).max(50).default([]).describe("Arguments appended to the job's command."),
-    requirements: RequirementsSchema.default({ os: null, arch: null, cpu: null, memory: null, timeout: null, host: null }),
+    requirements: RequirementsSchema.default({ os: null, arch: null, cpu: null, memory: null, gpu: null, timeout: null, host: null }),
     labels: Labels.default({}).describe("Labels to find it by, e.g. what it is for and who asked."),
     priority: Priority.default(0).describe(`Higher is placed first; equal ones oldest first. ${PRIORITY_MIN} to ${PRIORITY_MAX}. Default: 0.`),
     retry: RetrySchema.default(NO_RETRY),
@@ -338,6 +345,7 @@ const CapacitySchema = z
   .object({
     cpu: Cpu.min(0.001).describe("CPUs for runs, a decimal number."),
     memory: z.int().min(16).max(1_048_576 * 64).describe("Memory for runs, in MiB."),
+    gpu: z.int().min(0).max(64).default(0).describe("Whole GPUs for runs. Default: 0."),
   })
   .describe("What the host offers runs: what it measured, less what it keeps back for the rest of the machine.")
   .openapi("Capacity");
@@ -346,6 +354,7 @@ const FreeSchema = z
   .object({
     cpu: Cpu.min(0).describe("CPUs free for runs."),
     memory: z.int().min(0).max(1_048_576 * 64).describe("Memory free for runs, in MiB."),
+    gpu: z.int().min(0).max(64).default(0).describe("Whole GPUs free for runs. Default: 0."),
   })
   .describe("What the host has free for runs now: its capacity less what its runs and image builds hold.")
   .openapi("Free");

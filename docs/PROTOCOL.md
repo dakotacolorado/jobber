@@ -33,7 +33,7 @@ Every message either way is one JSON text frame, an object with a `type`.
 
 ## Host → service
 
-- `heartbeat`: `{"type": "heartbeat", "free": {"cpu", "memory"}, "metrics":
+- `heartbeat`: `{"type": "heartbeat", "free": {"cpu", "memory", "gpu"}, "metrics":
   {"cpuLoad", "memoryUsed", "memoryTotal", "diskFree", "cpus"}, "running":
   [{"id", "attempt"}]}`. `free` is what the host's own budget has free: its
   capacity less what its runs and image builds hold. The scheduler places runs
@@ -46,15 +46,16 @@ Every message either way is one JSON text frame, an object with a `type`.
 - `accept`: `{"type": "accept", "run": "<id>", "attempt": n}`, for an
   `assign`. Answered `start` or `drop`. Run the job only on `start`.
 - `decline`: `{"type": "decline", "run": "<id>", "attempt": n, "reason":
-  "…"}`, for an `assign` the host cannot take (its cpu or memory is not free). The run
+  "…"}`, for an `assign` the host cannot take (its cpu, memory or GPUs are not free). The run
   goes back to the queue. Not answered.
 
 ## Service → host
 
 - `assign`: `{"type": "assign", "run": <Run>, "attempt": n, "cpu": CPUs,
-  "memory": MiB, "lease": seconds}`: `cpu` and `memory` are what the run
+  "memory": MiB, "gpu": GPUs, "lease": seconds}`: `cpu`, `memory` and `gpu` are what the run
   requests (its `requirements`, or their defaults), which the host reserves
-  for it and gives its container. The `Run`'s `secrets` are names only; its
+  for it and gives its container. `gpu` is whole GPUs, 0 for none; a host
+  that sends no `gpu` in its capacity or heartbeat has none. The `Run`'s `secrets` are names only; its
   `onHost` and `requirements.host` say to run it on this machine itself
   (refuse one whose repo is not on the host's allowlist by completing it
   `failed` with the reason, after `start`). Sent when the scheduler places a run here, and again,

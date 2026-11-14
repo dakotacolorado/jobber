@@ -22,7 +22,7 @@ Streamable HTTP at `/mcp`, stateless, answering JSON. Every request takes the su
 
 What the server tells an agent when it connects:
 
-> jobber runs code on whatever computers you have, its hosts: a job is a named script in a repo's jobs.toml, a run one execution of it at one commit, placed by its scheduler on a host that meets its requirements (os, arch) and has its cpu and memory free.
+> jobber runs code on whatever computers you have, its hosts: a job is a named script in a repo's jobs.toml, a run one execution of it at one commit, placed by its scheduler on a host that meets its requirements (os, arch) and has its cpu, memory and GPUs free.
 >
 > - A run is submitted pending, assigned to a host by the scheduler, running there, and ends succeeded, failed or canceled with its exit code.
 > - A run's log is read from a byte offset: get_run_log answers the bytes from offset, the log's size, and the run's state, so call it again from offset + the bytes read until the state has ended.
@@ -60,6 +60,7 @@ Queues a run as `pending`, by `priority` then age, until a host that meets its r
 | `requirements.arch` | `x86_64`, `aarch64` or null |  | CPU architecture it needs. Default: any. |
 | `requirements.cpu` | number or null |  | CPUs, a decimal number (e.g. 0.5). Default: 0.5. |
 | `requirements.memory` | integer or null |  | Memory in MiB. Default: `jobs.toml`'s, else 1024. |
+| `requirements.gpu` | integer or null |  | Whole GPUs, each its container's own. Default: none, and a job whose `jobs.toml` asks for more fails on its host. |
 | `requirements.timeout` | integer or null |  | Timeout in seconds. Default: `jobs.toml`'s. |
 | `requirements.host` | string or null |  | Name of the host it must run on, which must be registered. Default: any. A run `onHost` names one. |
 | `labels` | object |  | Labels to find it by, e.g. what it is for and who asked. |

@@ -90,9 +90,12 @@ claude mcp add --transport http jobber "$JOBBER/mcp" --header "Authorization: Be
   `assigned` to a connected host that fits, `running` once the host takes it,
   and ends `succeeded`, `failed` or `canceled`. An assignment not taken in
   30 seconds goes back to the queue.
-- A run's `requirements` ask for `cpu` (default 0.5) and `memory` in MiB
-  (default 1024), and may name an `os` and `arch`. It fits a host whose free capacity holds its
-  requests. A host with under 2 GiB of free disk, or a load over 1.5 per CPU,
+- A run's `requirements` ask for `cpu` (default 0.5), `memory` in MiB
+  (default 1024) and whole `gpu`s (default none), and may name an `os` and `arch`. It fits a host whose free capacity holds its
+  requests. A host offers the GPUs its config lists, and gives a run's
+  container its own. jobber never reads `jobs.toml`, so a job whose
+  `jobs.toml` asks for `gpu = 1` is submitted with `requirements.gpu = 1`, or
+  fails on its host saying so. A host with under 2 GiB of free disk, or a load over 1.5 per CPU,
   gets nothing new until it recovers.
 - `retry: {limit, backoff}` requeues a failed run, `backoff` seconds later,
   doubling each time. Each attempt keeps its own log.

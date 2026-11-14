@@ -1,7 +1,7 @@
 import type { IncomingMessage, Server } from "node:http";
 import type { Duplex } from "node:stream";
 import { WebSocketServer, type RawData, type WebSocket } from "ws";
-import { accepted, admittedCpu, admittedMemory, LEASE_SECONDS, leaseFrom, now, RequestError, unassigned, unstartable, type Run } from "./domain.ts";
+import { accepted, admittedCpu, admittedGpu, admittedMemory, LEASE_SECONDS, leaseFrom, now, RequestError, unassigned, unstartable, type Run } from "./domain.ts";
 import type { Link } from "./scheduler.ts";
 import { ERROR_CODES, HostMessage, type ErrorStatus } from "./schema.ts";
 import { Secrets } from "./secrets.ts";
@@ -9,7 +9,7 @@ import type { Store, StoredHost } from "./store.ts";
 
 /** What jobber sends a host over its connection, as `docs/PROTOCOL.md` describes. */
 export type ServiceMessage =
-  | { type: "assign"; run: Run; attempt: number; cpu: number; memory: number; lease: number }
+  | { type: "assign"; run: Run; attempt: number; cpu: number; memory: number; gpu: number; lease: number }
   | { type: "start"; run: string; attempt: number; lease: number; secrets?: Record<string, string> }
   | { type: "drop"; run: string; attempt: number; reason: string }
   | { type: "cancel"; run: string; attempt: number }
@@ -60,7 +60,7 @@ export class Connections implements Link {
   }
 
   assign(host: string, run: Run): void {
-    this.send(host, { type: "assign", run, attempt: run.attempt, cpu: admittedCpu(run), memory: admittedMemory(run), lease: LEASE_SECONDS });
+    this.send(host, { type: "assign", run, attempt: run.attempt, cpu: admittedCpu(run), memory: admittedMemory(run), gpu: admittedGpu(run), lease: LEASE_SECONDS });
   }
 
   cancel(host: string, run: Run): void {

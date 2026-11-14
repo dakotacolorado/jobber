@@ -259,9 +259,10 @@ export class Store {
 /**
  * Gives each run stored before a field was added that field's default:
  * `priority` 0, `assignedAt` null, `attempt` 1 with no earlier `attempts`,
- * no `retry` and no `retryAt`, no `requirements.cpu`. A host stored with a
+ * no `retry` and no `retryAt`, no `requirements.cpu` or `requirements.gpu`. A host stored with a
  * slot count offers its memory and a CPU a slot until it registers again,
- * and what it last said it had free is forgotten.
+ * and what it last said it had free is forgotten; one stored before GPUs
+ * offers and has free none.
  */
 export function backfill(db: DatabaseSync): void {
   db.exec(`UPDATE runs SET record = json_set(record, '$.requirements.cpu', json('null')) WHERE json_type(record, '$.requirements.cpu') IS NULL`);
@@ -274,6 +275,9 @@ export function backfill(db: DatabaseSync): void {
   db.exec(`UPDATE runs SET record = json_set(record, '$.secrets', json('[]'), '$.onHost', json('false'), '$.requirements.host', json('null'))
     WHERE json_type(record, '$.secrets') IS NULL`);
   db.exec("UPDATE hosts SET record = json_set(record, '$.features', json('[]')) WHERE json_type(record, '$.features') IS NULL");
+  db.exec(`UPDATE runs SET record = json_set(record, '$.requirements.gpu', json('null')) WHERE json_type(record, '$.requirements.gpu') IS NULL`);
+  db.exec(`UPDATE hosts SET record = json_set(record, '$.capacity.gpu', 0) WHERE json_type(record, '$.capacity.gpu') IS NULL`);
+  db.exec(`UPDATE hosts SET record = json_set(record, '$.free.gpu', 0) WHERE json_type(record, '$.free') = 'object' AND json_type(record, '$.free.gpu') IS NULL`);
   db.exec("UPDATE runs SET record = json_set(record, '$.attempt', 1) WHERE record ->> '$.attempt' IS NULL");
   db.exec("UPDATE runs SET record = json_set(record, '$.priority', 0) WHERE record ->> '$.priority' IS NULL");
   db.exec("UPDATE runs SET record = json_set(record, '$.assignedAt', json('null')) WHERE json_type(record, '$.assignedAt') IS NULL");
@@ -314,7 +318,7 @@ export function migrate(db: DatabaseSync): void {
       if (submittedBy) labels.by = label(submittedBy);
       const run = {
         ...rest,
-        requirements: { os: null, arch: null, cpu: null, memory: limits?.memory ?? null, timeout: limits?.timeout ?? null, host: null },
+        requirements: { os: null, arch: null, cpu: null, memory: limits?.memory ?? null, gpu: null, timeout: limits?.timeout ?? null, host: null },
         labels,
         host: runner ?? null,
       };
@@ -348,7 +352,7 @@ export function migrate(db: DatabaseSync): void {
           name,
           os: "linux",
           arch,
-          capacity: { cpu: old.slots, memory: old.memory ?? DEFAULT_MEMORY_MIB },
+          capacity: { cpu: old.slots, memory: old.memory ?? DEFAULT_MEMORY_MIB, gpu: 0 },
           labels: old.labels ?? {},
           version: old.version ?? null,
           features: [],

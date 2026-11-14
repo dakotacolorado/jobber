@@ -304,6 +304,14 @@
             "default": null,
             "description": "Memory in MiB. Default: `jobs.toml`'s, else 1024."
           },
+          "gpu": {
+            "type": "integer",
+            "nullable": true,
+            "minimum": 0,
+            "maximum": 64,
+            "default": null,
+            "description": "Whole GPUs, each its container's own. Default: none, and a job whose `jobs.toml` asks for more fails on its host."
+          },
           "timeout": {
             "type": "integer",
             "nullable": true,
@@ -690,6 +698,13 @@
             "minimum": 16,
             "maximum": 67108864,
             "description": "Memory for runs, in MiB."
+          },
+          "gpu": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 64,
+            "default": 0,
+            "description": "Whole GPUs for runs. Default: 0."
           }
         },
         "required": [
@@ -713,6 +728,13 @@
             "minimum": 0,
             "maximum": 67108864,
             "description": "Memory free for runs, in MiB."
+          },
+          "gpu": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 64,
+            "default": 0,
+            "description": "Whole GPUs free for runs. Default: 0."
           }
         },
         "required": [

@@ -1,5 +1,5 @@
 {
-  "instructions": "jobber runs code on whatever computers you have, its hosts: a job is a named script in a repo's jobs.toml, a run one execution of it at one commit, placed by its scheduler on a host that meets its requirements (os, arch) and has its cpu, memory and GPUs free.\n\n- A run is submitted pending, assigned to a host by the scheduler, running there, and ends succeeded, failed or canceled with its exit code.\n- A run's log is read from a byte offset: get_run_log answers the bytes from offset, the log's size, and the run's state, so call it again from offset + the bytes read until the state has ended.\n- Label runs to find them again (e.g. {\"item\": \"28af81bc\", \"by\": \"agent-7\"}); list_runs filters by label as key=value.\n- Pending runs are taken highest priority first, then oldest: list_queue lists them in that order, next first. Give priority when submitting, or move a run with update_run_priority.\n- Give retry {limit, backoff} to try a failed run again: each attempt keeps its own log and exit, the run's attempts lists the earlier ones, and get_run_log reads any by attempt.\n- cancel_run ends a pending or assigned run at once; a running one is stopped by its host shortly after.\n- Every tool takes the submitters' token this server was connected with. The host protocol (register, connect, heartbeat, append, complete) is jobber-host's, not tools.",
+  "instructions": "jobber runs code on whatever computers you have, its hosts: a job is a named script in a repo's jobs.toml, a run one execution of it at one commit, placed by its scheduler on a host that meets its requirements (os, arch) and has its cpu, memory and GPUs free.\n\n- A run is submitted pending, assigned to a host by the scheduler, running there, and ends succeeded, failed or canceled with its exit code.\n- A run's log is read from a byte offset: get_run_log answers the bytes from offset, the log's size, and the run's state, so call it again from offset + the bytes read until the state has ended.\n- Label runs to find them again (e.g. {\"item\": \"28af81bc\", \"by\": \"agent-7\"}); list_runs filters by label as key=value.\n- Pending runs are taken highest priority first, then oldest: list_queue lists them in that order, next first. Give priority when submitting, or move a run with update_run_priority.\n- Give retry {limit, backoff} to try a failed run again: each attempt keeps its own log and exit, the run's attempts lists the earlier ones, and get_run_log reads any by attempt.\n- cancel_run ends a pending or assigned run at once; a running one is stopped by its host shortly after.\n- delete_host takes a host that is gone or renamed out of list_hosts, keeping its runs and logs; one that heartbeats or registers again is back.\n- Every tool takes the submitters' token this server was connected with. The host protocol (register, connect, heartbeat, append, complete) is jobber-host's, not tools.",
   "tools": [
     {
       "name": "submit_run",
@@ -465,6 +465,33 @@
       "annotations": {
         "readOnlyHint": true,
         "destructiveHint": false
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      }
+    },
+    {
+      "name": "delete_host",
+      "title": "Delete a host",
+      "description": "Takes a host that is gone or renamed out of `ListHosts`, and no run is placed on it. Its runs, their attempts and logs are kept. Refused while a run is `assigned` to it or `running` on it: cancel those, or wait for them to end. If that host heartbeats again with its token, or registers again under its name, it is back in `ListHosts` with the same id: one still connected is back at its next heartbeat.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "description": "The host's id, as list_hosts gives it."
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
       },
       "execution": {
         "taskSupport": "forbidden"

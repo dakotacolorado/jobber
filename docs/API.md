@@ -20,6 +20,7 @@ Submit code to run on whatever computers you have. A **job** is a named script i
 - [CancelRun](#cancelrun): Cancel a run
 - [CompleteRun](#completerun): Complete a run
 - [ConnectHost](#connecthost): Connect a host
+- [DeleteHost](#deletehost): Delete a host
 - [DeleteSecret](#deletesecret): Delete a secret
 - [GetHealth](#gethealth): Get health
 - [GetRun](#getrun): Get a run
@@ -635,6 +636,139 @@ HTTP status: 403
 **UpgradeRequiredException**  
 Not a WebSocket upgrade.  
 HTTP status: 426
+
+---
+
+## DeleteHost
+
+Takes a host that is gone or renamed out of `ListHosts`, and no run is placed on it. Its runs, their attempts and logs are kept. Refused while a run is `assigned` to it or `running` on it: cancel those, or wait for them to end. If that host heartbeats again with its token, or registers again under its name, it is back in `ListHosts` with the same id: one still connected is back at its next heartbeat.
+
+### Request syntax
+
+```http
+DELETE /hosts/{id} HTTP/1.1
+Authorization: Bearer token
+```
+
+### URI request parameters
+
+**id**  
+The host's id.  
+Type: String. Required: Yes.
+
+### Response syntax
+
+```http
+HTTP/1.1 200
+Content-type: application/json
+
+{
+   "id": "string",
+   "name": "string",
+   "os": "linux | macos | windows",
+   "arch": "x86_64 | aarch64",
+   "capacity": {
+      "cpu": number,
+      "memory": number,
+      "gpu": number,
+      "gpuMemory": number
+   },
+   "labels": { },
+   "version": "string",
+   "features": [ "string" ],
+   "free": {
+      "cpu": number,
+      "memory": number,
+      "gpu": number
+   },
+   "metrics": {
+      "cpuLoad": number,
+      "memoryUsed": number,
+      "memoryTotal": number,
+      "diskFree": number,
+      "cpus": number
+   },
+   "createdAt": "string",
+   "lastSeenAt": "string",
+   "connected": boolean
+}
+```
+
+### Response elements
+
+**id**  
+The host's id.  
+Type: String.
+
+**name**  
+Unique host name.  
+Type: String.
+
+**os**  
+Operating system.  
+Type: String. Valid values: `linux` | `macos` | `windows`.
+
+**arch**  
+CPU architecture.  
+Type: String. Valid values: `x86_64` | `aarch64`.
+
+**capacity**  
+What the host offers runs: what it measured, less what it keeps back for the rest of the machine.  
+Type: [Capacity](#capacity) object.
+
+**labels**  
+Free-form key-value labels.  
+Type: Object.
+
+**version**  
+jobber-host version, as it last registered.  
+Type: String. Nullable: Yes.
+
+**features**  
+What its jobber-host can do beyond container runs, of `secrets`, `hostRuns`: a run naming secrets goes only to a host with `secrets`, a run `onHost` only to one with `hostRuns`. Others are kept and ignored.  
+Type: Array of strings. At most 50 items.
+
+**free**  
+Free capacity, as last reported.  
+Type: [Free](#free) object.
+
+**metrics**  
+Health, as last reported.  
+Type: [Metrics](#metrics) object.
+
+**createdAt**  
+First registered at (ISO 8601).  
+Type: String.
+
+**lastSeenAt**  
+Last heartbeat at (ISO 8601).  
+Type: String.
+
+**connected**  
+Holds a connection open now: the scheduler can push runs to it.  
+Type: Boolean.
+
+### Errors
+
+**ValidationException**  
+The request failed validation.  
+HTTP status: 400
+
+**UnauthorizedException**  
+The bearer token is missing or is not the submitters'.  
+HTTP status: 401
+
+**ResourceNotFoundException**  
+No host has that id, or it is already deleted.  
+HTTP status: 404
+
+**ConflictException**  
+A run is assigned to it or running on it.  
+HTTP status: 409
+
+**ServiceUnavailableException**  
+The service has no submitters' token configured.  
+HTTP status: 503
 
 ---
 

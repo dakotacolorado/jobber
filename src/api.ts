@@ -52,7 +52,7 @@ export const OVERVIEW = `Submit code to run on whatever computers you have. A **
 **Errors:** \`{code, message}\`, where \`code\` is an AWS-style exception name such as \`ValidationException\` or \`ResourceNotFoundException\`.`;
 
 export interface Tokens {
-  /** Submitters': submit, read and cancel runs, list hosts. Null: every such call answers 503. */
+  /** Submitters': submit, read and cancel runs, list and delete hosts. Null: every such call answers 503. */
   submitter: string | null;
   /** Registers hosts, and nothing else: each host then calls with a token of its own. */
   registration: string | null;
@@ -71,7 +71,7 @@ const hash = (secret: string) => createHash("sha256").update(secret).digest("hex
 
 const same = (a: string, b: string) => timingSafeEqual(Buffer.from(hash(a)), Buffer.from(hash(b)));
 
-const publicHost = ({ tokenHash: _, ...host }: StoredHost, connected: boolean): Host & { connected: boolean } => ({ ...host, connected });
+const publicHost = ({ tokenHash: _, deletedAt: _d, ...host }: StoredHost, connected: boolean): Host & { connected: boolean } => ({ ...host, connected });
 
 export class JobApi {
   readonly hono: OpenAPIHono;
@@ -118,6 +118,7 @@ export class JobApi {
     this.hono.use("/runs/*", submitterReads);
     this.hono.on("POST", "/hosts", bearer(this.tokens.registration));
     this.hono.on("GET", "/hosts", submitter);
+    this.hono.on("DELETE", "/hosts/:id", submitter);
     this.hono.use("/secrets", bearer(this.tokens.admin ?? null));
     this.hono.use("/secrets/*", bearer(this.tokens.admin ?? null));
   }
@@ -219,7 +220,7 @@ export class JobApi {
       const draft = c.req.valid("json");
       const secret = randomBytes(32).toString("base64url");
       const at = now();
-      const before = this.store.hostNamed(draft.name);
+      const before = this.store.hostNamed(draft.name, { deleted: true });
       const host: StoredHost = {
         ...draft,
         id: before?.id ?? newId(),
@@ -241,6 +242,13 @@ export class JobApi {
         .map((h) => publicHost(h, connected.has(h.id)))
         .sort((a, b) => b.lastSeenAt.localeCompare(a.lastSeenAt));
       return c.json({ hosts }, 200);
+    });
+
+    app.openapi(routes.deleteHostRoute, (c) => {
+      const { id } = c.req.valid("param");
+      const was = this.store.deleteHost(id, now());
+      if (!was) throw new RequestError(`no host ${id}`, 404);
+      return c.json(publicHost(was, new Set(this.link.connected()).has(id)), 200);
     });
 
     app.openapi(routes.heartbeatRoute, (c) => {

@@ -4,6 +4,12 @@ import { DEFAULT_MEMORY_MIB, LOG_DAYS, NO_RETRY, RequestError, type Host, type R
 export interface StoredHost extends Host {
   /** sha256 of its secret, hex. */
   tokenHash: string;
+  /**
+   * Deleted at (ISO 8601): left out of `hosts()`. The record is kept so its
+   * token still authenticates, and the host's next heartbeat or registration
+   * brings it back with its id.
+   */
+  deletedAt?: string;
 }
 
 export interface RunFilter {
@@ -210,27 +216,47 @@ export class Store {
       .run(host.id, host.name, JSON.stringify(host));
   }
 
+  /** The host with id `id`, deleted or not: a deleted host's token still authenticates. */
   host(id: string): StoredHost | null {
     const row = this.db.prepare("SELECT record FROM hosts WHERE id = ?").get(id);
     return row ? (JSON.parse(row.record as string) as StoredHost) : null;
   }
 
-  hostNamed(name: string): StoredHost | null {
+  /** The host named `name`; one deleted only when `deleted`, as registering again takes its id back. */
+  hostNamed(name: string, { deleted = false } = {}): StoredHost | null {
     const row = this.db.prepare("SELECT record FROM hosts WHERE name = ?").get(name);
-    return row ? (JSON.parse(row.record as string) as StoredHost) : null;
+    const host = row ? (JSON.parse(row.record as string) as StoredHost) : null;
+    return host && (deleted || !host.deletedAt) ? host : null;
   }
 
+  /** The hosts not deleted, in no order. */
   hosts(): StoredHost[] {
     return this.db
-      .prepare("SELECT record FROM hosts")
+      .prepare("SELECT record FROM hosts WHERE record ->> '$.deletedAt' IS NULL")
       .all()
       .map((row) => JSON.parse(row.record as string) as StoredHost);
   }
 
-  /** What a host last said: when, and what it had free and how it was, when it said. */
+  /** What a host last said: when, and what it had free and how it was, when it said. A deleted host saying it is back. */
   seen(id: string, at: string, report: Partial<Pick<Host, "free" | "metrics">> = {}): void {
     const host = this.host(id);
-    if (host) this.putHost({ ...host, ...report, lastSeenAt: at });
+    if (host) this.putHost({ ...host, ...report, lastSeenAt: at, deletedAt: undefined });
+  }
+
+  /**
+   * Deletes host `id` (see `StoredHost.deletedAt`) and answers what it was;
+   * null if there is none, or it is deleted already. Refused with 409 while a
+   * run is assigned to it or running on it.
+   */
+  deleteHost(id: string, at: string): StoredHost | null {
+    return this.transaction(() => {
+      const host = this.host(id);
+      if (!host || host.deletedAt) return null;
+      const busy = this.inState("assigned", "running").filter((r) => r.host === id);
+      if (busy.length) throw new RequestError(`host ${id} has ${busy.map((r) => `run ${r.id} ${r.state}`).join(", ")}: cancel those, or wait for them to end`, 409);
+      this.putHost({ ...host, deletedAt: at });
+      return host;
+    });
   }
 
   /**

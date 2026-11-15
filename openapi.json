@@ -2145,6 +2145,96 @@
         }
       }
     },
+    "/hosts/{id}": {
+      "delete": {
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "Hosts"
+        ],
+        "operationId": "DeleteHost",
+        "summary": "Delete a host",
+        "description": "Takes a host that is gone or renamed out of `ListHosts`, and no run is placed on it. Its runs, their attempts and logs are kept. Refused while a run is `assigned` to it or `running` on it: cancel those, or wait for them to end. If that host heartbeats again with its token, or registers again under its name, it is back in `ListHosts` with the same id: one still connected is back at its next heartbeat.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "The host's id."
+            },
+            "required": true,
+            "description": "The host's id.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted: what it was.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Host"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "ValidationException: The request failed validation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "UnauthorizedException: The bearer token is missing or is not the submitters'.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "ResourceNotFoundException: No host has that id, or it is already deleted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "ConflictException: A run is assigned to it or running on it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "ServiceUnavailableException: The service has no submitters' token configured.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/hosts/{id}/heartbeat": {
       "post": {
         "security": [

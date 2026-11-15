@@ -105,6 +105,90 @@ describe("RegisterHost", () => {
   });
 });
 
+describe("DeleteHost", () => {
+  const del = (call: ReturnType<typeof setup>["call"], id: string, auth = TOKEN) => call("DELETE", `/hosts/${id}`, auth);
+
+  it("takes the host out of ListHosts, answering what it was, and keeps its runs, attempts and logs", async () => {
+    const { store, call, register, submit, claim, append, complete, hosts } = setup();
+    const gone = await register({ name: "old-desktop" });
+    const stays = await register();
+    const run = await submit({ retry: { limit: 1, backoff: 60 } });
+    await claim(gone);
+    await append(run.id, gone.token, "first\n", 0);
+    await complete(run.id, gone.token, { state: "failed", exit: 1 });
+    force(store, { ...store.run(run.id)!, retryAt: new Date(Date.now() - 1000).toISOString() });
+    await claim(gone);
+    await append(run.id, gone.token, "second\n", 0);
+    await complete(run.id, gone.token, { state: "succeeded", exit: 0 });
+    const res = await del(call, gone.host.id);
+    expect(res.status).toBe(200);
+    const was = (await res.json()) as Host;
+    expect(was).toMatchObject({ id: gone.host.id, name: "old-desktop", connected: false });
+    expect(was).not.toHaveProperty("tokenHash");
+    expect(was).not.toHaveProperty("deletedAt");
+    expect((await hosts()).map((h) => h.id)).toEqual([stays.host.id]);
+    const kept = (await (await call("GET", `/runs/${run.id}`, TOKEN)).json()) as Run;
+    expect(kept).toMatchObject({ state: "succeeded", host: gone.host.id, attempt: 2, attempts: [expect.objectContaining({ attempt: 1, host: gone.host.id, state: "failed" })] });
+    expect(await (await call("GET", `/runs/${run.id}/log?attempt=1`, TOKEN)).text()).toBe("first\n");
+    expect(await (await call("GET", `/runs/${run.id}/log`, TOKEN)).text()).toBe("second\n");
+    // No run can be placed on it by name.
+    expect((await call("POST", "/runs", TOKEN, { repo: "a/b", commit: COMMIT, job: "hello", requirements: { host: "old-desktop" } })).status).toBe(400);
+  });
+
+  it("answers 404 for a host it does not know, or one already deleted", async () => {
+    const { call, register } = setup();
+    const missing = await del(call, "00000000-0000-4000-8000-000000000000");
+    expect(missing.status).toBe(404);
+    expect(await missing.json()).toEqual({ code: "ResourceNotFoundException", message: "no host 00000000-0000-4000-8000-000000000000" });
+    const h = await register();
+    expect((await del(call, h.host.id)).status).toBe(200);
+    expect((await del(call, h.host.id)).status).toBe(404);
+  });
+
+  it("takes the submitters' token only", async () => {
+    const { call, register, hosts } = setup();
+    const h = await register();
+    for (const auth of [REGISTRATION, h.token, "nobody"]) expect((await del(call, h.host.id, auth)).status).toBe(401);
+    expect(await hosts()).toHaveLength(1);
+  });
+
+  it("refuses a host with a run assigned to it or running on it, until that run ends", async () => {
+    const { store, call, register, submit, claim, complete, hosts } = setup();
+    const h = await register();
+    const running = await submit();
+    await claim(h);
+    const refused = await del(call, h.host.id);
+    expect(refused.status).toBe(409);
+    expect((await refused.json()) as { code: string; message: string }).toMatchObject({ code: "ConflictException", message: expect.stringContaining(`run ${running.id} running`) });
+    await complete(running.id, h.token, { state: "succeeded", exit: 0 });
+    const assigned = await submit();
+    force(store, { ...store.run(assigned.id)!, state: "assigned", host: h.host.id, assignedAt: new Date().toISOString() });
+    expect((await del(call, h.host.id)).status).toBe(409);
+    await call("POST", `/runs/${assigned.id}/cancel`, TOKEN);
+    expect((await del(call, h.host.id)).status).toBe(200);
+    expect(await hosts()).toEqual([]);
+  });
+
+  it("lists a deleted host again, with its id, once it heartbeats", async () => {
+    const { call, register, heartbeat, hosts } = setup();
+    const h = await register();
+    await del(call, h.host.id);
+    expect(await hosts()).toEqual([]);
+    expect((await heartbeat(h, [], { cpu: 2, memory: 3072, gpu: 0 })).status).toBe(200);
+    expect(await hosts()).toEqual([expect.objectContaining({ id: h.host.id, name: h.host.name, free: { cpu: 2, memory: 3072, gpu: 0 } })]);
+    expect((await del(call, h.host.id)).status).toBe(200);
+  });
+
+  it("lists a deleted host again, with its id, once it registers under its name", async () => {
+    const { call, register, hosts } = setup();
+    const h = await register({ name: "studio" });
+    await del(call, h.host.id);
+    const again = await register({ name: "studio" });
+    expect(again.host.id).toBe(h.host.id);
+    expect((await hosts()).map((each) => each.id)).toEqual([h.host.id]);
+  });
+});
+
 describe("host auth", () => {
   it("refuses the submitter token, a bad secret and another host's token", async () => {
     const { register, submit, claim, call, append, complete, heartbeat } = setup();

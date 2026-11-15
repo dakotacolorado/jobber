@@ -14,12 +14,9 @@ v0.2.0
 Submit code to run on whatever computers you have.
 A queue of runs, each placed on a host that fits it and pushed there, with its log streamed back.
 
-  ▸ Page      http://127.0.0.1:4500/
-  ▸ API       http://127.0.0.1:4500/runs   docs http://127.0.0.1:4500/docs/api
-  ▸ MCP       http://127.0.0.1:4500/mcp    docs http://127.0.0.1:4500/docs/mcp
-
-  listening on http://127.0.0.1:4500, data in ~/.local/share/jobber/jobber.db
-  Ctrl+C to stop.
+  ▸ Page      https://jobber.example.com/
+  ▸ API       https://jobber.example.com/runs   docs https://jobber.example.com/docs/api
+  ▸ MCP       https://jobber.example.com/mcp    docs https://jobber.example.com/docs/mcp
 ```
 
 jobber runs your repos' scripts on the computers you give it. Submit a run of
@@ -35,7 +32,7 @@ AUTH_TOKEN=pick-one RUNNER_TOKEN=pick-another npx github:dakotacolorado/jobber
 It needs Node 24 or later. From a checkout: `npm ci`, then
 `AUTH_TOKEN=… RUNNER_TOKEN=… npx .`.
 
-1. Open http://127.0.0.1:4500/ and paste `AUTH_TOKEN` to sign in.
+1. Open the page it prints and paste `AUTH_TOKEN` to sign in.
 2. Install [jobber-host](https://github.com/dakotacolorado/jobber-host#readme)
    on each computer that should run jobs, and register it with `RUNNER_TOKEN`.
    It dials out to jobber, so the computer can sit behind NAT.
@@ -67,18 +64,18 @@ serves.
   `/mcp`.
 - Host protocol: [`docs/PROTOCOL.md`](./docs/PROTOCOL.md).
 
-Submit a run and list the running ones, with `JOBBER` set to its address:
+Submit a run and list the running ones, with `JOBBER_URL` set to its address:
 
 ```sh
-curl -s -H "authorization: Bearer $AUTH_TOKEN" -H 'content-type: application/json' "$JOBBER/runs" \
+curl -s -H "authorization: Bearer $AUTH_TOKEN" -H 'content-type: application/json' "$JOBBER_URL/runs" \
   -d '{"repo": "dakotacolorado/python-template", "commit": "<sha>", "job": "hello"}'
-curl -s -H "authorization: Bearer $AUTH_TOKEN" "$JOBBER/runs?state=running"
+curl -s -H "authorization: Bearer $AUTH_TOKEN" "$JOBBER_URL/runs?state=running"
 ```
 
 Add the MCP server to Claude Code:
 
 ```sh
-claude mcp add --transport http jobber "$JOBBER/mcp" --header "Authorization: Bearer $AUTH_TOKEN"
+claude mcp add --transport http jobber "$JOBBER_URL/mcp" --header "Authorization: Bearer $AUTH_TOKEN"
 ```
 
 ## How it works
@@ -119,7 +116,7 @@ claude mcp add --transport http jobber "$JOBBER/mcp" --header "Authorization: Be
 
 ```sh
 npm ci                                       # also builds
-AUTH_TOKEN=dev RUNNER_TOKEN=reg npm run dev  # on :4500, data in .jobber-dev.db
+AUTH_TOKEN=dev RUNNER_TOKEN=reg npm run dev  # data in .jobber-dev.db
 npm run typecheck
 npm test
 npm run build

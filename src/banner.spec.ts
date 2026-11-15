@@ -46,10 +46,11 @@ describe("banner", () => {
     expect(banner({ ...info, color: true })).toContain("\x1b[38;5;98m");
   });
 
-  it("is in the README as jobber prints it, starting locally", () => {
+  it("opens the README as jobber prints it, up to where its parts are", () => {
     const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
-    const local = "http://127.0.0.1:4500";
-    const printed = banner({ ...info, url: local, publicUrl: local, db: "~/.local/share/jobber/jobber.db", version: PACKAGE_VERSION });
-    expect(readme).toContain(`\`\`\`\n${printed.replace(/^\n+|\n+$/g, "")}\n\`\`\``);
+    const printed = banner({ ...info, publicUrl: "https://jobber.example.com", version: PACKAGE_VERSION });
+    const opening = printed.slice(0, printed.indexOf("\n\n", printed.indexOf("▸ MCP"))).replace(/^\n+/, "");
+    expect(readme).toContain(`\`\`\`\n${opening}\n\`\`\``);
+    expect(readme).not.toMatch(/https?:\/\/(127\.0\.0\.1|localhost)/);
   });
 });

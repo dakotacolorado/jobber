@@ -106,6 +106,12 @@ claude mcp add --transport http jobber "$JOBBER/mcp" --header "Authorization: Be
   masked in its log. A name not set is refused at submit.
 - `onHost` runs on the host `requirements.host` names, as its user, outside a
   container, only for repos on that host's `host_runs` allowlist.
+- `DeleteHost` (`DELETE /hosts/{id}`, MCP `delete_host`, the submitters'
+  token) takes a host that is gone or renamed out of `ListHosts`. Its runs and
+  their logs are kept. It is refused while a run is `assigned` to the host or
+  `running` on it. A deleted host that heartbeats or registers again comes
+  back with the same id, so a host that is still connected is listed again at
+  its next heartbeat.
 - A running run whose host stops heartbeating for 60 seconds fails. Log chunks
   over 90 days old are deleted.
 

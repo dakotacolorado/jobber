@@ -491,6 +491,24 @@ export const hostsRoute = createRoute({
   },
 });
 
+export const deleteHostRoute = createRoute({
+  ...secured,
+  tags: ["Hosts"],
+  method: "delete",
+  path: "/hosts/{id}",
+  operationId: "DeleteHost",
+  summary: "Delete a host",
+  description:
+    "Takes a host that is gone or renamed out of `ListHosts`, and no run is placed on it. Its runs, their attempts and logs are kept. Refused while a run is `assigned` to it or `running` on it: cancel those, or wait for them to end. If that host heartbeats again with its token, or registers again under its name, it is back in `ListHosts` with the same id: one still connected is back at its next heartbeat.",
+  request: { params: HostIdParam },
+  responses: {
+    200: json(HostSchema, "Deleted: what it was."),
+    404: fails(404, "No host has that id, or it is already deleted."),
+    409: fails(409, "A run is assigned to it or running on it."),
+    ...FAILS,
+  },
+});
+
 export const heartbeatRoute = createRoute({
   ...hostAuth,
   method: "post",

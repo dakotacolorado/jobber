@@ -11,6 +11,7 @@ export const INSTRUCTIONS = `jobber runs code on whatever computers you have, it
 - Pending runs are taken highest priority first, then oldest: list_queue lists them in that order, next first. Give priority when submitting, or move a run with update_run_priority.
 - Give retry {limit, backoff} to try a failed run again: each attempt keeps its own log and exit, the run's attempts lists the earlier ones, and get_run_log reads any by attempt.
 - cancel_run ends a pending or assigned run at once; a running one is stopped by its host shortly after.
+- delete_host takes a host that is gone or renamed out of list_hosts, keeping its runs and logs; one that heartbeats or registers again is back.
 - Every tool takes the submitters' token this server was connected with. The host protocol (register, connect, heartbeat, append, complete) is jobber-host's, not tools.`;
 
 /** The address the MCP docs give, a placeholder; served, the address they were reached at replaces it. */
@@ -146,6 +147,15 @@ export function mcpServer(version: string, call: Call): McpServer {
     {},
     async () => answer(await call("GET", "/hosts")),
     { readOnly: true },
+  );
+
+  tool(
+    "delete_host",
+    "Delete a host",
+    routes.deleteHostRoute.description!,
+    { id: z.string().uuid().describe("The host's id, as list_hosts gives it.") },
+    async ({ id }) => answer(await call("DELETE", `/hosts/${id}`)),
+    { destructive: true },
   );
 
   return server;

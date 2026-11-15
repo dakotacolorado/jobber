@@ -30,6 +30,7 @@ What the server tells an agent when it connects:
 > - Pending runs are taken highest priority first, then oldest: list_queue lists them in that order, next first. Give priority when submitting, or move a run with update_run_priority.
 > - Give retry {limit, backoff} to try a failed run again: each attempt keeps its own log and exit, the run's attempts lists the earlier ones, and get_run_log reads any by attempt.
 > - cancel_run ends a pending or assigned run at once; a running one is stopped by its host shortly after.
+> - delete_host takes a host that is gone or renamed out of list_hosts, keeping its runs and logs; one that heartbeats or registers again is back.
 > - Every tool takes the submitters' token this server was connected with. The host protocol (register, connect, heartbeat, append, complete) is jobber-host's, not tools.
 
 ## Tools
@@ -44,6 +45,7 @@ What the server tells an agent when it connects:
 | [`cancel_run`](#cancel_run) | Cancel a run |  |
 | [`update_run_priority`](#update_run_priority) | Update run priority |  |
 | [`list_hosts`](#list_hosts) | List hosts | yes |
+| [`delete_host`](#delete_host) | Delete a host |  |
 
 ### submit_run
 
@@ -131,3 +133,11 @@ Moves a run not yet ended up or down the queue. A running one keeps its host.
 Returns every host in the fleet, most recently seen first, with its capacity, free capacity and health.
 
 No input.
+
+### delete_host
+
+Takes a host that is gone or renamed out of `ListHosts`, and no run is placed on it. Its runs, their attempts and logs are kept. Refused while a run is `assigned` to it or `running` on it: cancel those, or wait for them to end. If that host heartbeats again with its token, or registers again under its name, it is back in `ListHosts` with the same id: one still connected is back at its next heartbeat.
+
+| Input | Type | Required | |
+| --- | --- | --- | --- |
+| `id` | string | yes | The host's id, as list_hosts gives it. |

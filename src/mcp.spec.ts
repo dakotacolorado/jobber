@@ -55,7 +55,9 @@ function setup() {
         body: bytes,
       });
     };
-    return { claim, append };
+    const complete = (id: string) =>
+      fetch(`/runs/${id}`, token, { method: "PUT", headers: { "content-type": "application/json" }, body: { state: "canceled", exit: 143, duration: 1 } });
+    return { claim, append, complete };
   };
   return { rpc, use, host, fetch };
 }
@@ -91,6 +93,20 @@ describe("the MCP server", () => {
     expect((await use<{ hosts: Host[] }>("list_hosts", {})).json.hosts).toHaveLength(1);
     expect((await use<Run>("cancel_run", { id: run.id })).json).toMatchObject({ id: run.id, cancelRequested: true });
     expect((await use<Run>("get_run", { id: run.id })).json.cancelRequested).toBe(true);
+  });
+
+  it("deletes a host, keeping its runs", async () => {
+    const { use, host } = setup();
+    const run = (await use<Run>("submit_run", { repo: "dakotacolorado/python-template", commit: COMMIT, job: "hello" })).json;
+    const r = await host();
+    await r.claim();
+    const [me] = (await use<{ hosts: Host[] }>("list_hosts", {})).json.hosts;
+    expect((await use("delete_host", { id: me!.id })).isError).toBe(true);
+    await use("cancel_run", { id: run.id });
+    await r.complete(run.id);
+    expect((await use<Host>("delete_host", { id: me!.id })).json).toMatchObject({ id: me!.id, name: "host" });
+    expect((await use<{ hosts: Host[] }>("list_hosts", {})).json.hosts).toEqual([]);
+    expect((await use<Run>("get_run", { id: run.id })).json).toMatchObject({ id: run.id, host: me!.id, state: "canceled" });
   });
 
   it("answers an API refusal as the tool's error, in the API's words", async () => {
